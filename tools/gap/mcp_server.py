@@ -38,6 +38,25 @@ class GapMCPServer:
         self.last_player_pos = None
         self.decision_timeout = 2.0  # Max 2s per decision
         
+        # Loop detection and attack cooldowns
+        self.last_intent = None
+        self.same_intent_count = 0
+        self.max_same_intent = 3  # Max 3 identical attacks before changing strategy
+        self.monster_attack_history = {}  # monster_id -> [timestamps]
+        self.attack_cooldown = 1.0  # 1 second between attacks on same monster
+        
+        # Map exploration memory
+        self.explored_positions = set()  # (x, y) positions visited
+        self.cleared_areas = set()  # (x, y) positions fully cleared
+        self.current_level = 1
+        self.level_start_time = None
+        
+        # Pathfinding and obstacle avoidance
+        self.stuck_counter = 0
+        self.last_position = None
+        self.stuck_threshold = 3  # If position hasn't changed for 3 decisions, we're stuck
+        self.target_position = None  # Current pathfinding target
+        
         # Load prompts (compact version for small context models)
         prompt_file = "compact_diablo_agent.txt" if compact else "diablo_agent.txt"
         self.base_prompt = self.load_prompt(prompt_file)
@@ -128,6 +147,13 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
     async def send_gap_message(self, msg: Dict[str, Any]) -> bool:
         """Send message to GAP socket."""
         try:
+            # Debug: Log movement details
+            if msg.get('action') == 'move':
+                params = msg.get('params', {})
+                target_x = params.get('x', 0)
+                target_y = params.get('y', 0)
+                logger.info(f"🚶 SENDING MOVE to GAP: target=({target_x},{target_y})")
+                
             data = json.dumps(msg).encode('utf-8')
             length = struct.pack('<I', len(data))
             self.gap_socket.sendall(length + data)
@@ -264,6 +290,39 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
             vision = nearby.get("vision", {})
             walkable_grid = vision.get("walkable_grid", [])
             player_pos = vision.get("player_pos", [0, 0])
+            exploration_data = vision.get("exploration", {})
+            
+            # Update exploration memory
+            current_level = exploration_data.get("current_level", 1)
+            if current_level != self.current_level:
+                # New level - reset exploration data
+                logger.info(f"Entered new level: {current_level}")
+                self.explored_positions.clear()
+                self.cleared_areas.clear()
+                self.current_level = current_level
+                self.level_start_time = time.time()
+            
+            # Mark current position as explored
+            pos_tuple = (player_pos[0], player_pos[1])
+            if pos_tuple not in self.explored_positions:
+                self.explored_positions.add(pos_tuple)
+                
+            # Check if current area is clear of monsters (can mark as cleared)
+            if not alive_monsters and pos_tuple not in self.cleared_areas:
+                self.cleared_areas.add(pos_tuple)
+                
+            # Extract stairs and object information from exploration data
+            stairs_visible = exploration_data.get("stairs_visible", False)
+            stairs_info = {}
+            if stairs_visible:
+                stairs_info = {
+                    "pos": exploration_data.get("stairs_pos", []),
+                    "type": exploration_data.get("stairs_type", ""),
+                    "distance": self._calculate_distance(player_pos, exploration_data.get("stairs_pos", []))
+                }
+            
+            # Extract objects (chests, barrels, etc.)
+            objects_data = exploration_data.get("objects", [])
             
             # Extract 5x5 grid centered on player
             compressed_grid = []
@@ -274,11 +333,75 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                         col_mid = len(row) // 2
                         compressed_grid.append(row[col_mid-2:col_mid+3])
             
+            # Add exploration progress info
+            exploration_progress = {
+                "explored_tiles": len(self.explored_positions),
+                "cleared_tiles": len(self.cleared_areas), 
+                "current_level": self.current_level,
+                "level_completion": f"{len(self.cleared_areas)}/{len(self.explored_positions)}" if self.explored_positions else "0/0"
+            }
+            
+            # Add stairs information if visible
+            if stairs_visible and stairs_info:
+                exploration_progress["stairs"] = stairs_info
+            
+            # Add nearby objects for exploration
+            if objects_data:
+                exploration_progress["objects"] = objects_data[:5]  # Limit to 5 closest objects
+            
+            # Add navigation awareness context
+            navigation_context = {
+                "stuck_counter": self.stuck_counter,
+                "is_stuck": self.stuck_counter >= self.stuck_threshold,
+                "position_changed": self.last_position != (player_pos[0], player_pos[1]) if self.last_position else True,
+            }
+            
+            # Analyze walkable directions for LLM awareness
+            walkable_directions = self._analyze_walkable_directions(player_pos, compressed_grid)
+            navigation_context["walkable_directions"] = walkable_directions
+            
+            # Check if direct path to common targets is blocked and add distance info
+            if exploration_progress.get("stairs"):
+                stairs_pos = exploration_progress["stairs"]["pos"]
+                direct_blocked = not self._is_direct_path_clear(player_pos, stairs_pos, compressed_grid)
+                stairs_distance = abs(stairs_pos[0] - player_pos[0]) + abs(stairs_pos[1] - player_pos[1])
+                navigation_context["stairs_path_blocked"] = direct_blocked
+                navigation_context["stairs_distance"] = stairs_distance
+            
+            # Special handling for town -> dungeon entrance (ONLY when in town)
+            if data.get("player", {}).get("in_town", False):
+                dungeon_entrance = [25, 20]  # Known dungeon entrance coordinates
+                entrance_distance = abs(dungeon_entrance[0] - player_pos[0]) + abs(dungeon_entrance[1] - player_pos[1])
+                entrance_blocked = not self._is_direct_path_clear(player_pos, dungeon_entrance, compressed_grid)
+                
+                # Calculate next waypoint for long distances
+                if entrance_distance > 10:
+                    next_waypoint = self._calculate_next_waypoint(player_pos, dungeon_entrance)
+                    navigation_context["suggested_waypoint"] = next_waypoint
+                    navigation_context["waypoint_distance"] = abs(next_waypoint[0] - player_pos[0]) + abs(next_waypoint[1] - player_pos[1])
+                else:
+                    navigation_context["suggested_waypoint"] = dungeon_entrance
+                    navigation_context["waypoint_distance"] = entrance_distance
+                    
+                navigation_context["dungeon_entrance_distance"] = entrance_distance
+                navigation_context["dungeon_entrance_blocked"] = entrance_blocked
+                navigation_context["is_far_from_entrance"] = entrance_distance > 10
+                navigation_context["location"] = "town"
+            else:
+                # In dungeon - clear town navigation, focus on exploration/combat
+                navigation_context["location"] = "dungeon"
+                navigation_context["priority"] = "combat_and_exploration"
+                # Clear town-specific navigation hints
+                navigation_context["suggested_waypoint"] = None
+                navigation_context["is_far_from_entrance"] = False
+            
             return {
                 "player": compressed_player,
                 "monsters": essential_monsters,
                 "items": essential_items,
-                "walkable": compressed_grid  # 5x5 grid only
+                "walkable": compressed_grid,  # 5x5 grid only
+                "exploration": exploration_progress,
+                "navigation": navigation_context
             }
             
         except Exception as e:
@@ -341,6 +464,48 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                 return False
         
         return True
+        
+    def detect_stuck_loop(self, intent: Dict[str, Any]) -> bool:
+        """Detect if we're stuck in a loop with same intent."""
+        import time
+        
+        # Check for identical intents
+        if self.last_intent == intent:
+            self.same_intent_count += 1
+            if self.same_intent_count >= self.max_same_intent:
+                logger.warning(f"Detected stuck loop - same intent {self.same_intent_count} times: {intent}")
+                return True
+        else:
+            self.same_intent_count = 0
+            self.last_intent = intent.copy()
+            
+        # Check attack cooldowns for specific monsters
+        if intent.get("action") == "attack":
+            monster_id = intent.get("params", {}).get("x")
+            if monster_id and monster_id != -1:  # -1 means position attack
+                current_time = time.time()
+                
+                # Clean old attack history
+                if monster_id in self.monster_attack_history:
+                    self.monster_attack_history[monster_id] = [
+                        t for t in self.monster_attack_history[monster_id] 
+                        if current_time - t < 5.0  # Keep last 5 seconds
+                    ]
+                    
+                    # Check if attacking same monster too frequently
+                    recent_attacks = self.monster_attack_history[monster_id]
+                    if len(recent_attacks) >= 3:
+                        last_attack_time = recent_attacks[-1]
+                        if current_time - last_attack_time < self.attack_cooldown:
+                            logger.warning(f"Attack cooldown active for monster {monster_id}")
+                            return True
+                
+                # Record this attack
+                if monster_id not in self.monster_attack_history:
+                    self.monster_attack_history[monster_id] = []
+                self.monster_attack_history[monster_id].append(current_time)
+        
+        return False
 
     async def process_game_state(self, state_msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process game state and generate intent via LLM."""
@@ -351,6 +516,20 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
             return None
             
         try:
+            # Debug: Log player position from raw state
+            player_data = state_msg.get('data', {}).get('player', {})
+            player_pos = player_data.get('pos', [0, 0])
+            in_town = player_data.get('in_town', False)
+            logger.info(f"🗺️  PROCESSING: Player at ({player_pos[0]},{player_pos[1]}) in_town={in_town}")
+            
+            # Detect if player is stuck
+            current_pos_tuple = (player_pos[0], player_pos[1])
+            if self.last_position == current_pos_tuple:
+                self.stuck_counter += 1
+                logger.info(f"🚧 STUCK DETECTION: Counter={self.stuck_counter}/{self.stuck_threshold}")
+            else:
+                self.stuck_counter = 0
+                self.last_position = current_pos_tuple
             current_tick = state_msg.get("tick", 0)
             self.last_processed_tick = current_tick
             # Build prompt
@@ -388,6 +567,50 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                 
             # Update timing for next decision
             self.last_decision_time = time.time()
+            
+            # Check if we need pathfinding assistance due to being stuck
+            # BUT NEVER override combat actions - combat always has priority
+            if self.stuck_counter >= self.stuck_threshold and response:
+                try:
+                    llm_intent = json.loads(response)
+                    
+                    # CRITICAL: Never override combat actions
+                    if llm_intent.get('action') == 'attack':
+                        logger.info(f"⚔️  COMBAT PRIORITY: Keeping attack action despite being stuck")
+                        # Don't override attack actions
+                    elif llm_intent.get('action') == 'move':
+                        # Only override movement if we're not in immediate danger
+                        compressed_state = self.compress_game_state(state_msg)
+                        monsters = compressed_state.get('monsters', [])
+                        
+                        # Check for immediate threats (distance <= 2)
+                        immediate_threats = [m for m in monsters if m.get('distance', 999) <= 2]
+                        if immediate_threats:
+                            logger.info(f"⚔️  COMBAT EMERGENCY: {len(immediate_threats)} threats at melee range - NO PATHFINDING")
+                            # Force attack on closest threat instead of movement
+                            closest_threat = min(immediate_threats, key=lambda m: m.get('distance', 999))
+                            response = json.dumps({
+                                "type": "intent",
+                                "action": "attack",
+                                "params": {"x": closest_threat['id'], "y": -1}
+                            })
+                            logger.info(f"⚔️  EMERGENCY ATTACK: Targeting {closest_threat['name']} (ID:{closest_threat['id']})")
+                        else:
+                            # Safe to do pathfinding assistance
+                            target_pos = [llm_intent['params']['x'], llm_intent['params']['y']]
+                            walkable_grid = compressed_state.get('walkable', [])
+                            
+                            better_pos = self._find_walkable_path(player_pos, target_pos, walkable_grid)
+                            if better_pos:
+                                logger.info(f"🧭 PATHFINDING OVERRIDE: LLM wanted {target_pos}, suggesting {better_pos}")
+                                response = json.dumps({
+                                    "type": "intent",
+                                    "action": "move", 
+                                    "params": {"x": better_pos[0], "y": better_pos[1]}
+                                })
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"Failed to parse LLM response for pathfinding: {e}")
+            
             data = state_msg.get("data", {})
             player = data.get("player", {})
             self.last_player_pos = player.get("pos", [0, 0])
@@ -408,11 +631,39 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                         intent = llm_response["intent"]
                         feedback = llm_response["feedback"]
                         action_type = intent.get("action", "unknown")
+                        # Check for stuck loops before executing
+                        if self.detect_stuck_loop(intent):
+                            logger.warning("🔄 Breaking stuck loop - trying different strategy")
+                            # Reset loop counter and try a movement instead
+                            self.same_intent_count = 0
+                            fallback_intent = {
+                                "type": "intent",
+                                "action": "move", 
+                                "params": {"x": intent["params"]["x"] + 2, "y": intent["params"].get("y", 0) + 1}
+                            }
+                            logger.info(f"🤖 AI: {feedback} → OVERRIDE: Moving to break attack loop")
+                            logger.info(f"➡️  MOVE (fallback): {fallback_intent}")
+                            return fallback_intent
+                        
                         logger.info(f"🤖 AI: {feedback}")
                         logger.info(f"➡️  {action_type.upper()}: {intent}")
                         return intent
                     elif "type" in llm_response and llm_response.get("type") == "intent":
                         # Direct intent format (backward compatibility)
+                        if self.detect_stuck_loop(llm_response):
+                            logger.warning("🔄 Breaking stuck loop - trying different strategy")
+                            self.same_intent_count = 0
+                            # Try moving to a different position
+                            player = compressed_state.get("player", {})
+                            pos = player.get("pos", [50, 50])
+                            fallback_intent = {
+                                "type": "intent",
+                                "action": "move", 
+                                "params": {"x": pos[0] + 3, "y": pos[1] + 2}
+                            }
+                            logger.info(f"➡️  MOVE (loop-break): {fallback_intent}")
+                            return fallback_intent
+                        
                         action_type = llm_response.get("action", "unknown")
                         logger.info(f"➡️  {action_type.upper()}: {llm_response}")
                         return llm_response
@@ -438,6 +689,131 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
         except Exception as e:
             logger.error(f"Error processing game state: {e}")
             return None
+            
+    def _calculate_distance(self, pos1, pos2):
+        """Calculate Euclidean distance between two positions"""
+        if not pos1 or not pos2 or len(pos1) < 2 or len(pos2) < 2:
+            return 999  # Invalid position
+        return int(((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2) ** 0.5)
+        
+    def _find_walkable_path(self, current_pos, target_pos, walkable_grid):
+        """Find a walkable intermediate position toward target"""
+        if not walkable_grid or not current_pos or not target_pos:
+            return None
+            
+        # Calculate total distance and direction
+        dx = target_pos[0] - current_pos[0]
+        dy = target_pos[1] - current_pos[1]
+        total_distance = abs(dx) + abs(dy)  # Manhattan distance
+        
+        # For long distances, take smaller steps (max 3-5 tiles per move)
+        max_step = 3 if total_distance > 10 else 1
+        
+        # Normalize movement to reasonable step size
+        step_x = max(-max_step, min(max_step, dx))
+        step_y = max(-max_step, min(max_step, dy))
+        
+        # Try direct path first (smaller step toward target)
+        next_pos = [current_pos[0] + step_x, current_pos[1] + step_y]
+        if self._is_position_walkable(next_pos, current_pos, walkable_grid):
+            logger.info(f"🧭 INCREMENTAL PATH: Moving {step_x},{step_y} toward target (distance={total_distance})")
+            return next_pos
+            
+        # If blocked, try alternative paths with smaller steps
+        alternatives = [
+            [current_pos[0] + step_x, current_pos[1]],  # Move X only
+            [current_pos[0], current_pos[1] + step_y],  # Move Y only
+            [current_pos[0] + (1 if step_x > 0 else -1), current_pos[1]],  # Single step X
+            [current_pos[0], current_pos[1] + (1 if step_y > 0 else -1)],  # Single step Y
+            [current_pos[0] - (1 if step_x > 0 else -1), current_pos[1]],  # Opposite X
+            [current_pos[0], current_pos[1] - (1 if step_y > 0 else -1)],  # Opposite Y
+        ]
+        
+        for alt_pos in alternatives:
+            if self._is_position_walkable(alt_pos, current_pos, walkable_grid):
+                logger.info(f"🧭 PATHFINDING: Direct path blocked, trying alternative {alt_pos}")
+                return alt_pos
+                
+        return None
+        
+    def _is_position_walkable(self, target_pos, current_pos, walkable_grid):
+        """Check if a position is walkable using the walkable grid"""
+        if not walkable_grid or len(walkable_grid) < 5 or len(walkable_grid[0]) < 5:
+            return True  # Default to walkable if no grid data
+            
+        # Grid is 5x5 centered on current position
+        grid_center = 2
+        offset_x = target_pos[0] - current_pos[0]
+        offset_y = target_pos[1] - current_pos[1]
+        
+        grid_x = grid_center + offset_x
+        grid_y = grid_center + offset_y
+        
+        # Check bounds
+        if grid_x < 0 or grid_x >= 5 or grid_y < 0 or grid_y >= 5:
+            return True  # Outside grid, assume walkable
+            
+        return walkable_grid[grid_y][grid_x] == True
+        
+    def _analyze_walkable_directions(self, current_pos, walkable_grid):
+        """Analyze which directions are walkable for LLM awareness"""
+        if not walkable_grid or len(walkable_grid) < 5:
+            return ["north", "south", "east", "west"]  # Default all walkable
+            
+        directions = []
+        # Check 4 cardinal directions from center (2,2)
+        if walkable_grid[1][2]:  # North
+            directions.append("north")
+        if walkable_grid[3][2]:  # South  
+            directions.append("south")
+        if walkable_grid[2][3]:  # East
+            directions.append("east")
+        if walkable_grid[2][1]:  # West
+            directions.append("west")
+            
+        return directions
+        
+    def _is_direct_path_clear(self, start_pos, target_pos, walkable_grid):
+        """Check if direct path to target is clear (simplified check)"""
+        if not walkable_grid or not start_pos or not target_pos:
+            return True
+            
+        # Simple check: see if we can move 1 step toward target
+        dx = target_pos[0] - start_pos[0]
+        dy = target_pos[1] - start_pos[1]
+        
+        step_x = 1 if dx > 0 else -1 if dx < 0 else 0
+        step_y = 1 if dy > 0 else -1 if dy < 0 else 0
+        
+        next_pos = [start_pos[0] + step_x, start_pos[1] + step_y]
+        return self._is_position_walkable(next_pos, start_pos, walkable_grid)
+        
+    def _calculate_next_waypoint(self, current_pos, final_target):
+        """Calculate the next intermediate waypoint toward final target"""
+        dx = final_target[0] - current_pos[0]
+        dy = final_target[1] - current_pos[1]
+        distance = abs(dx) + abs(dy)
+        
+        # Take steps of ~5-8 tiles for good progress
+        step_size = min(8, max(3, distance // 4))
+        
+        # Calculate direction unit vector
+        if abs(dx) + abs(dy) == 0:
+            return current_pos  # Already at target
+            
+        # Normalize and scale
+        step_x = int(step_size * dx / distance) if distance > 0 else 0
+        step_y = int(step_size * dy / distance) if distance > 0 else 0
+        
+        waypoint = [current_pos[0] + step_x, current_pos[1] + step_y]
+        
+        # Ensure we don't overshoot
+        if abs(waypoint[0] - final_target[0]) > abs(dx):
+            waypoint[0] = final_target[0]
+        if abs(waypoint[1] - final_target[1]) > abs(dy):
+            waypoint[1] = final_target[1]
+            
+        return waypoint
 
     async def run(self):
         """Main server loop."""
