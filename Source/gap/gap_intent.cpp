@@ -1,6 +1,7 @@
 #include "gap_intent.h"
 #include "gap_json.h"
 #include "../player.h"
+#include "../monster.h"
 #include "../cursor.h"
 #include "../control.h"
 #include "../engine/point.hpp"
@@ -108,10 +109,54 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
         return false;
     }
     
-    Point target(x, y);
-    
-    if (!InDungeonBounds(target)) {
-        return false;
+    // Check if we have a monster ID passed as x (when y is -1)
+    // This allows attacking specific monsters by ID
+    if (y == -1) {
+        int monsterId = x;
+        if (monsterId >= 0 && monsterId < MaxMonsters) {
+            const auto& monster = Monsters[monsterId];
+            
+            // Check if monster is alive
+            if (monster.hitPoints <= 0) {
+                return false;
+            }
+            
+            // Check if monster is in range (reasonable attack range)
+            Point monsterPos = monster.position.tile;
+            Point playerPos = player.position.tile;
+            int dx = std::abs(monsterPos.x - playerPos.x);
+            int dy = std::abs(monsterPos.y - playerPos.y);
+            
+            // Allow attacking monsters within 15 tiles
+            if (dx > 15 || dy > 15) {
+                return false;
+            }
+            
+            // Use appropriate attack command based on weapon type
+            if (player.UsesRangedWeapon()) {
+                NetSendCmdParam1(true, CMD_RATTACKID, monsterId);
+            } else {
+                NetSendCmdParam1(true, CMD_ATTACKID, monsterId);
+            }
+            
+            return true;
+        }
+    } else {
+        // Attack a position (x, y) - useful for area attacks
+        Point target(x, y);
+        
+        if (!InDungeonBounds(target)) {
+            return false;
+        }
+        
+        // Use appropriate attack command for position
+        if (player.UsesRangedWeapon()) {
+            NetSendCmdLoc(MyPlayerId, true, CMD_RATTACKXY, target);
+        } else {
+            NetSendCmdLoc(MyPlayerId, true, CMD_SATTACKXY, target);
+        }
+        
+        return true;
     }
     
     return false;
