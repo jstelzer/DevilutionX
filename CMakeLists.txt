@@ -105,6 +105,9 @@ option(WIN_NSIS "Generate an NSIS installer" OFF)
 cmake_dependent_option(DISABLE_TCP "Disable TCP multiplayer option" OFF "NOT NONET" ON)
 cmake_dependent_option(DISABLE_ZERO_TIER "Disable ZeroTier multiplayer option" OFF "NOT NONET" ON)
 
+# GAP (Game Agent Protocol) option
+option(ENABLE_GAP "Enable Game Agent Protocol for AI agents" OFF)
+
 # Graphics options
 if(NOT USE_SDL1)
   set(DEVILUTIONX_DISPLAY_TEXTURE_FORMAT "SDL_PIXELFORMAT_RGB888" CACHE STRING "Texture format for DevilutionX textures when using the GPU renderer")

@@ -859,6 +859,16 @@ if(DEVILUTIONX_SCREENSHOT_FORMAT STREQUAL DEVILUTIONX_SCREENSHOT_FORMAT_PNG)
   )
 endif()
 
+if(ENABLE_GAP)
+  list(APPEND libdevilutionx_SRCS
+    gap/gap_core.cpp
+    gap/gap_ipc.cpp
+    gap/gap_state.cpp
+    gap/gap_intent.cpp
+    gap/gap_json.cpp
+  )
+endif()
+
 add_devilutionx_object_library(libdevilutionx ${libdevilutionx_SRCS})
 target_include_directories(libdevilutionx PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_link_dependencies(libdevilutionx PUBLIC
@@ -943,6 +953,10 @@ file(GENERATE OUTPUT ${CONFIG_PATH} CONTENT
 if(DISCORD_INTEGRATION)
   target_compile_definitions(libdevilutionx PRIVATE DISCORD)
   target_link_libraries(libdevilutionx PRIVATE discord discord_game_sdk)
+endif()
+
+if(ENABLE_GAP)
+  target_compile_definitions(libdevilutionx PUBLIC ENABLE_GAP)
 endif()
 
 if(SCREEN_READER_INTEGRATION)

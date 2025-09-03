@@ -32,6 +32,9 @@
 #include "doom.h"
 #include "encrypt.h"
 #include "engine/backbuffer_state.hpp"
+#ifdef ENABLE_GAP
+#include "gap/gap_core.h"
+#endif
 #include "engine/clx_sprite.hpp"
 #include "engine/demomode.h"
 #include "engine/dx.h"
@@ -849,6 +852,11 @@ void RunGameLoop(interface_mode uMsg)
 	StartGame(uMsg);
 	assert(HeadlessMode || ghMainWnd);
 	EventHandler previousHandler = SetEventHandler(GameEventHandler);
+	
+#ifdef ENABLE_GAP
+	gap::GapCore::Instance().Initialize();
+#endif
+	
 	run_delta_info();
 	gbRunGame = true;
 	gbProcessPlayers = IsDiabloAlive(true);
@@ -937,6 +945,11 @@ void RunGameLoop(interface_mode uMsg)
 	scrollrt_draw_game_screen();
 	previousHandler = SetEventHandler(previousHandler);
 	assert(HeadlessMode || previousHandler == GameEventHandler);
+	
+#ifdef ENABLE_GAP
+	gap::GapCore::Instance().Shutdown();
+#endif
+	
 	FreeGame();
 
 	if (cineflag) {
@@ -3360,6 +3373,7 @@ tl::expected<void, std::string> LoadGameLevel(bool firstflag, lvl_entry lvldir)
 
 bool game_loop(bool bStartup)
 {
+	static uint32_t game_tick = 0;
 	const uint16_t wait = bStartup ? sgGameInitInfo.nTickRate * 3 : 3;
 
 	for (unsigned i = 0; i < wait; i++) {
@@ -3368,8 +3382,18 @@ bool game_loop(bool bStartup)
 			return false;
 		}
 		TimeoutCursor(false);
+		
+#ifdef ENABLE_GAP
+		gap::GapCore::Instance().ProcessIntents(game_tick);
+#endif
+		
 		GameLogic();
 		ClearLastSentPlayerCmd();
+		
+#ifdef ENABLE_GAP
+		gap::GapCore::Instance().OnGameTick(game_tick);
+		game_tick++;
+#endif
 
 		if (!gbRunGame || !gbIsMultiplayer || demo::IsRunning() || demo::IsRecording() || !nthread_has_500ms_passed())
 			break;

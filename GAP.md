@@ -1,249 +1,394 @@
+# GAP: Game Agent Protocol (v0.2 Draft)
 
-# GAP: Game Agent Protocol (v0.1 Draft)
-
-**A lightweight, open protocol for real-time AI co-op and automation in games.**  
+**A lightweight protocol for AI agents to play games cooperatively with humans**  
 **License:** Spec under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); reference implementations under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 ---
 
-## 1. Goals & Philosophy
+## 1. Vision & Scope
 
-GAP exists to let **AI agents** (local or remote) act as co-op partners, testers, or automated controllers for games with minimal friction.  
+GAP enables AI agents to act as co-op partners in games, starting with DevilutionX as the reference implementation. The protocol prioritizes:
 
-- **Engine-agnostic:** Works for ARPGs like Diablo, FPS like Doom, RPGs like Baldur's Gate.  
-- **Real-time & low-latency:** Targets human-like reaction times (~150–200 ms).  
-- **Safe & open:** Free to use, simple to embed, permissively licensed, no patents.  
-- **Deterministic:** Commands integrate with game logic directly, not via OS input hacks.  
-- **Extensible:** Can grow to support replay, multi-agent, or learning scenarios.
+- **Practical implementation** over theoretical perfection
+- **Minimal invasiveness** to existing game code
+- **Gradual adoption** through compile-time flags
+- **Local-first** operation before network support
+
+### 1.1 Non-Goals for v0.2
+- Cross-game compatibility (DevilutionX specific for now)
+- Network multiplayer AI agents (local single-player only)
+- Perfect state representation (minimal viable state)
+- Production readiness (proof-of-concept focus)
 
 ---
 
-## 2. High-Level Architecture
-
+## 2. Architecture Overview
 
 ```
-Client               Server
-  |    hello --------> |
-  | <------- hello     |
-  | <== state@30Hz ==  |
-  | intent(use_pot) -->|
-  | <----- ack         |
-  | <== state@30Hz ==  |
-
+Game Process                    Agent Process
++-----------------+            +------------------+
+| DevilutionX     |            | Python/C++ Agent |
+| +-------------+ |            |                  |
+| | Game Loop   | |  IPC/Pipe  |                  |
+| | - Tick: var | <----------> | - Read state     |
+| | - 20-50 Hz  | |            | - Plan actions   |
+| +-------------+ |            | - Send intents   |
++-----------------+            +------------------+
 ```
 
-- **State**: Game publishes world/player info at fixed cadence (~30–40 Hz).  
-- **Intents**: Agent sends high-level actions (move, cast, pickup, etc.).  
-- **Transport**: Duplex WebSocket with JSON messages (MVP).  
+### 2.1 Integration Points
+
+GAP hooks into three existing DevilutionX systems:
+
+1. **Game Loop** (`game_loop()` in diablo.cpp:3361)
+   - Extract state after world update
+   - Apply intents before next tick
+
+2. **Input System** (`GameEventHandler()` in diablo.cpp:715)
+   - Inject agent commands alongside SDL events
+   - Respect UI state machine (menus, dialogs)
+
+3. **Network Layer** (future: `multi_process_network_packets()`)
+   - Eventually support multiplayer sync
+   - For now: single-player only
 
 ---
 
-## 3. Core Concepts
+## 3. Protocol Design
 
-### 3.1 Tick & Pacing
-- Game simulation ticks at its native rate (60–144 Hz etc.).  
-- GAP decouples via:
-  - **State cadence:** Publish every 25–33 ms (~30–40 Hz).  
-  - **Intent caps:** ≤10 intents/sec, ≤5 applied per tick.  
-  - **Coalescing:** Drop redundant move/aim commands in the same tick.  
+### 3.1 Transport Layer
 
-### 3.2 Headless Mode
-- `--headless` flag disables rendering/UI but keeps sim, netcode, and GAP active.  
-- Ideal for AI seats or CI testing.
+**Phase 1 (MVP):** Named pipes or Unix domain sockets
+- Path: `/tmp/devilutionx-gap.sock` (or Windows named pipe)
+- Format: Length-prefixed JSON messages (4-byte LE length + JSON)
+- No authentication needed (local only)
 
-### 3.3 Deterministic Input
-- Intents applied at the start of each tick before sim update.  
-- Uses existing engine APIs (`MovePlayerTo`, `CastSpell`, etc.), **not OS input events**.
+**Phase 2 (Future):** WebSocket upgrade
+- Allows remote agents and web-based tools
+- Add TLS and bearer token auth
 
----
+### 3.2 Tick Synchronization
 
-## 4. Transport: WebSocket Layer
+**Problem:** DevilutionX uses variable tick rates (20-50 Hz configurable)
 
-### 4.1 Connection
-- **Default:** `ws://127.0.0.1:7777/gap`  
-- **Subprotocol:** `gap.v0`  
-- **Auth:** Optional bearer token in handshake or first `auth` message.  
-
-### 4.2 Message Envelope
+**Solution:** Agent operates in "follower mode"
+- Game publishes state at its native tick rate
+- Each state message includes tick number and timestamp
+- Agent can send intents with target tick for scheduling
+- Agent adapts to game's actual tick rate dynamically
 
 ```json
 {
-  "type": "state" | "intent" | "ack" | "error" | "hello" | "ping" | "pong",
-  "seq": 12345,          // for intents + acks
-  "tick": 45123,         // sim tick from server
-  "ts": 1735432456,      // unix ms timestamp
-  "data": { ... }        // payload
-}
-```
-5. Message Types
-5.1 hello
-
-Capabilities + versioning. Sent by both sides on connect.
-```
-{
-  "type":"hello",
-  "data":{
-    "gap":"0.1.0",
-    "game":"DevilutionX",
-    "features":["headless","chatbridge"],
-    "rateLimits":{"intentsPerSec":10,"maxPerTick":5}
-  }
-}
-```
-
-5.2 state (Server → Client, ~30–40 Hz)
-
-Minimal ARPG example:
-
-```
-{
-  "type":"state",
+  "type": "state",
   "tick": 45123,
-  "data": {
-    "player": {
-      "id":0,"hp":72,"hpMax":100,"mana":40,"manaMax":90,
-      "pos":[123,87]
-    },
-    "actors":[{"id":42,"kind":"Skeleton","hp":38,"pos":[127,89]}],
-    "items":[{"id":9001,"name":"Short Sword","pos":[120,92]}],
-    "cooldowns":{"spell1":0,"heal":320},
-    "map":{"w":160,"h":112}
-  }
+  "tick_rate": 30,  // Current game tick rate
+  "timestamp": 1735432456789,
+  "data": { ... }
 }
 ```
 
-5.3 intent (Client → Server, rate-limited)
-```
-{
-  "type":"intent",
-  "seq": 1029,
-  "data": {
-    "cmd": "move_to",      // move_to | cast | use_potion | pickup | say | stop
-    "x":130,"y":88,        // per-command args
-    "slot":1,
-    "id":9001,
-    "text":"Portal NW",
-    "targetTick":45125     // optional scheduling
-  }
-}
+### 3.3 Rate Limiting Strategy
 
-```
+Respect game's input processing limits:
+- **State messages:** Published every N game ticks (configurable, default 2)
+- **Intent rate:** Max 1 intent per 2 game ticks
+- **Intent queue:** Max 3 pending intents
+- **Coalescing:** Combine redundant movement intents
 
-5.4 ack / error
-
-Server confirms or rejects intents.
-
-```
-{ "type":"ack", "seq":1029, "tick":45123 }
-{ "type":"error", "seq":1030, "err":"rate_limited" }
-
-```
-
-5.5 Heartbeats
-
-ping every 5s; reply with pong.
-
-Drop connection on ≥15s silence.
-
-6. Reference Implementation Plan
-6.1 Server (Game Side)
-
-Enable via: --gap-ws=127.0.0.1:7777
-
-Core modules:
-
-gap_ws.*: WebSocket server, JSON encoding, rate limits
-
-gap_intent.*: Intent structs + coalescing
-
-gap_state.*: State structs + collectors
-
-gap_input_mux.*: Merge SDL + IPC inputs
-
-Hook points:
-
-Start of tick: Drain intents (≤5/tick), apply via existing engine calls.
-
-After sim update: Publish state if pacer triggers.
-
-6.2 Client (Agent Side)
-
-Any language w/ WebSocket + JSON works.
-
-Python pilot:
-
-Reads state at 30 Hz
-
-Sends intent (potion if hp<25%, kite away from enemies)
-
-Optional: in-game say() for co-op chatter
-
-7. Security & Safety
-
-Auth: Optional bearer token.
-
-Local-only by default; wss:// + TLS for remote.
-
-Panic key: In-game hotkey disables all intent processing.
-
-Rate limits: Hard-coded + advertised in hello.
-
-Drop on overload: Never block game loop; skip frames if send buffer congested.
-
-8. Future Extensions
-
-Replay logs: (tick,state,intent) for debugging/training.
-
-Multi-agent: Multiple clients controlling different players.
-
-Voice hooks: TTS for in-game callouts.
-
-Native bindings: C, C++, Python, Rust SDKs.
-
-Non-ARPG schemas: FPS (aim, fire), RTS (select, build).
-
-9. Example Timing Diagram
-
-```
-Client               Server
-  |    hello --------> |
-  | <------- hello     |
-  | <== state@30Hz ==  |
-  | intent(use_pot) -->|
-  | <----- ack         |
-  | <== state@30Hz ==  |
-```
-
-10. Licensing & Governance
-
-Code: Apache-2.0 (patent grants, commercial-safe).
-
-Spec/docs: CC-BY-4.0 (attribution, remixable).
-
-Contributions: GitHub PRs; lightweight steering group if adoption grows.
-
-11. Minimal v0.1 Checklist
-
- WebSocket duplex channel (JSON)
-
- state, intent, ack, error, hello, ping/pong messages
-
- Pacing: 30–40 Hz state, ≤10 intents/sec, ≤5/tick applied
-
- Headless mode flag
-
- Rate limits + panic key
-
- Python pilot client
-
- DevilutionX adapter (move, cast, potion, chat)
-
-This is a living document. v0.1 aims for a working Diablo/DevilutionX demo; future versions will generalize schemas and add features.
-```
 ---
 
-This keeps the **vision big**, the **MVP scope tight**, and avoids burying us in micro-optimizations too early.  
+## 4. Message Protocol
 
-If you want, I can scaffold a **`gap-spec/` GitHub repo** with this Markdown, license files, and a skeleton reference implementation so you can start tracking issues and PRs. Do you want me to prep that next?
+### 4.1 Initialization Handshake
 
+```json
+// Agent → Game
+{
+  "type": "hello",
+  "version": "0.2.0",
+  "capabilities": ["move", "attack", "use_item"]
+}
+
+// Game → Agent
+{
+  "type": "hello",
+  "version": "0.2.0",
+  "tick_rate": 30,
+  "state_divisor": 2,  // State sent every 2 ticks
+  "game_mode": "single_player",
+  "capabilities": ["move", "attack", "use_item", "cast_spell"]
+}
 ```
+
+### 4.2 State Message (Game → Agent)
+
+**Minimal viable state for proof-of-concept:**
+
+```json
+{
+  "type": "state",
+  "tick": 45123,
+  "tick_rate": 30,
+  "timestamp": 1735432456789,
+  "data": {
+    "player": {
+      "hp": 72,
+      "hp_max": 100,
+      "mana": 40,
+      "mana_max": 90,
+      "pos": [48, 52],  // Tile coordinates
+      "level": 3,       // Dungeon level
+      "in_town": false
+    },
+    "nearby": {
+      // Only send entities within 20 tiles
+      "monsters": [
+        {"id": 42, "type": "SK", "pos": [51, 54], "hp_percent": 60}
+      ],
+      "items": [
+        {"id": 101, "pos": [45, 50]}  // No type info initially
+      ],
+      "other_players": []  // For future multiplayer
+    },
+    "ui_state": {
+      "in_menu": false,
+      "in_store": false,
+      "can_act": true
+    }
+  }
+}
+```
+
+### 4.3 Intent Message (Agent → Game)
+
+```json
+{
+  "type": "intent",
+  "action": "move",  // move|attack|use_potion|pickup
+  "params": {
+    "x": 50,
+    "y": 55
+  },
+  "target_tick": 45125  // Optional: schedule for future tick
+}
+```
+
+### 4.4 Response Messages
+
+```json
+// Success
+{
+  "type": "ack",
+  "intent_action": "move",
+  "executed_tick": 45125
+}
+
+// Failure
+{
+  "type": "error",
+  "reason": "invalid_position",
+  "detail": "Position [50, 55] is blocked"
+}
+```
+
+---
+
+## 5. Implementation Plan
+
+### 5.1 Phase 1: Minimal Proof of Concept (2-3 weeks)
+
+**Goal:** Agent can move player around town
+
+1. **Add compile flag:** `-DENABLE_GAP`
+2. **Create gap_core module:**
+   - `Source/gap/gap_core.cpp` - Main coordinator
+   - `Source/gap/gap_ipc.cpp` - IPC transport
+   - `Source/gap/gap_state.cpp` - State extraction
+   - `Source/gap/gap_intent.cpp` - Intent processing
+
+3. **Hook points:**
+   ```cpp
+   // In game_loop() after tick processing:
+   #ifdef ENABLE_GAP
+   if (gap_enabled && tick % state_divisor == 0) {
+       gap_publish_state(tick);
+   }
+   #endif
+   
+   // In game_loop() before player action:
+   #ifdef ENABLE_GAP
+   if (gap_enabled) {
+       gap_process_intents(tick);
+   }
+   #endif
+   ```
+
+4. **Python test agent:**
+   - Connect to pipe
+   - Read state
+   - Move randomly in town
+   - Validate movement
+
+### 5.2 Phase 2: Combat Capability (2-3 weeks)
+
+- Add attack/spell intents
+- Expand state: monster details, combat status
+- Simple kiting behavior demo
+
+### 5.3 Phase 3: Inventory & Items (3-4 weeks)
+
+- Inventory state representation
+- Pickup/drop/use intents
+- Potion management demo
+
+### 5.4 Phase 4: Polish & Release (2-3 weeks)
+
+- WebSocket transport option
+- Rate limiting & safety features
+- Documentation & examples
+- Basic test suite
+
+---
+
+## 6. Technical Challenges & Solutions
+
+### 6.1 Challenge: Complex Input State Machine
+
+**Issue:** DevilutionX has many UI modes (stores, menus, dialogs) that block normal input
+
+**Solution:** 
+- Include `ui_state` in every state message
+- Agent checks `can_act` flag before sending intents
+- Game validates all intents against current UI state
+
+### 6.2 Challenge: Multiplayer Synchronization
+
+**Issue:** DevilutionX uses deterministic lockstep with delta compression
+
+**Solution (Future):**
+- Agent runs on host only initially
+- Agent commands treated as host player input
+- Investigate running agents on all clients with seed sync
+
+### 6.3 Challenge: State Explosion
+
+**Issue:** Full game state is massive (all items, all monsters, full map)
+
+**Solution:**
+- Send only "visible" or "nearby" entities
+- Use view radius of 20 tiles
+- Add optional detailed state request for specific entities
+
+### 6.4 Challenge: Performance Impact
+
+**Issue:** JSON serialization and IPC overhead
+
+**Solution:**
+- State publishing configurable (every N ticks)
+- Use message pooling and pre-allocated buffers
+- Consider binary protocol (MessagePack) if needed
+
+---
+
+## 7. Safety & Control
+
+- **Kill switch:** F9 key disables GAP instantly
+- **Rate limits:** Hard-coded in game, not configurable by agent
+- **Validation:** Every intent validated against game rules
+- **Local only:** No network access in Phase 1
+- **Resource limits:** Max message size, queue depth
+
+---
+
+## 8. Example Agent (Python)
+
+```python
+import json
+import socket
+import struct
+
+class DevilutionXAgent:
+    def __init__(self):
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.connect("/tmp/devilutionx-gap.sock")
+        self.tick_rate = None
+        
+    def read_message(self):
+        length_bytes = self.sock.recv(4)
+        length = struct.unpack('<I', length_bytes)[0]
+        data = self.sock.recv(length)
+        return json.loads(data)
+    
+    def send_message(self, msg):
+        data = json.dumps(msg).encode()
+        self.sock.send(struct.pack('<I', len(data)) + data)
+    
+    def run(self):
+        # Handshake
+        self.send_message({"type": "hello", "version": "0.2.0"})
+        hello = self.read_message()
+        self.tick_rate = hello["tick_rate"]
+        
+        # Main loop
+        while True:
+            msg = self.read_message()
+            if msg["type"] == "state":
+                self.on_state(msg["data"])
+    
+    def on_state(self, state):
+        # Simple: move toward center of town
+        px, py = state["player"]["pos"]
+        if px < 48:
+            self.send_message({
+                "type": "intent",
+                "action": "move",
+                "params": {"x": px + 1, "y": py}
+            })
+
+if __name__ == "__main__":
+    agent = DevilutionXAgent()
+    agent.run()
+```
+
+---
+
+## 9. Success Metrics
+
+Phase 1 is successful if:
+- Agent can navigate town without crashes
+- Less than 50ms latency per intent
+- Under 5% CPU overhead
+- Clean integration (< 500 lines of GAP code)
+
+---
+
+## 10. Future Directions
+
+- **Multi-agent:** Multiple AI players in same game
+- **Learning:** Record state/action pairs for ML training
+- **Modding:** Expose GAP to Lua scripting layer
+- **Other games:** Abstract protocol for Doom, OpenTTD, etc.
+- **Voice:** Natural language commands → intents
+
+---
+
+## Appendix: DevilutionX Specific Notes
+
+### Coordinate Systems
+- Tile coordinates: Used for position (0-112 typical range)
+- Pixel coordinates: Not exposed to agents
+- Direction: 8-way (N, NE, E, SE, S, SW, W, NW)
+
+### Monster Types (abbreviated in state)
+- "SK" = Skeleton
+- "ZO" = Zombie  
+- "FA" = Fallen One
+- (Full mapping in implementation)
+
+### Item Categories (future)
+- Simplified to: weapon, armor, potion, scroll, gold, quest
+- Full item details available via detailed request
+
+---
+
+*This document represents lessons learned from initial analysis of DevilutionX source. The protocol is intentionally simplified from v0.1 to focus on achievable implementation.*
