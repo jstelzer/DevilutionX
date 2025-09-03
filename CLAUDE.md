@@ -579,6 +579,56 @@ class GapStateManager:
 
 ---
 
+## Recent Major Updates
+
+### ✅ Chat Message Separation (September 2025)
+Implemented separate chat message type in GAP protocol to solve payload bloat and LLM truncation issues:
+
+**Problem Solved:**
+- Chat data was bundled with every state message (30k+ characters)
+- LLM responses getting truncated due to oversized payloads  
+- Delayed chat responses waiting for state updates
+
+**Architecture Changes:**
+```cpp
+// C++ Side - Immediate chat transmission
+void GAPChatHandler::SendGAPChatMessage(std::string_view text, std::string_view from) {
+    gap::JsonBuilder chatMessage;
+    chatMessage.BeginObject()
+        .AddString("type", "chat")
+        .AddString("text", std::string(text))
+        .AddString("from", std::string(from))
+        .AddUInt("timestamp", static_cast<uint32_t>(time(nullptr) * 1000))
+        .EndObject();
+    
+    auto& gapCore = gap::GapCore::Instance();
+    gapCore.SendMessage(chatMessage.ToString());
+}
+```
+
+```python
+# Python Side - Separate chat processing  
+async def process_chat_message(self, chat_msg: Dict[str, Any]) -> None:
+    if chat_msg.get('from') == "player":
+        # Lightweight chat prompt without full game state
+        prompt = f"{self.base_prompt}\n\nPlayer said: \"{text}\"\n\nRespond with a chat intent..."
+        # Direct LLM response without state overhead
+```
+
+**Benefits Achieved:**
+- 🔥 **Smaller state payloads**: Removed ~30% of JSON data from state messages
+- ⚡ **Instant chat responses**: Messages sent immediately, not bundled with state
+- 🧠 **No more truncation**: Lightweight chat processing prevents LLM context overflow
+- 🎯 **Cleaner separation**: Chat conversation vs game state clearly distinguished
+
+**Files Modified:**
+- `Source/gap/gap_chat.h/cpp` - Added `SendGAPChatMessage()` method
+- `Source/gap/gap_core.h/cpp` - Exposed public `SendMessage()` API
+- `Source/gap/gap_state.cpp` - Removed chat data bundling 
+- `tools/gap/mcp_server.py` - Added "chat" message type handler
+
+---
+
 ### Technical Debt & Improvements
 - Replace custom JSON with nlohmann/json for better performance
 - Add configuration file for GAP settings (socket path, tick divisor, etc.)
