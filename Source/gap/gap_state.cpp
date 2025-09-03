@@ -1,5 +1,8 @@
 #include "gap_state.h"
 #include "gap_json.h"
+#ifdef ENABLE_GAP
+#include "gap_chat.h"
+#endif
 #include "../player.h"
 #include "../monster.h"
 #include "../items.h"
@@ -111,7 +114,57 @@ std::string GapStateExtractor::ExtractPlayerState() {
         .AddInt("mana_max", player._pMaxMana >> 6)
         .AddArray("pos", {player.position.tile.x, player.position.tile.y})
         .AddInt("level", static_cast<int>(currlevel))
-        .AddBool("in_town", leveltype == DTYPE_TOWN)
+        .AddBool("in_town", leveltype == DTYPE_TOWN);
+    
+    // Add belt information
+    std::stringstream belt_json;
+    belt_json << "[";
+    for (int i = 0; i < MaxBeltItems; i++) {
+        if (i > 0) belt_json << ",";
+        
+        const auto& belt_item = player.SpdList[i];
+        if (!belt_item.isEmpty()) {
+            std::string itemName = std::string(belt_item.getName());
+            std::string itemType = "unknown";
+            
+            if (belt_item._itype == ItemType::Misc) {
+                switch (belt_item._iMiscId) {
+                    case IMISC_HEAL:
+                    case IMISC_FULLHEAL:
+                        itemType = "hp";
+                        break;
+                    case IMISC_MANA:
+                    case IMISC_FULLMANA:
+                        itemType = "mp";
+                        break;
+                    case IMISC_REJUV:
+                    case IMISC_FULLREJUV:
+                        itemType = "rejuv";
+                        break;
+                    default:
+                        itemType = "misc";
+                        break;
+                }
+            }
+            
+            belt_json << "{\"t\":\"" << itemType << "\",\"n\":" << belt_item._iCurs + 1 << "}";
+        } else {
+            belt_json << "null";
+        }
+    }
+    belt_json << "]";
+    
+    state.AddRaw("belt", belt_json.str());
+    
+    // Add spell information (basic implementation)
+    std::stringstream spells_json;
+    spells_json << "{";
+    // For now, just add placeholders - full spell integration needs more work
+    spells_json << "\"slot1\":\"" << "Unknown" << "\",";
+    spells_json << "\"slot2\":\"" << "Unknown" << "\"";
+    spells_json << "}";
+    
+    state.AddRaw("spells", spells_json.str())
         .EndObject();
     
     return state.ToString();
@@ -365,17 +418,98 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
         exploration_json << ",\"stairs_pos\":[" << stairs_pos.x << "," << stairs_pos.y << "],";
         exploration_json << "\"stairs_type\":\"" << stairs_type << "\"";
     }
+    // Add frontier detection for systematic exploration
+    std::stringstream frontiers_json;
+    frontiers_json << "[";
+    bool first_frontier = true;
+    
+    // Simple frontier detection: walkable tiles adjacent to explored but not yet visited areas
+    for (int dy = -lightRadius; dy <= lightRadius; dy++) {
+        for (int dx = -lightRadius; dx <= lightRadius; dx++) {
+            Point checkPos = {playerPos.x + dx, playerPos.y + dy};
+            
+            if (InDungeonBounds(checkPos) && IsTileNotSolid(checkPos)) {
+                // Check if this tile is adjacent to unexplored areas
+                bool is_frontier = false;
+                for (int ndy = -1; ndy <= 1 && !is_frontier; ndy++) {
+                    for (int ndx = -1; ndx <= 1; ndx++) {
+                        Point neighbor = {checkPos.x + ndx, checkPos.y + ndy};
+                        if (InDungeonBounds(neighbor)) {
+                            // Simple heuristic: if tile is walkable but at edge of light radius
+                            int dist_from_player = std::max(std::abs(neighbor.x - playerPos.x), 
+                                                           std::abs(neighbor.y - playerPos.y));
+                            if (dist_from_player >= lightRadius - 1) {
+                                is_frontier = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (is_frontier) {
+                    if (!first_frontier) frontiers_json << ",";
+                    first_frontier = false;
+                    frontiers_json << "[" << checkPos.x << "," << checkPos.y << "]";
+                }
+            }
+        }
+    }
+    frontiers_json << "]";
+    
     exploration_json << ",\"objects\":" << objects_json.str();
+    exploration_json << ",\"frontiers\":" << frontiers_json.str();
     exploration_json << "}";
     
     visionData.AddRaw("exploration", exploration_json.str())
         .EndObject();
     
+    // Add chat messages for AI agent awareness
+    std::stringstream chat_json;
+    chat_json << "{\"recent_messages\":[";
+#ifdef ENABLE_GAP
+    auto recentMessages = GAPChatHandler::getInstance().GetRecentMessages(1);
+    std::cout << "GAP: Building state - found " << recentMessages.size() << " recent chat messages" << std::endl;
+    bool first_chat_msg = true;
+    for (const auto& msg : recentMessages) {
+        if (!first_chat_msg) chat_json << ",";
+        first_chat_msg = false;
+        
+        std::cout << "GAP: Adding to state - From: '" << msg.from << "', Text: '" << msg.text << "'" << std::endl;
+        
+        chat_json << "{";
+        chat_json << "\"timestamp\":" << msg.timestamp << ",";
+        chat_json << "\"from\":\"" << msg.from << "\",";
+        chat_json << "\"text\":\"";
+        
+        // Escape quotes in message text
+        for (char c : msg.text) {
+            if (c == '"') chat_json << "\\\"";
+            else if (c == '\\') chat_json << "\\\\";
+            else chat_json << c;
+        }
+        
+        chat_json << "\"}";
+    }
+    
+    // Log final chat JSON if there are messages
+    if (recentMessages.size() > 0) {
+        std::cout << "GAP: Chat JSON being sent to agent: " << chat_json.str() << std::endl;
+    }
+#endif
+    chat_json << "]}";
+    
+    std::cout << "GAP: Final chat JSON: " << chat_json.str() << std::endl;
+
+    std::cout << "GAP: About to add chat field to result JSON" << std::endl;
+    
     result.AddRaw("monsters", monsters_json.str())
           .AddRaw("items", items_json.str())
           .AddRaw("other_players", "[]")
           .AddRaw("vision", visionData.ToString())
+          .AddRaw("chat", chat_json.str())
           .EndObject();
+    
+    std::cout << "GAP: Added chat field to result JSON" << std::endl;
     
     return result.ToString();
 }

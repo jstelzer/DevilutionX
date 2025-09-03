@@ -100,7 +100,7 @@ class CombatAgent:
         hello_msg = {
             "type": "hello",
             "version": "0.2.0",
-            "capabilities": ["move", "attack", "use_item"]
+            "capabilities": ["move", "attack", "use_item", "chat"]
         }
         
         # Add password if provided
@@ -185,6 +185,9 @@ class CombatAgent:
         self.tick_count += 1
         current_tick = state.get('tick', 0)
         
+        # Process chat messages first
+        self.process_chat_messages(state)
+        
         # Extract player info
         player = state.get('data', {}).get('player', {})
         if player:
@@ -216,6 +219,12 @@ class CombatAgent:
         #     if len(monsters) > 0:
         #         first_monster = monsters[0]
         #         print(f"    First monster: {first_monster}")
+        
+        # Test chat every 300 ticks (~10 seconds at 30fps)
+        if self.tick_count % 300 == 0:
+            test_message = f"AI Agent Status: HP {self.player_hp}/{self.player_hp_max}, Tick {current_tick}"
+            print(f"  DEBUG: Sending periodic status message: {test_message}")
+            self.send_chat_response(test_message)
         
         # Make combat decisions
         hp_percent = (self.player_hp * 100) // max(self.player_hp_max, 1)
@@ -368,6 +377,81 @@ class CombatAgent:
         }
         print(f"  -> Attacking monster {monster_id}")
         self.send_message(intent)
+    
+    def process_chat_messages(self, state):
+        """Process chat messages from the game state and respond."""
+        chat_data = state.get('data', {}).get('chat', {})
+        recent_messages = chat_data.get('recent_messages', [])
+        
+        # Debug logging for chat data
+        if chat_data:
+            print(f"  DEBUG: Chat data found: {chat_data}")
+        if recent_messages:
+            print(f"  DEBUG: {len(recent_messages)} recent messages found")
+        
+        for message in recent_messages:
+            msg_from = message.get('from', '')
+            msg_text = message.get('text', '')
+            timestamp = message.get('timestamp', 0)
+            
+            print(f"  DEBUG: Processing chat message - From: '{msg_from}', Text: '{msg_text}', Timestamp: {timestamp}")
+            
+            # Only respond to player messages (not our own AI responses)
+            if msg_from == 'player':
+                print(f"  DEBUG: Player message detected, generating response...")
+                response = self.generate_chat_response(msg_text)
+                if response:
+                    print(f"  DEBUG: Generated response: '{response}'")
+                    self.send_chat_response(response)
+                else:
+                    print(f"  DEBUG: No response generated for message: '{msg_text}'")
+    
+    def generate_chat_response(self, message):
+        """Generate appropriate response to player chat message."""
+        msg_lower = message.lower().strip()
+        
+        # Status commands
+        if 'status' in msg_lower or 'how are you' in msg_lower:
+            hp_percent = (self.player_hp * 100) // max(self.player_hp_max, 1)
+            if self.retreat_mode:
+                return f"Currently retreating! HP: {hp_percent}% - need to find safety"
+            else:
+                return f"Combat ready! HP: {hp_percent}% - looking for monsters to fight"
+        
+        # Combat mode queries
+        elif 'retreat' in msg_lower or 'run' in msg_lower:
+            return "Switching to retreat mode for safety"
+        elif 'attack' in msg_lower or 'fight' in msg_lower:
+            return "Engaging combat mode - seeking enemies to fight"
+        elif 'heal' in msg_lower or 'health' in msg_lower:
+            hp_percent = (self.player_hp * 100) // max(self.player_hp_max, 1)
+            return f"Current health: {self.player_hp}/{self.player_hp_max} ({hp_percent}%)"
+        
+        # Friendly responses
+        elif any(greeting in msg_lower for greeting in ['hello', 'hi', 'hey']):
+            return "Hello! I'm your AI companion, ready to fight alongside you!"
+        elif 'thanks' in msg_lower or 'thank you' in msg_lower:
+            return "You're welcome! Happy to help in our adventures"
+        elif 'help' in msg_lower:
+            return "I can fight monsters, retreat when low on health, and respond to your commands. Just talk to me!"
+        
+        # Default response for unrecognized messages
+        else:
+            return "I'm focused on combat, but I hear you! Type 'status' for my current state"
+    
+    def send_chat_response(self, message):
+        """Send a chat response via GAP intent."""
+        intent = {
+            "type": "intent", 
+            "action": "chat",
+            "params": {
+                "kind": message  # Use 'kind' parameter for chat message text
+            }
+        }
+        print(f"  -> Chat response: {message}")
+        print(f"  DEBUG: Sending chat intent: {intent}")
+        success = self.send_message(intent)
+        print(f"  DEBUG: Chat intent send result: {success}")
     
     def run(self):
         """Main agent loop."""

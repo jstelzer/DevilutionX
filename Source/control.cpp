@@ -18,6 +18,9 @@
 #include "DiabloUI/text_input.hpp"
 #include "automap.h"
 #include "controls/control_mode.hpp"
+#ifdef ENABLE_GAP
+#include "gap/gap_chat.h"
+#endif
 #include "controls/modifier_hints.h"
 #include "controls/plrctrls.h"
 #include "cursor.h"
@@ -829,6 +832,12 @@ void ResetChatMessage()
 {
 	if (CheckChatCommand(TalkMessage))
 		return;
+
+#ifdef ENABLE_GAP
+	// Check for GAP AI chat commands (and log all messages for state tracking)
+	if (ProcessGAPChatCommand(TalkMessage))
+		return;
+#endif
 
 	uint32_t pmask = 0;
 

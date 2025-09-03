@@ -866,6 +866,7 @@ if(ENABLE_GAP)
     gap/gap_state.cpp
     gap/gap_intent.cpp
     gap/gap_json.cpp
+    gap/gap_chat.cpp
   )
 endif()
 

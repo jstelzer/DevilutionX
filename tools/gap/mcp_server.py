@@ -45,6 +45,10 @@ class GapMCPServer:
         self.monster_attack_history = {}  # monster_id -> [timestamps]
         self.attack_cooldown = 1.0  # 1 second between attacks on same monster
         
+        # Invalid intent tracking - clear context when too many invalid attempts
+        self.invalid_intent_count = 0
+        self.max_invalid_intents = 5  # Reset context after 5 invalid intents
+        
         # Map exploration memory
         self.explored_positions = set()  # (x, y) positions visited
         self.cleared_areas = set()  # (x, y) positions fully cleared
@@ -90,14 +94,15 @@ class GapMCPServer:
         return """You are an AI agent playing Diablo I via the GAP (Game Agent Protocol).
 
 ## GAP Protocol Overview:
-- You receive game state as JSON with: player HP/mana/position, nearby monsters, items, walkable grid
+- You receive game state as JSON with: player HP/mana/position, nearby monsters, items, walkable grid, chat messages
 - You respond with GAP intent JSON to control the character
-- Available intents: move (to position), attack (monster ID or position)
+- Available intents: move (to position), attack (monster ID or position), chat (respond to player)
 
 ## Intent Format:
 Move: {"type": "intent", "action": "move", "params": {"x": 50, "y": 45}}
 Attack Monster: {"type": "intent", "action": "attack", "params": {"x": monster_id, "y": -1}}
 Attack Position: {"type": "intent", "action": "attack", "params": {"x": 50, "y": 45}}
+Chat Response: {"type": "intent", "action": "chat", "params": {"kind": "Your message here"}}
 
 ## Decision Making:
 - Prioritize survival: retreat when health is low
@@ -105,9 +110,12 @@ Attack Position: {"type": "intent", "action": "attack", "params": {"x": 50, "y":
 - Collect valuable items (gold, potions, equipment)
 - Use the walkable grid to plan safe paths
 - Consider monster HP and distance for tactical decisions
+- If player sends chat messages, respond conversationally as their AI companion
+- Chat responses should be helpful and match your current situation
 
 ## Response Format:
 Respond with a single valid GAP intent JSON object. No explanation, just the JSON.
+If player is chatting with you, prioritize chat response over combat (unless in immediate danger).
 """
 
     async def connect_gap(self) -> bool:
@@ -121,7 +129,7 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
             hello_msg = {
                 "type": "hello",
                 "version": "0.2.0", 
-                "capabilities": ["move", "attack", "use_item", "pickup"]
+                "capabilities": ["move", "attack", "use_item", "pickup", "chat"]
             }
             
             if self.password:
@@ -222,6 +230,21 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
         """Compress game state to essential information only."""
         try:
             data = game_state.get("data", {})
+            
+            # Debug: Log the raw game state structure to understand chat data location
+            nearby_data = data.get('nearby', {})
+            if 'chat' in nearby_data:
+                logger.info(f"💬 DEBUG: Found chat in data.nearby: {nearby_data['chat']}")
+            elif 'chat' in data:
+                logger.info(f"💬 DEBUG: Found chat in data: {data['chat']}")
+            elif 'chat' in game_state:
+                logger.info(f"💬 DEBUG: Found chat at top level: {game_state['chat']}")
+            else:
+                # Log full structure to find where chat might be  
+                full_json = json.dumps(game_state, indent=2)
+                logger.info(f"💬 DEBUG: No chat found. JSON length: {len(full_json)} chars")
+                logger.info(f"💬 DEBUG: Full game state structure: {full_json[:500]}...")
+                logger.info(f"💬 DEBUG: JSON ends with: ...{full_json[-100:]}")
             
             # Essential player info
             player = data.get("player", {})
@@ -349,6 +372,32 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
             if objects_data:
                 exploration_progress["objects"] = objects_data[:5]  # Limit to 5 closest objects
             
+            # Extract chat messages for AI awareness
+            # Chat is nested inside 'nearby' in the GAP protocol
+            chat_data = nearby.get('chat', {})
+            recent_messages = chat_data.get('recent_messages', [])
+            
+            # Debug logging for chat
+            if chat_data:
+                logger.info(f"💬 CHAT DATA FOUND: {chat_data}")
+            else:
+                logger.debug("💬 No chat data in game state")
+            
+            if recent_messages:
+                logger.info(f"💬 RECENT MESSAGES: {len(recent_messages)} messages found")
+                for i, msg in enumerate(recent_messages):
+                    logger.info(f"💬   [{i}] From: '{msg.get('from', '')}' Text: '{msg.get('text', '')}'")
+            else:
+                logger.debug("💬 No recent messages in chat data")
+            
+            chat_summary = []
+            for msg in recent_messages[-3:]:  # Last 3 messages only
+                msg_from = msg.get('from', '')
+                msg_text = msg.get('text', '')
+                if msg_from == 'player' and msg_text:  # Only include player messages
+                    chat_summary.append(f"Player: {msg_text}")
+                    logger.info(f"💬 ADDED TO LLM CONTEXT: Player: {msg_text}")
+            
             # Add navigation awareness context
             navigation_context = {
                 "stuck_counter": self.stuck_counter,
@@ -401,7 +450,8 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                 "items": essential_items,
                 "walkable": compressed_grid,  # 5x5 grid only
                 "exploration": exploration_progress,
-                "navigation": navigation_context
+                "navigation": navigation_context,
+                "chat": chat_summary  # Recent player messages for AI awareness
             }
             
         except Exception as e:
@@ -463,6 +513,62 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                 logger.debug("Same position, no monsters - skipping redundant state")
                 return False
         
+        return True
+        
+    def validate_intent(self, intent: Dict[str, Any], game_state: Dict[str, Any]) -> bool:
+        """Validate intent against current game state to prevent impossible actions."""
+        if not intent or not isinstance(intent, dict):
+            logger.warning("Invalid intent format: not a dict")
+            self.invalid_intent_count += 1
+            return False
+            
+        action = intent.get("action")
+        params = intent.get("params", {})
+        
+        if action == "attack":
+            # Validate monster ID attacks
+            monster_id = params.get("x")
+            attack_y = params.get("y", 0)
+            
+            if attack_y == -1 and monster_id is not None:  # Monster ID attack
+                # Check if monster ID exists in current game state
+                compressed_state = self.compress_game_state(game_state) if self.compact else game_state
+                monsters = compressed_state.get("monsters", [])
+                valid_monster_ids = [m.get("id") for m in monsters if m.get("id") is not None]
+                
+                if monster_id not in valid_monster_ids:
+                    logger.warning(f"🚫 INVALID INTENT: Attack on non-existent monster ID {monster_id}. Valid IDs: {valid_monster_ids}")
+                    self.invalid_intent_count += 1
+                    
+                    # Check if we should force a context reset due to too many invalid intents
+                    if self.invalid_intent_count >= self.max_invalid_intents:
+                        logger.warning(f"🔄 TOO MANY INVALID INTENTS ({self.invalid_intent_count}) - context may be stale")
+                        self.invalid_intent_count = 0  # Reset counter
+                        # Clear any sticky state that might cause repeated invalid intents
+                        self.last_intent = None
+                        self.same_intent_count = 0
+                        self.monster_attack_history.clear()
+                    
+                    return False
+                    
+        elif action == "pickup":
+            # Could add item validation here in the future
+            pass
+            
+        elif action == "interact":
+            # Could add object validation here in the future  
+            pass
+            
+        elif action == "move":
+            # Basic bounds checking could be added
+            x, y = params.get("x", 0), params.get("y", 0)
+            if x < 0 or y < 0 or x > 112 or y > 112:  # Diablo map bounds
+                logger.warning(f"🚫 INVALID INTENT: Move to out-of-bounds position ({x}, {y})")
+                self.invalid_intent_count += 1
+                return False
+                
+        # Valid intent - reset invalid counter
+        self.invalid_intent_count = 0
         return True
         
     def detect_stuck_loop(self, intent: Dict[str, Any]) -> bool:
@@ -549,6 +655,15 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                 closest = compressed_state.get("monsters", [{}])[0]
                 logger.info(f"  Closest threat: {closest.get('name', 'Unknown')} at distance {closest.get('dist', '?')} (threat: {closest.get('threat', 'UNKNOWN')})")
             
+            # Log chat messages going to LLM
+            chat_messages = compressed_state.get("chat", [])
+            if chat_messages:
+                logger.info(f"💬 SENDING TO LLM: {len(chat_messages)} chat messages: {chat_messages}")
+            else:
+                logger.debug("💬 No chat messages to send to LLM")
+            
+            # Log the compressed state being sent to LLM for debugging
+            logger.debug(f"Compressed state for LLM: {json.dumps(compressed_state, indent=2)[:500]}...")
             logger.debug("Querying LLM...")
             
             # Add timeout to LLM query to prevent getting stuck
@@ -631,6 +746,63 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                         intent = llm_response["intent"]
                         feedback = llm_response["feedback"]
                         action_type = intent.get("action", "unknown")
+                        
+                        # Special logging for chat intents
+                        if action_type == "chat":
+                            chat_message = intent.get("params", {}).get("kind", "")
+                            logger.info(f"💬 LLM WANTS TO CHAT: '{chat_message}'")
+                        
+                        # Validate intent before executing
+                        if not self.validate_intent(intent, state_msg):
+                            logger.warning("🚫 DISCARDING INVALID INTENT - checking for chat priority")
+                            
+                            # If there are chat messages and no monsters, try to force a chat response
+                            compressed_state = self.compress_game_state(state_msg)
+                            chat_messages = compressed_state.get("chat", [])
+                            monsters = compressed_state.get("monsters", [])
+                            
+                            if chat_messages and not monsters:
+                                logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                                # Re-prompt the LLM specifically for chat response
+                                chat_prompt = f"{self.base_prompt}\n\n**CHAT MODE - RESPOND TO PLAYER**\nPlayer said: '{chat_messages[0].replace('Player: ', '')}'\nNo monsters nearby. Respond as a friendly AI companion in the game. Keep it brief (under 50 characters).\n\nRespond with: {{\"type\":\"intent\",\"action\":\"chat\",\"params\":{{\"kind\":\"Your response here\"}}}}"
+                                
+                                try:
+                                    chat_response = await self.query_ollama(chat_prompt)
+                                    if chat_response:
+                                        # Parse the chat response
+                                        start_idx = chat_response.find('{')
+                                        end_idx = chat_response.rfind('}') + 1
+                                        if start_idx >= 0 and end_idx > start_idx:
+                                            json_str = chat_response[start_idx:end_idx]
+                                            chat_intent = json.loads(json_str)
+                                            logger.info(f"💬 LLM CHAT RESPONSE: {chat_intent}")
+                                            return chat_intent
+                                except Exception as e:
+                                    logger.warning(f"Failed to get LLM chat response: {e}")
+                                
+                                # Fallback to hardcoded response if LLM fails
+                                logger.info("💬 USING FALLBACK CHAT RESPONSE")
+                                chat_intent = {
+                                    "type": "intent",
+                                    "action": "chat",
+                                    "params": {"kind": "I'm here! No monsters around, just exploring."}
+                                }
+                                logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                                return chat_intent
+                            
+                            # Otherwise fallback to movement
+                            logger.warning("🚫 DISCARDING INVALID INTENT - forcing fallback movement")
+                            # Try a different position to break out of invalid state
+                            player = compressed_state.get("player", {})
+                            pos = player.get("pos", [50, 50])
+                            fallback_intent = {
+                                "type": "intent",
+                                "action": "move", 
+                                "params": {"x": pos[0] + 1, "y": pos[1] + 1}
+                            }
+                            logger.info(f"➡️  MOVE (invalid-intent-fallback): {fallback_intent}")
+                            return fallback_intent
+                            
                         # Check for stuck loops before executing
                         if self.detect_stuck_loop(intent):
                             logger.warning("🔄 Breaking stuck loop - trying different strategy")
@@ -650,6 +822,58 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                         return intent
                     elif "type" in llm_response and llm_response.get("type") == "intent":
                         # Direct intent format (backward compatibility)
+                        
+                        # Validate intent first
+                        if not self.validate_intent(llm_response, state_msg):
+                            logger.warning("🚫 DISCARDING INVALID DIRECT INTENT - checking for chat priority")
+                            
+                            # If there are chat messages and no monsters, try to force a chat response
+                            compressed_state = self.compress_game_state(state_msg)
+                            chat_messages = compressed_state.get("chat", [])
+                            monsters = compressed_state.get("monsters", [])
+                            
+                            if chat_messages and not monsters:
+                                logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                                # Re-prompt the LLM specifically for chat response
+                                chat_prompt = f"{self.base_prompt}\n\n**CHAT MODE - RESPOND TO PLAYER**\nPlayer said: '{chat_messages[0].replace('Player: ', '')}'\nNo monsters nearby. Respond as a friendly AI companion in the game. Keep it brief (under 50 characters).\n\nRespond with: {{\"type\":\"intent\",\"action\":\"chat\",\"params\":{{\"kind\":\"Your response here\"}}}}"
+                                
+                                try:
+                                    chat_response = await self.query_ollama(chat_prompt)
+                                    if chat_response:
+                                        # Parse the chat response
+                                        start_idx = chat_response.find('{')
+                                        end_idx = chat_response.rfind('}') + 1
+                                        if start_idx >= 0 and end_idx > start_idx:
+                                            json_str = chat_response[start_idx:end_idx]
+                                            chat_intent = json.loads(json_str)
+                                            logger.info(f"💬 LLM CHAT RESPONSE: {chat_intent}")
+                                            return chat_intent
+                                except Exception as e:
+                                    logger.warning(f"Failed to get LLM chat response: {e}")
+                                
+                                # Fallback to hardcoded response if LLM fails
+                                logger.info("💬 USING FALLBACK CHAT RESPONSE")
+                                chat_intent = {
+                                    "type": "intent",
+                                    "action": "chat",
+                                    "params": {"kind": "I'm here! No monsters around, just exploring."}
+                                }
+                                logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                                return chat_intent
+                                
+                            # Otherwise fallback to movement
+                            logger.warning("🚫 DISCARDING INVALID DIRECT INTENT - forcing fallback movement")
+                            # Try a different position to break out of invalid state
+                            player = compressed_state.get("player", {})
+                            pos = player.get("pos", [50, 50])
+                            fallback_intent = {
+                                "type": "intent",
+                                "action": "move", 
+                                "params": {"x": pos[0] + 1, "y": pos[1] + 1}
+                            }
+                            logger.info(f"➡️  MOVE (invalid-direct-intent-fallback): {fallback_intent}")
+                            return fallback_intent
+                        
                         if self.detect_stuck_loop(llm_response):
                             logger.warning("🔄 Breaking stuck loop - trying different strategy")
                             self.same_intent_count = 0
@@ -665,12 +889,70 @@ Respond with a single valid GAP intent JSON object. No explanation, just the JSO
                             return fallback_intent
                         
                         action_type = llm_response.get("action", "unknown")
+                        
+                        # Special logging for chat intents
+                        if action_type == "chat":
+                            chat_message = llm_response.get("params", {}).get("kind", "")
+                            logger.info(f"💬 LLM WANTS TO CHAT: '{chat_message}'")
+                        
                         logger.info(f"➡️  {action_type.upper()}: {llm_response}")
                         return llm_response
                     else:
                         # Handle nested intent format {"intent": {...}}
                         if "intent" in llm_response:
                             intent = llm_response["intent"]
+                            
+                            # Validate nested intent
+                            if not self.validate_intent(intent, state_msg):
+                                logger.warning("🚫 DISCARDING INVALID NESTED INTENT - checking for chat priority")
+                                
+                                # If there are chat messages and no monsters, try to force a chat response
+                                compressed_state = self.compress_game_state(state_msg)
+                                chat_messages = compressed_state.get("chat", [])
+                                monsters = compressed_state.get("monsters", [])
+                                
+                                if chat_messages and not monsters:
+                                    logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                                    # Re-prompt the LLM specifically for chat response
+                                    chat_prompt = f"{self.base_prompt}\n\n**CHAT MODE - RESPOND TO PLAYER**\nPlayer said: '{chat_messages[0].replace('Player: ', '')}'\nNo monsters nearby. Respond as a friendly AI companion in the game. Keep it brief (under 50 characters).\n\nRespond with: {{\"type\":\"intent\",\"action\":\"chat\",\"params\":{{\"kind\":\"Your response here\"}}}}"
+                                    
+                                    try:
+                                        chat_response = await self.query_ollama(chat_prompt)
+                                        if chat_response:
+                                            # Parse the chat response
+                                            start_idx = chat_response.find('{')
+                                            end_idx = chat_response.rfind('}') + 1
+                                            if start_idx >= 0 and end_idx > start_idx:
+                                                json_str = chat_response[start_idx:end_idx]
+                                                chat_intent = json.loads(json_str)
+                                                logger.info(f"💬 LLM CHAT RESPONSE: {chat_intent}")
+                                                return chat_intent
+                                    except Exception as e:
+                                        logger.warning(f"Failed to get LLM chat response: {e}")
+                                    
+                                    # Fallback to hardcoded response if LLM fails
+                                    logger.info("💬 USING FALLBACK CHAT RESPONSE")
+                                    chat_intent = {
+                                        "type": "intent",
+                                        "action": "chat",
+                                        "params": {"kind": "I'm here! No monsters around, just exploring."}
+                                    }
+                                    logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                                    return chat_intent
+                                
+                                # Otherwise fallback to movement
+                                logger.warning("🚫 DISCARDING INVALID NESTED INTENT - forcing fallback movement")
+                                # Try a different position to break out of invalid state
+                                player = compressed_state.get("player", {})
+                                pos = player.get("pos", [50, 50])
+                                fallback_intent = {
+                                    "type": "intent",
+                                    "action": "move", 
+                                    "params": {"x": pos[0] + 1, "y": pos[1] + 1}
+                                }
+                                logger.info(f"➡️  MOVE (invalid-nested-intent-fallback): {fallback_intent}")
+                                return fallback_intent
+                            
                             action_type = intent.get("action", "unknown")
                             logger.info(f"➡️  {action_type.upper()} (nested): {intent}")
                             return intent
