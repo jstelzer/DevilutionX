@@ -20,6 +20,8 @@ public:
     void SetStateDivisor(uint32_t divisor) { state_divisor_ = divisor; }
     void SetTickRate(uint32_t rate) { tick_rate_ = rate; }
     
+    bool SendMessage(const std::string& message);
+    
 private:
     GapCore() = default;
     ~GapCore() = default;

@@ -463,53 +463,11 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     visionData.AddRaw("exploration", exploration_json.str())
         .EndObject();
     
-    // Add chat messages for AI agent awareness
-    std::stringstream chat_json;
-    chat_json << "{\"recent_messages\":[";
-#ifdef ENABLE_GAP
-    auto recentMessages = GAPChatHandler::getInstance().GetRecentMessages(1);
-    std::cout << "GAP: Building state - found " << recentMessages.size() << " recent chat messages" << std::endl;
-    bool first_chat_msg = true;
-    for (const auto& msg : recentMessages) {
-        if (!first_chat_msg) chat_json << ",";
-        first_chat_msg = false;
-        
-        std::cout << "GAP: Adding to state - From: '" << msg.from << "', Text: '" << msg.text << "'" << std::endl;
-        
-        chat_json << "{";
-        chat_json << "\"timestamp\":" << msg.timestamp << ",";
-        chat_json << "\"from\":\"" << msg.from << "\",";
-        chat_json << "\"text\":\"";
-        
-        // Escape quotes in message text
-        for (char c : msg.text) {
-            if (c == '"') chat_json << "\\\"";
-            else if (c == '\\') chat_json << "\\\\";
-            else chat_json << c;
-        }
-        
-        chat_json << "\"}";
-    }
-    
-    // Log final chat JSON if there are messages
-    if (recentMessages.size() > 0) {
-        std::cout << "GAP: Chat JSON being sent to agent: " << chat_json.str() << std::endl;
-    }
-#endif
-    chat_json << "]}";
-    
-    std::cout << "GAP: Final chat JSON: " << chat_json.str() << std::endl;
-
-    std::cout << "GAP: About to add chat field to result JSON" << std::endl;
-    
     result.AddRaw("monsters", monsters_json.str())
           .AddRaw("items", items_json.str())
           .AddRaw("other_players", "[]")
           .AddRaw("vision", visionData.ToString())
-          .AddRaw("chat", chat_json.str())
           .EndObject();
-    
-    std::cout << "GAP: Added chat field to result JSON" << std::endl;
     
     return result.ToString();
 }

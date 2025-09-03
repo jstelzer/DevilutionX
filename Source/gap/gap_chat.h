@@ -68,6 +68,13 @@ public:
      * @return Vector of recent chat messages
      */
     std::vector<GAPChatMessage> GetRecentMessages(size_t maxMessages = 10) const;
+    
+    /**
+     * Send a chat message immediately via GAP (separate from state messages)
+     * @param text The message text
+     * @param from Who sent it ("player", "ai", "system")
+     */
+    void SendGAPChatMessage(std::string_view text, std::string_view from);
 
 private:
     GAPChatHandler() = default;

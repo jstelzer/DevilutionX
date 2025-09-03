@@ -16,6 +16,8 @@
 #include "plrmsg.h"
 #include "DiabloUI/ui_flags.hpp"
 #include "utils/str_cat.hpp"
+#include "gap_core.h"
+#include "gap_json.h"
 
 namespace devilution {
 
@@ -61,7 +63,9 @@ bool GAPChatHandler::ProcessChatMessage(std::string_view message) {
     // GAP commands start with "!ai" or "!gap"
     bool isGAPCommand = StartsWith(message, "!ai") || StartsWith(message, "!gap");
     if (!isGAPCommand) {
-        std::cout << "GAP: Not a GAP command, letting through to multiplayer" << std::endl;
+        std::cout << "GAP: Not a GAP command, sending as chat message to AI" << std::endl;
+        // Send immediate chat message for AI awareness (non-GAP commands are for conversation)
+        SendGAPChatMessage(message, "player");
         return false;  // Let normal chat messages go through to multiplayer
     }
     
@@ -236,6 +240,27 @@ void GAPChatHandler::HandleExecuteCommand(std::string_view command) {
     }
     
     SendAIResponse(StrCat("Execute command: ", command, " (feature not yet implemented)"));
+}
+
+void GAPChatHandler::SendGAPChatMessage(std::string_view text, std::string_view from) {
+    // Create chat message JSON
+    gap::JsonBuilder chatMessage;
+    chatMessage.BeginObject()
+        .AddString("type", "chat")
+        .AddString("text", std::string(text))
+        .AddString("from", std::string(from))
+        .AddUInt("timestamp", static_cast<uint32_t>(time(nullptr) * 1000))
+        .EndObject();
+    
+    // Send via GAP protocol
+    auto& gapCore = gap::GapCore::Instance();
+    if (gapCore.IsEnabled()) {
+        std::string message = chatMessage.ToString();
+        std::cout << "GAP: Sending chat message: " << message << std::endl;
+        gapCore.SendMessage(message);
+    } else {
+        std::cout << "GAP: Core not enabled, cannot send chat message" << std::endl;
+    }
 }
 
 // Global function for integration with existing chat system

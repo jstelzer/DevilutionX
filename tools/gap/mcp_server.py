@@ -738,19 +738,54 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 
                 if start_idx >= 0 and end_idx > start_idx:
                     json_str = response[start_idx:end_idx]
+                    # Try to fix common JSON truncation issues
+                    if not json_str.endswith('}'):
+                        json_str += '}'
                     llm_response = json.loads(json_str)
+                else:
+                    # Fallback: try to parse the whole response
+                    logger.warning(f"Could not find JSON bounds, trying full response: {response[:100]}...")
+                    llm_response = json.loads(response)
+                
+                # Check for pure nested format first: {"intent": {"type": "intent", ...}}
+                if ("intent" in llm_response and 
+                    isinstance(llm_response["intent"], dict) and 
+                    llm_response["intent"].get("type") == "intent"):
+                    intent = llm_response["intent"]
                     
-                    # Check if response has feedback channel
-                    if "intent" in llm_response and "feedback" in llm_response:
-                        # Extract intent for game and feedback for logging
-                        intent = llm_response["intent"]
-                        feedback = llm_response["feedback"]
-                        action_type = intent.get("action", "unknown")
+                    # Validate the pure nested intent
+                    if not self.validate_intent(intent, state_msg):
+                        logger.warning("🚫 DISCARDING INVALID PURE NESTED INTENT - checking for chat priority")
                         
-                        # Special logging for chat intents
-                        if action_type == "chat":
-                            chat_message = intent.get("params", {}).get("kind", "")
-                            logger.info(f"💬 LLM WANTS TO CHAT: '{chat_message}'")
+                        compressed_state = self.compress_game_state(state_msg)
+                        chat_messages = compressed_state.get("chat", [])
+                        monsters = compressed_state.get("monsters", [])
+                        
+                        if chat_messages and not monsters:
+                            logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                            chat_intent = {
+                                "type": "intent",
+                                "action": "chat", 
+                                "params": {"kind": "Sorry, I'm having trouble processing that. How can I help you?"}
+                            }
+                            logger.info(f"💬 FORCED CHAT RESPONSE: {chat_intent}")
+                            return chat_intent
+                    
+                    action_type = intent.get("action", "unknown")
+                    logger.info(f"➡️  {action_type.upper()} (pure nested): {intent}")
+                    return intent
+                
+                # Check if response has feedback channel
+                elif "intent" in llm_response and "feedback" in llm_response:
+                    # Extract intent for game and feedback for logging
+                    intent = llm_response["intent"]
+                    feedback = llm_response["feedback"]
+                    action_type = intent.get("action", "unknown")
+                    
+                    # Special logging for chat intents
+                    if action_type == "chat":
+                        chat_message = intent.get("params", {}).get("kind", "")
+                        logger.info(f"💬 LLM WANTS TO CHAT: '{chat_message}'")
                         
                         # Validate intent before executing
                         if not self.validate_intent(intent, state_msg):
@@ -959,13 +994,29 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                         else:
                             logger.error(f"Invalid response format: {llm_response}")
                             return None
-                else:
-                    logger.error(f"No valid JSON found in LLM response: {response}")
-                    return None
+                
+                logger.error(f"No valid JSON found in LLM response: {response}")
+                return None
                     
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM response as JSON: {e}")
                 logger.error(f"Response was: {response}")
+                
+                # If we have chat messages and JSON parsing failed, force a chat response
+                compressed_state = self.compress_game_state(state_msg)
+                chat_messages = compressed_state.get("chat", [])
+                monsters = compressed_state.get("monsters", [])
+                
+                if chat_messages and not monsters:
+                    logger.info("💬 JSON PARSE FAILED BUT CHAT DETECTED - forcing fallback chat response")
+                    chat_intent = {
+                        "type": "intent",
+                        "action": "chat",
+                        "params": {"kind": "Sorry, I'm having trouble processing that. How can I help you?"}
+                    }
+                    logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                    return chat_intent
+                
                 return None
                 
         except Exception as e:
@@ -1097,6 +1148,78 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             
         return waypoint
 
+    async def process_chat_message(self, chat_msg: Dict[str, Any]) -> None:
+        """Process chat message and respond via LLM if from player."""
+        try:
+            text = chat_msg.get('text', '')
+            from_user = chat_msg.get('from', '')
+            
+            logger.info(f"💬 CHAT: From {from_user}: {text}")
+            
+            # Only respond to player messages (not AI or system messages)
+            if from_user == "player":
+                # Build simple chat prompt without full game state (lighter weight)
+                prompt = f"{self.base_prompt}\n\nPlayer said: \"{text}\"\n\nRespond with a chat intent to reply as their AI companion:"
+                
+                # Query LLM for response
+                llm_response_text = await self.query_ollama(prompt)
+                if not llm_response_text:
+                    logger.error("No response from LLM for chat message")
+                    return
+                
+                # Parse LLM response (using same logic as process_game_state)
+                try:
+                    # Look for JSON in response
+                    start_idx = llm_response_text.find('{')
+                    end_idx = llm_response_text.rfind('}') + 1
+                    
+                    if start_idx >= 0 and end_idx > start_idx:
+                        json_str = llm_response_text[start_idx:end_idx]
+                        # Try to fix common JSON truncation issues
+                        if not json_str.endswith('}'):
+                            json_str += '}'
+                        llm_response = json.loads(json_str)
+                    else:
+                        # Fallback: try to parse the whole response
+                        llm_response = json.loads(llm_response_text)
+                    
+                    # Check for pure nested format first: {"intent": {"type": "intent", ...}}
+                    if ("intent" in llm_response and 
+                        isinstance(llm_response["intent"], dict) and 
+                        llm_response["intent"].get("type") == "intent"):
+                        intent = llm_response["intent"]
+                    else:
+                        # Check for direct intent format
+                        if llm_response.get("type") == "intent":
+                            intent = llm_response
+                        else:
+                            logger.error(f"Invalid LLM chat response format: {llm_response}")
+                            return
+                            
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse LLM chat response as JSON: {e}")
+                    return
+                except Exception as e:
+                    logger.error(f"Error parsing LLM chat response: {e}")
+                    return
+                
+                # Ensure it's a chat intent
+                if intent.get('action') == 'chat':
+                    # Send chat response back to game
+                    success = await self.send_gap_message(intent)
+                    if success:
+                        logger.info(f"💬 AI Reply: {intent.get('params', {}).get('kind', 'N/A')}")
+                    else:
+                        logger.error("Failed to send chat response")
+                else:
+                    logger.warning(f"LLM generated non-chat intent for chat message: {intent.get('action')}")
+            else:
+                # AI or system message - just log, don't respond
+                logger.debug(f"Ignoring non-player chat message from {from_user}")
+                
+        except Exception as e:
+            logger.error(f"Error processing chat message: {e}")
+
     async def run(self):
         """Main server loop."""
         logger.info("Starting MCP Server for GAP Protocol")
@@ -1139,6 +1262,10 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                         # Most skips are due to staleness filtering - don't spam logs
                         pass
                         
+                elif msg_type == "chat":
+                    # Process chat message for LLM conversation
+                    await self.process_chat_message(msg)
+                    
                 elif msg_type == "ack":
                     logger.debug("Intent acknowledged by game")
                     

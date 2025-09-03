@@ -126,4 +126,10 @@ void GapCore::ProcessIntents(uint32_t tick) {
     impl_->intent_processor.ProcessPendingIntents(tick);
 }
 
+bool GapCore::SendMessage(const std::string& message) {
+    if (!enabled_ || !impl_) return false;
+    
+    return impl_->SendMessage(message);
+}
+
 } // namespace devilution::gap
