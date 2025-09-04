@@ -351,25 +351,27 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
         .AddInt("light_radius", lightRadius)
         .AddArray("player_pos", {playerPos.x, playerPos.y});
     
-    // Create walkability grid within light radius
+    // Create compact walkability grid (7x7 instead of full light radius)
+    // This gives immediate tactical awareness without overwhelming data
+    int grid_radius = std::min(3, lightRadius); // Max 7x7 grid
     std::stringstream walkable_json;
     walkable_json << "[";
     bool first_row = true;
     
-    for (int dy = -lightRadius; dy <= lightRadius; dy++) {
+    for (int dy = -grid_radius; dy <= grid_radius; dy++) {
         if (!first_row) walkable_json << ",";
         first_row = false;
         
         walkable_json << "[";
         bool first_col = true;
         
-        for (int dx = -lightRadius; dx <= lightRadius; dx++) {
+        for (int dx = -grid_radius; dx <= grid_radius; dx++) {
             if (!first_col) walkable_json << ",";
             first_col = false;
             
             Point checkPos = {playerPos.x + dx, playerPos.y + dy};
             bool walkable = InDungeonBounds(checkPos) && IsTileNotSolid(checkPos);
-            walkable_json << (walkable ? "true" : "false");
+            walkable_json << (walkable ? "1" : "0"); // Use 1/0 instead of true/false
         }
         
         walkable_json << "]";
@@ -387,8 +389,8 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     Point stairs_pos = {0, 0};
     std::string stairs_type = "";
     
-    // Check for dungeon features within larger radius for exploration
-    int exploration_radius = lightRadius * 2;  // Larger area for exploration
+    // Check for dungeon features within moderate radius for exploration
+    int exploration_radius = std::min(lightRadius + 3, 8);  // Limited area for exploration
     for (int dy = -exploration_radius; dy <= exploration_radius; dy++) {
         for (int dx = -exploration_radius; dx <= exploration_radius; dx++) {
             Point checkPos = {playerPos.x + dx, playerPos.y + dy};
@@ -458,14 +460,19 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
         exploration_json << ",\"stairs_pos\":[" << stairs_pos.x << "," << stairs_pos.y << "],";
         exploration_json << "\"stairs_type\":\"" << stairs_type << "\"";
     }
-    // Add frontier detection for systematic exploration
+    // Add limited frontier detection for systematic exploration  
     std::stringstream frontiers_json;
     frontiers_json << "[";
     bool first_frontier = true;
+    int frontier_count = 0;
+    const int max_frontiers = 10; // Limit to prevent JSON bloat
     
-    // Simple frontier detection: walkable tiles adjacent to explored but not yet visited areas
-    for (int dy = -lightRadius; dy <= lightRadius; dy++) {
-        for (int dx = -lightRadius; dx <= lightRadius; dx++) {
+    // Simple frontier detection within smaller radius
+    int frontier_radius = std::min(lightRadius, 6); // Limit search area
+    for (int dy = -frontier_radius; dy <= frontier_radius; dy++) {
+        for (int dx = -frontier_radius; dx <= frontier_radius; dx++) {
+            if (frontier_count >= max_frontiers) break; // Stop when limit reached
+            
             Point checkPos = {playerPos.x + dx, playerPos.y + dy};
             
             if (InDungeonBounds(checkPos) && IsTileNotSolid(checkPos)) {
@@ -490,9 +497,11 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
                     if (!first_frontier) frontiers_json << ",";
                     first_frontier = false;
                     frontiers_json << "[" << checkPos.x << "," << checkPos.y << "]";
+                    frontier_count++;
                 }
             }
         }
+        if (frontier_count >= max_frontiers) break; // Stop when limit reached
     }
     frontiers_json << "]";
     
@@ -516,6 +525,11 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
         }
         
         const Player& other_player = Players[i];
+        
+        // Safety check: ensure player name is valid  
+        if (strlen(other_player._pName) == 0) {
+            continue; // Skip players with empty names
+        }
         Point otherPos = other_player.position.tile;
         
         // Calculate distance from controlled player
@@ -531,17 +545,30 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
         }
         first_other_player = false;
         
-        other_players_json << "{"
-            << "\"id\":" << i << ","
-            << "\"name\":\"" << other_player._pName << "\","
-            << "\"pos\":[" << otherPos.x << "," << otherPos.y << "],"
-            << "\"distance\":" << distance << ","
-            << "\"hp\":" << other_player._pHitPoints << ","
-            << "\"hp_max\":" << other_player._pMaxHP << ","
-            << "\"hp_percent\":" << (other_player._pMaxHP > 0 ? (other_player._pHitPoints * 100 / other_player._pMaxHP) : 0) << ","
-            << "\"level\":" << other_player.getCharacterLevel() << ","
-            << "\"is_leader\":" << (i == MyPlayerId ? "true" : "false")
-            << "}";
+        // Compact format: [id, name, x, y, distance, hp%, dlevel, is_leader]
+        int hp_percent = (other_player._pMaxHP > 0) ? (other_player._pHitPoints * 100 / other_player._pMaxHP) : 0;
+        bool is_leader = (i == MyPlayerId);  // MyPlayerId is always the human player (leader)
+        
+        // Escape quotes in player name to prevent JSON corruption
+        std::string safe_name = other_player._pName;
+        size_t pos = 0;
+        while ((pos = safe_name.find("\"", pos)) != std::string::npos) {
+            safe_name.replace(pos, 1, "\\\"");
+            pos += 2;
+        }
+        
+        // Ensure dungeon level is a valid integer (not null byte)
+        int dungeon_level = static_cast<int>(other_player.plrlevel);
+        
+        other_players_json << "["
+            << i << ","
+            << "\"" << safe_name << "\","
+            << otherPos.x << "," << otherPos.y << ","
+            << distance << ","
+            << hp_percent << ","
+            << dungeon_level << ","
+            << (is_leader ? "true" : "false")
+            << "]";
     }
     other_players_json << "]";
 

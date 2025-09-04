@@ -243,7 +243,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             return msg
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {e}")
-            logger.error(f"Raw data length: {len(data)}, content: {data[:100]}...")
+            logger.error(f"Raw data length: {len(data)}")
+            
+            # Save the exact raw data for debugging
+            with open("debug_raw_json.txt", "wb") as f:
+                f.write(data)
+            logger.error(f"Raw data saved to debug_raw_json.txt for inspection")
+            
+            # Show the area around the error position
+            error_pos = e.pos if hasattr(e, 'pos') else 360
+            start = max(0, error_pos - 50)
+            end = min(len(data), error_pos + 50)
+            context = data[start:end]
+            logger.error(f"Context around error position {error_pos}: {context}")
             return None
         except Exception as e:
             logger.error(f"Error reading GAP message: {e}")
@@ -637,6 +649,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             has_recent_chat = bool(chat_messages)
             
             # Check for other players (especially leader to follow)
+            # Format: [id, name, x, y, distance, hp%, dlevel, is_leader]
             other_players = nearby.get("other_players", [])
             has_other_players = bool(other_players)
             
@@ -796,16 +809,42 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 other_players = nearby_data.get('other_players', [])
                 
                 # Find the main player (leader)
+                # Format: [id, name, x, y, distance, hp%, dlevel, is_leader]
                 main_player = None
                 for other_player in other_players:
-                    if other_player.get('is_leader') == True or other_player.get('id') == 0:
+                    if len(other_player) >= 8 and (other_player[7] == True or other_player[0] == 0):
                         main_player = other_player
                         break
                 
                 if main_player:
-                    main_pos = main_player.get('pos', [0, 0])
-                    distance = main_player.get('distance', 999)
-                    logger.info(f"🎯 LEADER at ({main_pos[0]},{main_pos[1]}) distance={distance}")
+                    main_pos = [main_player[2], main_player[3]]  # x, y
+                    distance = main_player[4]  # distance
+                    main_dungeon_level = main_player[6]  # dlevel
+                    companion_dungeon_level = player_data.get('level', 0)
+                    
+                    logger.info(f"🎯 LEADER at ({main_pos[0]},{main_pos[1]}) distance={distance} level={main_dungeon_level}")
+                    logger.info(f"🤖 COMPANION at ({player_pos[0]},{player_pos[1]}) level={companion_dungeon_level}")
+                    
+                    # Check for level change - leader disappeared to different level
+                    if main_dungeon_level != companion_dungeon_level:
+                        logger.info(f"📍 LEVEL CHANGE DETECTED: Leader on level {main_dungeon_level}, companion on {companion_dungeon_level}")
+                        
+                        # Store the last known position where leader was before level change
+                        if not hasattr(self, 'last_leader_pos'):
+                            self.last_leader_pos = None
+                        
+                        # If we have a last known position, move there to follow through level change
+                        if self.last_leader_pos:
+                            logger.info(f"🚪 FOLLOWING THROUGH LEVEL: Moving to last seen position {self.last_leader_pos}")
+                            return {
+                                "type": "intent",
+                                "action": "move",
+                                "params": {"x": self.last_leader_pos[0], "y": self.last_leader_pos[1]}
+                            }
+                    
+                    # Store leader position and level for level change detection
+                    self.last_leader_pos = main_pos
+                    self.last_leader_level = main_dungeon_level
                     
                     # Check if we need to follow (leader is too far away)
                     if distance > 3:  # Follow if more than 3 tiles away
@@ -818,6 +857,39 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "params": {"x": follow_pos[0], "y": follow_pos[1]}
                             }
                 else:
+                    # Leader not visible - might have changed levels
+                    companion_dungeon_level = player_data.get('level', 0)
+                    
+                    # Check for stairs/portals to follow through level transitions
+                    vision_data = nearby_data.get('vision', {})
+                    exploration_data = vision_data.get('exploration', {})
+                    stairs_visible = exploration_data.get('stairs_visible', False)
+                    stairs_pos = exploration_data.get('stairs_pos', [0, 0])
+                    stairs_type = exploration_data.get('stairs_type', '')
+                    
+                    if stairs_visible and stairs_pos != [0, 0]:
+                        logger.info(f"🚪 STAIRS DETECTED: {stairs_type} at ({stairs_pos[0]},{stairs_pos[1]})")
+                        
+                        # If leader disappeared and we have stairs, move to stairs to follow
+                        if hasattr(self, 'last_leader_level') and hasattr(self, 'last_leader_pos'):
+                            if self.last_leader_level != companion_dungeon_level:
+                                logger.info(f"🚪 FOLLOWING LEADER THROUGH {stairs_type}: Moving to stairs at {stairs_pos}")
+                                return {
+                                    "type": "intent",
+                                    "action": "move", 
+                                    "params": {"x": stairs_pos[0], "y": stairs_pos[1]}
+                                }
+                    
+                    # Fallback: try last known leader position
+                    if hasattr(self, 'last_leader_level') and hasattr(self, 'last_leader_pos'):
+                        if self.last_leader_level != companion_dungeon_level and self.last_leader_pos:
+                            logger.info(f"🚪 LEADER DISAPPEARED: Following to last position {self.last_leader_pos}")
+                            return {
+                                "type": "intent",
+                                "action": "move", 
+                                "params": {"x": self.last_leader_pos[0], "y": self.last_leader_pos[1]}
+                            }
+                    
                     logger.debug("🤖 No other players detected in companion mode")
                 
             else:
