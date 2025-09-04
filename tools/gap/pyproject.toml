@@ -19,9 +19,16 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# No build system needed for scripts-only project
+# [build-system]
+# requires = ["hatchling"]
+# build-backend = "hatchling.build"
+
+# Script entry points for easy execution
+[project.scripts]
+gap-mcp-server = "mcp_server:main"
+gap-agent = "test_gap_agent:main"
+gap-combat = "combat_gap_agent:main"
 
 [tool.black]
 line-length = 100

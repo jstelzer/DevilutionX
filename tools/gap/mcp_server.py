@@ -130,14 +130,35 @@ Attack Monster: {"type": "intent", "action": "attack", "params": {"x": monster_i
 Attack Position: {"type": "intent", "action": "attack", "params": {"x": 50, "y": 45}}
 Chat Response: {"type": "intent", "action": "chat", "params": {"kind": "Your message here"}}
 
-## Decision Making:
-- Prioritize survival: retreat when health is low
-- Target closest hostile monsters first  
-- Collect valuable items (gold, potions, equipment)
-- Use the walkable grid to plan safe paths
-- Consider monster HP and distance for tactical decisions
-- If player sends chat messages, respond conversationally as their AI companion
-- Chat responses should be helpful and match your current situation
+## Combat Priority Decision Tree:
+1. **ATTACK FIRST** if monsters with threat "HIGH" (≤3 tiles) - immediate combat!
+2. **ATTACK AGGRESSIVELY** if monsters with threat "MED" (4-6 tiles) - close the gap and attack
+3. **EXPLORE/MOVE** only if no monsters or all monsters have threat "LOW" (>6 tiles)
+
+## Combat Tactics:
+- **Monster ID Attack**: Use {"action": "attack", "params": {"x": monster_id, "y": -1}} for specific targets
+- **Target Priority**: Attack lowest HP% monsters first (easy kills)  
+- **Positioning**: Attack from current position - don't move unless survival requires it
+- **Multiple Enemies**: Focus fire - attack same target until dead, then next
+- **Never Retreat**: Attack aggressively unless HP < 50% and overwhelmed
+
+## When to Attack vs Move:
+- **ATTACK**: Any visible monsters with dist ≤ 6 tiles
+- **MOVE**: Only when no monsters nearby OR need to collect items/explore
+- **ALWAYS ATTACK**: Monsters with "HIGH" or "MED" threat level
+
+## Combat Examples:
+- Monster with action "ATTACK_NOW" → {"action": "attack", "params": {"x": monster_id, "y": -1}}
+- Monster with action "ATTACK" → {"action": "attack", "params": {"x": monster_id, "y": -1}}
+- Monster with action "IGNORE" → Don't attack, move or explore instead
+- Multiple monsters → Attack first monster in list (sorted by priority)
+- No monsters or all "IGNORE" → Move to explore or collect items
+
+## Monster Data Format:
+Each monster includes: id, name, pos, dist, hp%, threat, action, priority
+- **action**: "ATTACK_NOW" (≤3 tiles), "ATTACK" (4-6 tiles), "IGNORE" (>6 tiles)  
+- **priority**: Lower numbers = attack first (combines HP% + distance)
+- Always attack the first monster in the monsters list (highest priority target)
 
 ## Response Format:
 Respond with a single valid GAP intent JSON object. No explanation, just the JSON.
@@ -379,6 +400,13 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Debug: Check raw monster data
             nearby = data.get("nearby", {})
             monsters = nearby.get("monsters", [])
+            
+            # Debug logging for raw monster data
+            if monsters:
+                logger.debug(f"🗂️  RAW MONSTER DATA: {len(monsters)} monsters total")
+                for i, monster in enumerate(monsters[:5]):  # Show first 5
+                    logger.debug(f"   {i+1}. ID:{monster.get('id', 'N/A')} {monster.get('name', 'Unknown')} HP:{monster.get('hp_percent', 'N/A')}% Dist:{monster.get('distance', 'N/A')} Alive:{monster.get('is_alive', 'N/A')} Minion:{monster.get('is_minion', 'N/A')}")
+            
             # Filter monsters - only include relevant, actionable threats
             alive_monsters = []
             for monster in monsters:
@@ -411,14 +439,45 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             essential_monsters = []
             for monster in sorted_monsters[:5]:  # Top 5 threats
                 dist = monster.get("distance", 999)
+                hp_pct = monster.get("hp_percent", 100)
+                monster_id = monster.get("id")
+                
+                # Determine threat level and action
+                if dist <= 3:
+                    threat = "HIGH"
+                    action = "ATTACK_NOW"
+                elif dist <= 6:
+                    threat = "MED" 
+                    action = "ATTACK"
+                else:
+                    threat = "LOW"
+                    action = "IGNORE"
+                
+                # Priority for target selection (lower is higher priority)
+                # Prioritize: low HP monsters (easy kills) that are close
+                priority = hp_pct + (dist * 10)  # Low HP + close = low score = high priority
+                
                 essential_monsters.append({
-                    "id": monster.get("id"),
-                    "name": monster.get("name", "Unknown")[:8],
+                    "id": monster_id,
+                    "name": monster.get("name", "Unknown")[:8], 
                     "pos": monster.get("pos"),
                     "dist": dist,
-                    "hp%": monster.get("hp_percent", 100),
-                    "threat": "HIGH" if dist <= 3 else "MED" if dist <= 6 else "LOW"
+                    "hp%": hp_pct,
+                    "threat": threat,
+                    "action": action,
+                    "priority": int(priority)
                 })
+            
+            # Sort by priority for attack targeting (lowest priority score = attack first)
+            essential_monsters.sort(key=lambda m: m.get("priority", 999))
+            
+            # Debug logging for monster processing
+            if essential_monsters:
+                logger.info(f"🎯 MONSTERS DETECTED: {len(essential_monsters)} threats")
+                for i, monster in enumerate(essential_monsters[:3]):  # Log top 3 threats
+                    logger.info(f"   {i+1}. ID:{monster['id']} {monster['name']} HP:{monster['hp%']}% Dist:{monster['dist']} Action:{monster['action']} Priority:{monster['priority']}")
+            else:
+                logger.debug("No monsters detected in current area")
             
             # Essential items (top 3 closest)
             items = nearby.get("items", [])
@@ -497,7 +556,12 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Extract chat messages for AI awareness
             # Chat is nested inside 'nearby' in the GAP protocol
             chat_data = nearby.get('chat', {})
-            recent_messages = chat_data.get('recent_messages', [])
+            if isinstance(chat_data, list):
+                # Handle case where chat is a list of messages directly
+                recent_messages = chat_data
+            else:
+                # Handle case where chat is a dict with recent_messages
+                recent_messages = chat_data.get('recent_messages', [])
             
             # Debug logging for chat
             if chat_data:
@@ -646,6 +710,8 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             for monster in monsters:
                 monster_pos = monster.get("pos", [999, 999])
                 distance = self._calculate_distance(current_pos, monster_pos)
+                monster_name = monster.get("name", "Unknown")
+                logger.debug(f"🔍 COMPANION: Monster {monster_name} at {monster_pos}, distance: {distance}")
                 if distance <= 10:
                     close_monsters.append(monster)
             
@@ -657,6 +723,8 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Format: [id, name, x, y, distance, hp%, dlevel, is_leader]
             other_players = nearby.get("other_players", [])
             has_other_players = bool(other_players)
+            
+            logger.debug(f"👥 COMPANION FILTER: pos_changed={position_changed}, close_monsters={len(close_monsters)}, chat={has_recent_chat}, other_players={has_other_players}")
             
             if position_changed:
                 pass  # Companion position changed
@@ -792,10 +860,18 @@ If player is chatting with you, prioritize chat response over combat (unless in 
         try:
             # PRIORITY 1: Check survival reflexes FIRST - before any other logic
             # This ensures emergency actions (healing, kiting) override everything else
-            emergency_action = self.survival_reflexes.check_emergency_actions(state_msg.get('data', {}))
+            data = state_msg.get('data', {})
+            player = data.get('player', {})
+            monsters = data.get('nearby', {}).get('monsters', [])
+            
+            logger.debug(f"🩺 SURVIVAL CHECK: HP {player.get('hp', 0)}/{player.get('hp_max', 1)} ({len(monsters)} monsters nearby)")
+            
+            emergency_action = self.survival_reflexes.check_emergency_actions(data)
             if emergency_action:
                 logger.info(f"🚨 SURVIVAL OVERRIDE: {emergency_action.get('reasoning', 'Emergency action')}")
                 return emergency_action
+            else:
+                logger.debug("✅ No survival override needed")
             # Extract game state data early
             data = state_msg.get('data', {})
             player_data = data.get('player', {})
@@ -930,7 +1006,9 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Evaluating tactical situation
             if monster_count > 0:
                 closest = compressed_state.get("monsters", [{}])[0]
-                # Closest threat identified
+                logger.info(f"⚔️  SENDING TO LLM: {monster_count} monsters, priority target: ID {closest.get('id', 'N/A')} {closest.get('name', 'Unknown')} (Action: {closest.get('action', 'N/A')})")
+            else:
+                logger.debug("📍 SENDING TO LLM: No monsters, exploration mode")
             
             # Log chat messages going to LLM
             chat_messages = compressed_state.get("chat", [])

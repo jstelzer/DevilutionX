@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./dx_trainer --help)",
+      "Bash(./dx_trainer)",
+      "Bash(pushd:*)",
+      "Bash(popd:*)",
+      "Read(/tmp/**)",
+      "Bash(ps:*)",
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(python3:*)",
+      "Bash(source:*)"
+    ],
+    "deny": [],
+    "ask": [],
+    "additionalDirectories": [
+      "/home/mental/.local/share/diasurgical/devilution",
+      "/home/mental/.local/share/diasurgical"
+    ]
+  }
+}

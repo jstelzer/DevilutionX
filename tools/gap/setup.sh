@@ -40,8 +40,9 @@ else
     echo "📁 Creating uv-managed Python environment..."
     uv venv
     echo "📦 Installing dependencies with uv..."
-    uv pip install -e .
-    uv pip install -e ".[dev]"
+    # Install dependencies directly (no -e . since this is a scripts project)
+    uv pip install aiohttp numpy typing-extensions
+    uv pip install pytest pytest-asyncio black ruff  # dev dependencies
     echo "✅ uv setup complete"
     echo "💡 To activate: source .venv/bin/activate"
 fi
@@ -61,9 +62,10 @@ echo "Usage:"
 echo "  Activate environment: source .venv/bin/activate"
 if [ "$USE_TRADITIONAL" = "0" ]; then
     echo "  Run with uv:          uv run python <script>"
-    echo "  Add dependency:       uv add <package>"
+    echo "  Add dependency:       uv pip install <package>"
 fi
-echo "  Run AI agent:         python combat_gap_agent.py --password <password>"
+echo "  Run MCP server:       python mcp_server.py --model qwen2.5:3b --password <password>"
+echo "  Run combat agent:     python combat_gap_agent.py --password <password>"  
 echo "  Run validation:       python validation_tests.py"
 echo "  Debug tools:          python debug_tools.py"
 echo ""
