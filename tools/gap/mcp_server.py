@@ -117,7 +117,7 @@ For movement:
 {"intent": {"type": "intent", "action": "move", "params": {"x": 75, "y": 68}}}
 
 For attack:
-{"intent": {"type": "intent", "action": "attack", "params": {"x": monster_id, "y": -1}}}
+{"intent": {"type": "intent", "action": "attack", "params": {"x": 123, "y": -1}}}
 
 For chat:
 {"intent": {"type": "intent", "action": "chat", "params": {"kind": "Your message here"}}}
@@ -126,7 +126,7 @@ NEVER include any text before or after the JSON. The JSON must be complete and v
 
 ## Intent Format:
 Move: {"type": "intent", "action": "move", "params": {"x": 50, "y": 45}}
-Attack Monster: {"type": "intent", "action": "attack", "params": {"x": monster_id, "y": -1}}
+Attack Monster: {"type": "intent", "action": "attack", "params": {"x": 123, "y": -1}}
 Attack Position: {"type": "intent", "action": "attack", "params": {"x": 50, "y": 45}}
 Chat Response: {"type": "intent", "action": "chat", "params": {"kind": "Your message here"}}
 
@@ -136,7 +136,7 @@ Chat Response: {"type": "intent", "action": "chat", "params": {"kind": "Your mes
 3. **EXPLORE/MOVE** only if no monsters or all monsters have threat "LOW" (>6 tiles)
 
 ## Combat Tactics:
-- **Monster ID Attack**: Use {"action": "attack", "params": {"x": monster_id, "y": -1}} for specific targets
+- **Monster ID Attack**: Use {"action": "attack", "params": {"x": 123, "y": -1}} for specific targets (replace 123 with actual monster ID)
 - **Target Priority**: Attack lowest HP% monsters first (easy kills)  
 - **Positioning**: Attack from current position - don't move unless survival requires it
 - **Multiple Enemies**: Focus fire - attack same target until dead, then next
@@ -148,8 +148,8 @@ Chat Response: {"type": "intent", "action": "chat", "params": {"kind": "Your mes
 - **ALWAYS ATTACK**: Monsters with "HIGH" or "MED" threat level
 
 ## Combat Examples:
-- Monster with action "ATTACK_NOW" → {"action": "attack", "params": {"x": monster_id, "y": -1}}
-- Monster with action "ATTACK" → {"action": "attack", "params": {"x": monster_id, "y": -1}}
+- Monster with action "ATTACK_NOW" → {"action": "attack", "params": {"x": 123, "y": -1}}
+- Monster with action "ATTACK" → {"action": "attack", "params": {"x": 123, "y": -1}}
 - Monster with action "IGNORE" → Don't attack, move or explore instead
 - Multiple monsters → Attack first monster in list (sorted by priority)
 - No monsters or all "IGNORE" → Move to explore or collect items
@@ -307,7 +307,8 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     "stream": False,
                     "options": {
                         "temperature": 0.1,
-                        "top_p": 0.9
+                        "top_p": 0.9,
+                        "num_predict": 200  # Ensure enough tokens for complete JSON responses
                     }
                 }
                 
@@ -342,19 +343,24 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 "stream": False,
                 "options": {
                     "temperature": 0.1,  # Low temperature for consistent decisions
-                    "top_p": 0.9
+                    "top_p": 0.9,
+                    "num_predict": 200  # Ensure enough tokens for complete JSON responses
                 }
             }
             
             # Create session with timeout for this query
             logger.debug(f"Sending request to Ollama API: {self.ollama_url}/api/generate with model {self.model}")
+            logger.debug(f"🔍 FULL PROMPT BEING SENT:\n{prompt}")
             async with aiohttp.ClientSession(timeout=timeout) as query_session:
                 async with query_session.post(f"{self.ollama_url}/api/generate", 
                                            json=payload) as response:
                     logger.debug(f"Ollama API response status: {response.status}")
                     if response.status == 200:
                         result = await response.json()
-                        llm_response = result.get("response", "").strip()
+                        raw_response = result.get("response", "")
+                        llm_response = raw_response.strip()
+                        logger.debug(f"🔍 RAW OLLAMA RESPONSE: '{raw_response}' ({len(raw_response)} chars)")
+                        logger.debug(f"🔍 STRIPPED RESPONSE: '{llm_response}' ({len(llm_response)} chars)")
                         logger.debug(f"Ollama returned response of {len(llm_response) if llm_response else 0} chars")
                         if not self.warmup_complete:
                             logger.info("🎯 Model is now warmed up for future requests")
@@ -1085,9 +1091,11 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             self.last_player_pos = player_pos
                 
             # Parse LLM response as JSON
+            logger.debug(f"🔍 STARTING JSON PARSE: '{response}' ({len(response)} chars)")
             try:
                 # Extract JSON from response (may have extra text)
                 start_idx = response.find('{')
+                logger.debug(f"🔍 JSON START INDEX: {start_idx}")
                 if start_idx >= 0:
                     # Count braces to find proper end instead of using rfind
                     brace_count = 0
@@ -1102,9 +1110,15 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 break
                     
                     json_str = response[start_idx:end_idx]
+                    logger.debug(f"🔍 EXTRACTED JSON: '{json_str}' ({len(json_str)} chars)")
+                    
                     # Try to fix common JSON truncation issues
+                    original_json = json_str
                     if not json_str.endswith('}'):
                         json_str += '}'
+                        logger.debug(f"🔍 JSON COMPLETION: Added closing brace to: '{original_json}' -> '{json_str}'")
+                    
+                    logger.debug(f"🔍 FINAL JSON FOR PARSING: '{json_str}' ({len(json_str)} chars)")
                     llm_response = json.loads(json_str)
                 else:
                     # Fallback: try to parse the whole response
@@ -1362,7 +1376,9 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM response as JSON: {e}")
-                logger.error(f"Response was: {response}")
+                logger.error(f"🔍 FULL RESPONSE WAS: '{response}' ({len(response)} chars)")
+                logger.error(f"🔍 RESPONSE REPR: {repr(response)}")
+                logger.error(f"🔍 RESPONSE BYTES: {response.encode('utf-8') if response else 'None'}")
                 
                 # If we have chat messages and JSON parsing failed, force a chat response
                 compressed_state = self.compress_game_state(state_msg)

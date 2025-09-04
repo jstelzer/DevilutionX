@@ -129,6 +129,12 @@ private:
                 Players[requested_slot].position.future = companionPos;
                 Players[requested_slot].position.old = companionPos;
                 
+                // Initialize light radius for companion - CRITICAL for monster visibility!
+                if (Players[requested_slot]._pLightRad <= 0) {
+                    Players[requested_slot]._pLightRad = 10; // Default light radius
+                    std::cout << "GAP: Setting companion light radius to " << Players[requested_slot]._pLightRad << std::endl;
+                }
+                
                 // Positioned companion near player (reduced logging)
                 
                 std::cout << "GAP: Successfully loaded companion " << Players[requested_slot]._pName 

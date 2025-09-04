@@ -123,19 +123,24 @@ This gives LLMs complete tactical context: spatial awareness, enemy intel, loot 
 
 ## Architectural Approaches
 
-### Companion Mode (Current Implementation) ✅
+### Companion Mode (POC Complete, Architecture Redesign Needed) ⚠️
 - **Concept**: Load saved character into multiplayer slot
-- **Status**: Working with chat, level transitions functional
-- **Issue**: Movement intent execution bug in MCP server
+- **POC Success**: Chat, LLM decisions, combat AI, navigation all proven working
+- **Critical Bug**: Commands execute on wrong player due to network routing assumptions
+- **Root Cause**: GAP was bolted onto single-player control; needs proper entity control abstraction
 
 ### Headless Peer Mode (Future)
 - **Concept**: Two separate game instances via TCP/IP
 - **Benefits**: Natural multiplayer, independent saves
 - **Status**: Planning phase
 
-### Current Known Issues
-- **Movement Bug**: MCP server movement intents fail (combat agent works)
-- **Investigation**: JSON format identical, suspected socket timing issue
+### POC Evaluation Summary (Sept 2025)
+- ✅ **JSON Communication**: Fixed truncation with `num_predict: 200`
+- ✅ **LLM Integration**: Combat decisions, navigation, chat all working  
+- ✅ **Multi-Tech Stack**: DevilutionX ↔ GAP ↔ MCP ↔ Ollama successfully integrated
+- ✅ **AI Behavior**: Threat assessment, combat priorities, survival reflexes functional
+- ❌ **Architecture Limitation**: Network routing sends companion commands to wrong player
+- **Lesson Learned**: Need proper entity control abstraction for scalable companion system
 
 ## Recent Protocol Enhancements
 
@@ -191,57 +196,66 @@ cd tools/gap
 - 🧭 **A* Navigation**: Robust pathfinding with waypoint chunking
 - 💬 **Natural Chat**: Bidirectional conversation with context awareness
 
-## Combat Debug Investigation (Dec 2024)
+## Combat Debug Investigation History
 
-### Issue: Companion Not Attacking or Taking Damage
-**Observed**: Companion visible to enemies (they attack), but companion doesn't perceive threats or attack back.
+### Sept 2025: Command Routing Bug Identified ✅
+**Issue**: Companion AI generates correct intents but commands execute on wrong player
+**Root Cause**: GAP architecture evolved from single-player to companion mode without updating network command routing
 
-### Root Cause Analysis ✅
-**AI Systems Working Correctly:**
-- ✅ Monster detection and prioritization system functional
-- ✅ Survival reflexes and combat prompts working  
-- ✅ Target prioritization: low HP + close distance = high priority
-- ✅ Enhanced debug logging shows complete AI decision chain
-
-**Game-Side Issue Identified:**
-- ❌ **Companion receives 0 monsters from game**: `🩺 SURVIVAL CHECK: HP 70/70 (0 monsters nearby)`
-- ❌ **No raw monster data**: Game sends empty monster arrays to companion
-- ❌ **LLM never gets combat instructions**: `📍 SENDING TO LLM: No monsters, exploration mode`
-
-### Debug Evidence
+**Debug Evidence**:
 ```
-2025-09-04 15:45:17,702 - DEBUG - 👥 COMPANION FILTER: pos_changed=False, close_monsters=0, chat=False, other_players=True
-2025-09-04 15:45:17,702 - DEBUG - 🩺 SURVIVAL CHECK: HP 70/70 (0 monsters nearby)  
-2025-09-04 15:45:17,702 - DEBUG - No monsters detected in current area
-2025-09-04 15:45:17,702 - DEBUG - 📍 SENDING TO LLM: No monsters, exploration mode
+GAP: GetControlledPlayer - controlled_slot=1 MyPlayerId=
+GAP: ExecuteMove - Controlling player 1 (name: Rodney) at pos (2,/) to target (53,44)
+⚔️ SENDING TO LLM: 5 monsters, priority target: ID 7 Skeleton (Action: ATTACK_NOW)
+🔍 RAW OLLAMA RESPONSE: {"intent": {"type": "intent", "action": "attack", "params": {"x": 76, "y": -1}}}
 ```
 
-### Potential Game-Side Causes
-1. **Companion Player ID Issue**: Companion slot might not receive monster visibility data
-2. **GAP Protocol Filtering**: Game filtering out monsters for companion characters  
-3. **Vision System Bug**: Companion vision radius might be 0 or broken
-4. **Level/Area Mismatch**: Companion not in same area as visible monsters
+**Architecture Issue**:
+- ✅ `GetControlledPlayer()` correctly returns slot 1 (companion)
+- ✅ LLM generates valid attack intents for companion
+- ❌ `NetSendCmdLoc(companion_id, ...)` routes commands to main player instead of companion
+- **Fix needed**: Update GAP network command routing for proper player slot isolation
 
-### Enhanced Debug Tools Added ✅
-- 🗂️ **Raw monster data logging**: Shows what game sends before AI processing
-- 🎯 **Monster prioritization logs**: Combat target selection with threat levels
-- ⚔️ **LLM instruction logs**: What combat data reaches the AI
-- 🚨 **Survival override logs**: Emergency healing/kiting triggers
-- 👥 **Companion filter logs**: State processing decisions
+### Dec 2024: Monster Visibility Investigation ✅ (RESOLVED)
+**Issue**: Companion not detecting monsters (resolved - was AI processing bug)
+**Solution**: Enhanced debug logging revealed companion receives full monster data correctly
 
-### Next Investigation Steps
-- Check GAP source code for companion monster visibility implementation
-- Verify companion player ID gets same vision data as main player
-- Test if companion and main player are in same dungeon level/area
-- Look for GAP protocol errors in game console during monster encounters
+## Next Architecture: First-Class Entity Control System
 
-### Status
-**AI combat system is fully functional** - issue is in game-side monster data delivery to companion characters.
+### Problem with Current Architecture
+- GAP was designed for single-player AI control (AI controls main player)
+- Companion mode was bolted on using multiplayer slots
+- Network command routing assumes single player context
+- Results in commands executing on wrong player
+
+### Proposed Solution: Entity Controller Abstraction
+```
+Human Input    → EntityController[0] → Player 0 Actions
+GAP Protocol   → EntityController[1] → Player 1 Actions  
+GAP Protocol   → EntityController[2] → Player 2 Actions
+GAP Protocol   → EntityController[3] → Player 3 Actions
+```
+
+### Benefits
+- **Clean separation**: Each entity has its own control interface
+- **Scalable**: Support 1→3+ companions without architectural changes  
+- **No network hacks**: Direct entity manipulation instead of fighting multiplayer routing
+- **Diablo 2 style**: Similar to mercenary/hireling system
+- **Future-proof**: Supports different control types (human, AI, scripted)
+
+### Implementation Notes
+- Create `EntityController` abstract interface
+- `HumanController` for keyboard/mouse input
+- `GapAIController` for LLM/GAP protocol
+- `EntityManager` to coordinate all controllers
+- Direct player state manipulation without network commands
 
 ## Technical Debt
+- **PRIORITY: Implement first-class entity control system** 🚨
 - Replace custom JSON with nlohmann/json
 - Add GAP config file  
 - Implement state delta compression
 - ~~Fix MCP server movement bug~~ ✅ Fixed with navigation integration
-- **Investigate GAP companion monster visibility** ❌ Game-side issue
+- ~~Fix JSON truncation in LLM responses~~ ✅ Fixed with `num_predict: 200`
+- ~~Investigate GAP companion monster visibility~~ ✅ Resolved - monsters visible to companion
 
