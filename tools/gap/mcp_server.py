@@ -14,6 +14,10 @@ from typing import Optional, Dict, Any
 import aiohttp
 import argparse
 
+# Import GAP AI modules
+from navigation import NavigationPlanner
+from survival_reflexes import SurvivalReflexes
+
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -69,6 +73,10 @@ class GapMCPServer:
         prompt_file = "compact_diablo_agent.txt" if compact else "diablo_agent.txt"
         self.base_prompt = self.load_prompt(prompt_file)
         self.personality_overlay = self.load_personality_overlay(personality)
+        
+        # Initialize GAP AI modules
+        self.navigator = NavigationPlanner()
+        self.survival_reflexes = SurvivalReflexes()
         
     def load_prompt(self, filename: str) -> str:
         """Load prompt from file with fallback to default."""
@@ -782,6 +790,12 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             return None
             
         try:
+            # PRIORITY 1: Check survival reflexes FIRST - before any other logic
+            # This ensures emergency actions (healing, kiting) override everything else
+            emergency_action = self.survival_reflexes.check_emergency_actions(state_msg.get('data', {}))
+            if emergency_action:
+                logger.info(f"🚨 SURVIVAL OVERRIDE: {emergency_action.get('reasoning', 'Emergency action')}")
+                return emergency_action
             # Extract game state data early
             data = state_msg.get('data', {})
             player_data = data.get('player', {})
@@ -945,48 +959,49 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Update timing for next decision
             self.last_decision_time = time.time()
             
-            # Check if we need pathfinding assistance due to being stuck
-            # BUT NEVER override combat actions - combat always has priority
-            if self.stuck_counter >= self.stuck_threshold and response:
-                try:
-                    llm_intent = json.loads(response)
+            # PRIORITY 2: Advanced Navigation System Integration
+            # Use NavigationPlanner for robust pathfinding when LLM requests movement
+            try:
+                llm_intent = json.loads(response)
+                
+                # CRITICAL: Never override combat actions
+                if llm_intent.get('action') == 'attack':
+                    pass  # Combat has absolute priority
+                elif llm_intent.get('action') == 'move':
+                    # Enhance movement with NavigationPlanner
+                    compressed_state = self.compress_game_state(state_msg)
+                    monsters = compressed_state.get('monsters', [])
                     
-                    # CRITICAL: Never override combat actions
-                    if llm_intent.get('action') == 'attack':
-                        # Combat priority override
-                        pass  # Don't override attack actions
-                    elif llm_intent.get('action') == 'move':
-                        # Only override movement if we're not in immediate danger
-                        compressed_state = self.compress_game_state(state_msg)
-                        monsters = compressed_state.get('monsters', [])
+                    # Check for immediate threats (distance <= 2)
+                    immediate_threats = [m for m in monsters if m.get('distance', 999) <= 2]
+                    if immediate_threats:
+                        # Combat emergency - force attack instead of movement
+                        closest_threat = min(immediate_threats, key=lambda m: m.get('distance', 999))
+                        response = json.dumps({
+                            "type": "intent",
+                            "action": "attack",
+                            "params": {"x": closest_threat['id'], "y": -1}
+                        })
+                        logger.info(f"🗡️  NAVIGATION OVERRIDE: Combat emergency - attacking monster {closest_threat['id']}")
+                    else:
+                        # Safe to use NavigationPlanner for better pathfinding
+                        target_pos = (llm_intent['params']['x'], llm_intent['params']['y'])
+                        walkable_grid = compressed_state.get('walkable', [])
+                        light_radius = 2  # Compressed 5x5 grid = radius of 2
                         
-                        # Check for immediate threats (distance <= 2)
-                        immediate_threats = [m for m in monsters if m.get('distance', 999) <= 2]
-                        if immediate_threats:
-                            # Combat emergency mode
-                            # Force attack on closest threat instead of movement
-                            closest_threat = min(immediate_threats, key=lambda m: m.get('distance', 999))
-                            response = json.dumps({
-                                "type": "intent",
-                                "action": "attack",
-                                "params": {"x": closest_threat['id'], "y": -1}
-                            })
-                            pass  # Emergency attack
-                        else:
-                            # Safe to do pathfinding assistance
-                            target_pos = [llm_intent['params']['x'], llm_intent['params']['y']]
-                            walkable_grid = compressed_state.get('walkable', [])
-                            
-                            better_pos = self._find_walkable_path(player_pos, target_pos, walkable_grid)
-                            if better_pos:
-                                # Pathfinding override
-                                response = json.dumps({
-                                    "type": "intent",
-                                    "action": "move", 
-                                    "params": {"x": better_pos[0], "y": better_pos[1]}
-                                })
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Failed to parse LLM response for pathfinding: {e}")
+                        # Use NavigationPlanner for robust pathfinding
+                        current_pos_tuple = (player_pos[0], player_pos[1])
+                        nav_action = self.navigator.plan_route(current_pos_tuple, target_pos, walkable_grid, light_radius)
+                        
+                        if nav_action and nav_action.get('action') == 'move':
+                            # NavigationPlanner found a better path
+                            response = json.dumps(nav_action)
+                            nav_reason = nav_action.get('reasoning', 'Advanced pathfinding')
+                            logger.info(f"🧭 NAVIGATION ENHANCED: {nav_reason}")
+                        # If NavigationPlanner returns None, keep original LLM intent
+                        
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to parse LLM response for navigation enhancement: {e}")
             
             # Use already extracted data
             self.last_player_pos = player_pos
