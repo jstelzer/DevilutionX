@@ -24,10 +24,25 @@ namespace {
 // Get the controlled player for GAP operations
 Player* GetControlledPlayer() {
     int controlled_slot = GapCore::Instance().GetControlledPlayer();
-    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
-        return &Players[controlled_slot];
+    std::cerr << "GAP: GetControlledPlayer - controlled_slot=" << controlled_slot 
+              << " MyPlayerId=" << MyPlayerId << std::endl;
+    
+    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS) {
+        bool is_active = Players[controlled_slot].plractive;
+        std::cerr << "GAP: Checking slot " << controlled_slot 
+                  << " - plractive=" << is_active;
+        if (is_active) {
+            std::cerr << " name=" << Players[controlled_slot]._pName;
+        }
+        std::cerr << std::endl;
+        
+        if (is_active) {
+            return &Players[controlled_slot];
+        }
     }
+    
     // Fallback to MyPlayer if controlled player not available
+    std::cerr << "GAP: Falling back to MyPlayerId=" << MyPlayerId << std::endl;
     if (MyPlayerId < MAX_PLRS) {
         return &Players[MyPlayerId];
     }
@@ -113,20 +128,30 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
 bool GapIntentProcessor::ExecuteMove(int x, int y) {
     Player* player = GetControlledPlayer();
     if (player == nullptr) {
+        std::cerr << "GAP: ExecuteMove failed - GetControlledPlayer() returned nullptr" << std::endl;
         return false;
     }
     
+    int controlled_id = GetControlledPlayerId();
+    std::cerr << "GAP: ExecuteMove - Controlling player " << controlled_id 
+              << " (name: " << player->_pName << ")" 
+              << " at pos (" << player->position.tile.x << "," << player->position.tile.y << ")"
+              << " to target (" << x << "," << y << ")" << std::endl;
+    
     if (player->_pmode != PM_STAND) {
+        std::cerr << "GAP: ExecuteMove failed - player mode is " << player->_pmode << " (not PM_STAND)" << std::endl;
         return false;
     }
     
     Point target(x, y);
     
     if (!InDungeonBounds(target)) {
+        std::cerr << "GAP: ExecuteMove failed - target (" << x << "," << y << ") out of dungeon bounds" << std::endl;
         return false;
     }
     
     if (player->position.tile == target) {
+        std::cerr << "GAP: ExecuteMove failed - already at target position" << std::endl;
         return false; // Already at target
     }
     
@@ -136,9 +161,11 @@ bool GapIntentProcessor::ExecuteMove(int x, int y) {
     
     // Send network command for multiplayer compatibility
     if (gbIsMultiplayer) {
+        std::cerr << "GAP: Sending network command CMD_WALKXY for player " << controlled_id << std::endl;
         NetSendCmdLoc(GetControlledPlayerId(), true, CMD_WALKXY, target);
     }
     
+    std::cerr << "GAP: ExecuteMove succeeded - path set for player " << controlled_id << std::endl;
     return true;
 }
 

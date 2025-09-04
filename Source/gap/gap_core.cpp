@@ -119,10 +119,18 @@ private:
                 Players[requested_slot].plrlevel = Players[MyPlayerId].plrlevel;
                 Players[requested_slot].plrIsOnSetLevel = Players[MyPlayerId].plrIsOnSetLevel;
                 
-                // Set companion position to near the main player
-                Players[requested_slot].position.tile = Players[MyPlayerId].position.tile;
-                Players[requested_slot].position.future = Players[MyPlayerId].position.future;
-                Players[requested_slot].position.old = Players[MyPlayerId].position.old;
+                // Set companion position to near the main player (offset by 2 tiles)
+                Point mainPlayerPos = Players[MyPlayerId].position.tile;
+                Point companionPos = mainPlayerPos;
+                // Offset companion by 2 tiles south to avoid overlap
+                companionPos.y = mainPlayerPos.y + 2;
+                
+                Players[requested_slot].position.tile = companionPos;
+                Players[requested_slot].position.future = companionPos;
+                Players[requested_slot].position.old = companionPos;
+                
+                std::cout << "GAP: Positioned companion at (" << companionPos.x << "," << companionPos.y 
+                          << ") near player at (" << mainPlayerPos.x << "," << mainPlayerPos.y << ")" << std::endl;
                 
                 std::cout << "GAP: Successfully loaded companion " << Players[requested_slot]._pName 
                           << " from save #" << companionSaveNum << " into slot " << requested_slot << std::endl;

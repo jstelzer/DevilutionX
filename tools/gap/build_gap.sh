@@ -10,7 +10,8 @@ cd build
 
 # Configure with GAP enabled
 echo "Configuring with GAP enabled..."
-cmake -DENABLE_GAP=ON -DCMAKE_BUILD_TYPE=Debug ..
+#cmake -DENABLE_GAP=ON -DCMAKE_BUILD_TYPE=Debug ..
+cmake -DENABLE_GAP=ON  ..
 
 if [ $? -ne 0 ]; then
     echo "Configuration failed!"

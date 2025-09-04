@@ -503,9 +503,51 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     visionData.AddRaw("exploration", exploration_json.str())
         .EndObject();
     
+    // Extract other players information
+    std::ostringstream other_players_json;
+    other_players_json << "[";
+    bool first_other_player = true;
+    
+    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    
+    for (int i = 0; i < MAX_PLRS; i++) {
+        if (i == controlled_slot || !Players[i].plractive) {
+            continue; // Skip self and inactive players
+        }
+        
+        const Player& other_player = Players[i];
+        Point otherPos = other_player.position.tile;
+        
+        // Calculate distance from controlled player
+        int distance = std::abs(otherPos.x - playerPos.x) + std::abs(otherPos.y - playerPos.y);
+        
+        // Only include players within reasonable range (same as monster range)
+        if (distance > lightRadius + 5) {
+            continue;
+        }
+        
+        if (!first_other_player) {
+            other_players_json << ",";
+        }
+        first_other_player = false;
+        
+        other_players_json << "{"
+            << "\"id\":" << i << ","
+            << "\"name\":\"" << other_player._pName << "\","
+            << "\"pos\":[" << otherPos.x << "," << otherPos.y << "],"
+            << "\"distance\":" << distance << ","
+            << "\"hp\":" << other_player._pHitPoints << ","
+            << "\"hp_max\":" << other_player._pMaxHP << ","
+            << "\"hp_percent\":" << (other_player._pMaxHP > 0 ? (other_player._pHitPoints * 100 / other_player._pMaxHP) : 0) << ","
+            << "\"level\":" << other_player.getCharacterLevel() << ","
+            << "\"is_leader\":" << (i == MyPlayerId ? "true" : "false")
+            << "}";
+    }
+    other_players_json << "]";
+
     result.AddRaw("monsters", monsters_json.str())
           .AddRaw("items", items_json.str())
-          .AddRaw("other_players", "[]")
+          .AddRaw("other_players", other_players_json.str())
           .AddRaw("vision", visionData.ToString())
           .EndObject();
     

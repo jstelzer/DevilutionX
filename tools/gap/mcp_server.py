@@ -15,7 +15,7 @@ import aiohttp
 import argparse
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class GapMCPServer:
@@ -176,19 +176,32 @@ If player is chatting with you, prioritize chat response over combat (unless in 
     async def send_gap_message(self, msg: Dict[str, Any]) -> bool:
         """Send message to GAP socket."""
         try:
+            # COMPREHENSIVE DEBUG LOGGING
+            logger.info(f"📤 RAW INTENT TO SEND: {json.dumps(msg)}")
+            logger.info(f"📤 Intent structure: type={msg.get('type')}, action={msg.get('action')}, has_params={('params' in msg)}")
+            
             # Debug: Log movement details
             if msg.get('action') == 'move':
                 params = msg.get('params', {})
                 target_x = params.get('x', 0)
                 target_y = params.get('y', 0)
                 logger.info(f"🚶 SENDING MOVE to GAP: target=({target_x},{target_y})")
+            elif msg.get('action') == 'attack':
+                params = msg.get('params', {})
+                logger.info(f"⚔️ SENDING ATTACK to GAP: params={params}")
+            elif msg.get('action') == 'chat':
+                params = msg.get('params', {})
+                logger.info(f"💬 SENDING CHAT to GAP: message='{params.get('kind', '')}'")
                 
             data = json.dumps(msg).encode('utf-8')
+            logger.info(f"📤 ENCODED BYTES: {len(data)} bytes, content: {data[:200]}")
             length = struct.pack('<I', len(data))
             self.gap_socket.sendall(length + data)
+            logger.info(f"✅ SENT TO GAP SUCCESSFULLY")
             return True
         except Exception as e:
-            logger.error(f"Error sending GAP message: {e}")
+            logger.error(f"❌ Error sending GAP message: {e}")
+            logger.error(f"❌ Failed message was: {json.dumps(msg)}")
             return False
 
     async def read_gap_message(self) -> Optional[Dict[str, Any]]:
@@ -197,9 +210,11 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Read 4-byte length prefix
             length_bytes = self.gap_socket.recv(4)
             if len(length_bytes) != 4:
+                logger.warning(f"📥 Incomplete length prefix: got {len(length_bytes)} bytes")
                 return None
                 
             length = struct.unpack('<I', length_bytes)[0]
+            logger.debug(f"📥 Reading message of {length} bytes")
             
             # Read JSON payload
             data = b''
@@ -213,7 +228,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             if not decoded_data.strip():
                 logger.warning("Received empty message from GAP socket")
                 return None
-            return json.loads(decoded_data)
+            msg = json.loads(decoded_data)
+            
+            # Log received messages
+            if msg.get('type') == 'ack':
+                status = msg.get('status')
+                if status == 'success':
+                    logger.info(f"✅ RECEIVED ACK: {msg}")
+                else:
+                    logger.warning(f"⚠️ RECEIVED ACK: {msg}")
+            else:
+                logger.debug(f"📥 Received {msg.get('type')} message, size: {len(data)} bytes")
+            
+            return msg
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {e}")
             logger.error(f"Raw data length: {len(data)}, content: {data[:100]}...")
@@ -280,15 +307,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             }
             
             # Create session with timeout for this query
+            logger.debug(f"Sending request to Ollama API: {self.ollama_url}/api/generate with model {self.model}")
             async with aiohttp.ClientSession(timeout=timeout) as query_session:
                 async with query_session.post(f"{self.ollama_url}/api/generate", 
                                            json=payload) as response:
+                    logger.debug(f"Ollama API response status: {response.status}")
                     if response.status == 200:
                         result = await response.json()
+                        llm_response = result.get("response", "").strip()
+                        logger.debug(f"Ollama returned response of {len(llm_response) if llm_response else 0} chars")
                         if not self.warmup_complete:
                             logger.info("🎯 Model is now warmed up for future requests")
                             self.warmup_complete = True
-                        return result.get("response", "").strip()
+                        return llm_response
                     else:
                         logger.error(f"Ollama API error: {response.status}")
                         return None
@@ -559,7 +590,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
         return "\n".join(part for part in prompt_parts if part.strip())
 
     def should_process_state(self, state_msg: Dict[str, Any]) -> bool:
-        """Determine if we should process this state or skip it."""
+        """Determine if we should process this state or skip it - with proximity-based filtering."""
         import time
         
         current_time = time.time()
@@ -574,15 +605,60 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             logger.debug(f"Skipping stale tick {current_tick} (last processed: {self.last_processed_tick})")
             return False
             
-        # Check if player position changed (indicates fresh state)
+        # Get current state info
         data = state_msg.get("data", {})
         player = data.get("player", {})
         current_pos = player.get("pos", [0, 0])
+        nearby = data.get("nearby", {})
+        monsters = nearby.get("monsters", [])
         
+        # In companion mode, use different filtering logic
+        if self.companion_slot is not None and self.companion_slot > 0:
+            logger.debug(f"🤖 COMPANION: Position check - current: {current_pos}, last: {self.last_player_pos}")
+            
+            # For companions, process if:
+            # 1. Position changed (need to follow)
+            # 2. Monsters within 10 tiles (need to fight)
+            # 3. Chat messages (need to respond)
+            # 4. Other players present (need to follow leader)
+            
+            position_changed = not self.last_player_pos or current_pos != self.last_player_pos
+            
+            # Check for nearby threats (within 10 tiles)
+            close_monsters = []
+            for monster in monsters:
+                monster_pos = monster.get("pos", [999, 999])
+                distance = self._calculate_distance(current_pos, monster_pos)
+                if distance <= 10:
+                    close_monsters.append(monster)
+            
+            # Check for chat messages
+            chat_messages = nearby.get("chat", [])
+            has_recent_chat = bool(chat_messages)
+            
+            # Check for other players (especially leader to follow)
+            other_players = nearby.get("other_players", [])
+            has_other_players = bool(other_players)
+            
+            if position_changed:
+                logger.debug(f"🤖 COMPANION: Processing - position changed from {self.last_player_pos} to {current_pos}")
+                return True
+            elif close_monsters:
+                logger.debug(f"🤖 COMPANION: Processing - {len(close_monsters)} close monsters detected")
+                return True
+            elif has_recent_chat:
+                logger.debug(f"🤖 COMPANION: Processing - chat messages detected")
+                return True
+            elif has_other_players:
+                logger.debug(f"🤖 COMPANION: Processing - {len(other_players)} other players detected")
+                return True
+            else:
+                logger.debug(f"🤖 COMPANION: Skipping - no position change, monsters, chat, or other players")
+                return False
+        
+        # Original logic for non-companion mode
         if self.last_player_pos and current_pos == self.last_player_pos:
             # Same position, only process if there are monsters nearby
-            nearby = data.get("nearby", {})
-            monsters = nearby.get("monsters", [])
             if not monsters:
                 logger.debug("Same position, no monsters - skipping redundant state")
                 return False
@@ -696,11 +772,56 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             return None
             
         try:
-            # Debug: Log player position from raw state
-            player_data = state_msg.get('data', {}).get('player', {})
+            # Extract game state data early
+            data = state_msg.get('data', {})
+            player_data = data.get('player', {})
             player_pos = player_data.get('pos', [0, 0])
             in_town = player_data.get('in_town', False)
-            logger.info(f"🗺️  PROCESSING: Player at ({player_pos[0]},{player_pos[1]}) in_town={in_town}")
+            
+            # In companion mode, we need to handle positioning differently
+            if self.companion_slot is not None and self.companion_slot > 0:
+                logger.info(f"🤖 COMPANION MODE: Slot {self.companion_slot} at ({player_pos[0]},{player_pos[1]})")
+                
+                # Store companion position for proximity-based decisions
+                if not hasattr(self, 'companion_last_pos'):
+                    self.companion_last_pos = None
+                
+                # Track if companion moved (for debugging)
+                if self.companion_last_pos and self.companion_last_pos != player_pos:
+                    logger.info(f"🤖 COMPANION MOVED: {self.companion_last_pos} → {player_pos}")
+                self.companion_last_pos = player_pos
+                
+                # Check for other players (especially the leader) to follow
+                nearby_data = data.get('nearby', {})
+                other_players = nearby_data.get('other_players', [])
+                
+                # Find the main player (leader)
+                main_player = None
+                for other_player in other_players:
+                    if other_player.get('is_leader') == True or other_player.get('id') == 0:
+                        main_player = other_player
+                        break
+                
+                if main_player:
+                    main_pos = main_player.get('pos', [0, 0])
+                    distance = main_player.get('distance', 999)
+                    logger.info(f"🎯 LEADER at ({main_pos[0]},{main_pos[1]}) distance={distance}")
+                    
+                    # Check if we need to follow (leader is too far away)
+                    if distance > 3:  # Follow if more than 3 tiles away
+                        follow_pos = self._calculate_follow_position(main_pos, player_pos, ideal_distance=2)
+                        if follow_pos:
+                            logger.info(f"🏃 AUTO-FOLLOW: Moving to {follow_pos} to stay near leader")
+                            return {
+                                "type": "intent",
+                                "action": "move",
+                                "params": {"x": follow_pos[0], "y": follow_pos[1]}
+                            }
+                else:
+                    logger.debug("🤖 No other players detected in companion mode")
+                
+            else:
+                logger.info(f"🗺️  PROCESSING: Player at ({player_pos[0]},{player_pos[1]}) in_town={in_town}")
             
             # Detect if player is stuck
             current_pos_tuple = (player_pos[0], player_pos[1])
@@ -800,9 +921,8 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning(f"Failed to parse LLM response for pathfinding: {e}")
             
-            data = state_msg.get("data", {})
-            player = data.get("player", {})
-            self.last_player_pos = player.get("pos", [0, 0])
+            # Use already extracted data
+            self.last_player_pos = player_pos
                 
             # Parse LLM response as JSON
             try:
@@ -1113,6 +1233,45 @@ If player is chatting with you, prioritize chat response over combat (unless in 
         if not pos1 or not pos2 or len(pos1) < 2 or len(pos2) < 2:
             return 999  # Invalid position
         return int(((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2) ** 0.5)
+    
+    def _calculate_follow_position(self, leader_pos, companion_pos, ideal_distance=2):
+        """Calculate position to follow leader at ideal distance.
+        Returns position 1-2 tiles behind the leader."""
+        if not leader_pos or not companion_pos:
+            return None
+            
+        # Calculate direction from companion to leader
+        dx = leader_pos[0] - companion_pos[0]
+        dy = leader_pos[1] - companion_pos[1]
+        distance = abs(dx) + abs(dy)  # Manhattan distance
+        
+        # If we're already close enough, don't move
+        if distance <= ideal_distance:
+            logger.debug(f"Already close to leader (distance={distance})")
+            return None
+            
+        # Calculate position behind leader (opposite direction of movement)
+        # This makes companion follow behind rather than crowding
+        if distance > 0:
+            # Move towards a position that's offset from leader
+            # Calculate unit direction
+            dir_x = 1 if dx > 0 else -1 if dx < 0 else 0
+            dir_y = 1 if dy > 0 else -1 if dy < 0 else 0
+            
+            # Target position is near leader but not exactly on them
+            # Stay 1-2 tiles away
+            if distance > ideal_distance + 2:
+                # Far away - move closer
+                target_x = companion_pos[0] + dir_x * min(3, abs(dx))
+                target_y = companion_pos[1] + dir_y * min(3, abs(dy))
+            else:
+                # Close - maintain distance
+                target_x = leader_pos[0] - dir_x * ideal_distance
+                target_y = leader_pos[1] - dir_y * ideal_distance
+                
+            return [target_x, target_y]
+        
+        return None
         
     def _find_walkable_path(self, current_pos, target_pos, walkable_grid):
         """Find a walkable intermediate position toward target"""
