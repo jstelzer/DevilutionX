@@ -204,8 +204,12 @@ void GapCore::Shutdown() {
     enabled_ = false;
 }
 
+// Note: SyncCompanionLevel() moved to event-driven system in player.cpp
+
 void GapCore::OnGameTick(uint32_t tick) {
     if (!enabled_ || !impl_) return;
+    
+    // Note: Level sync is now event-driven via setLevel() hooks - no polling needed
     
     impl_->ProcessIncomingMessages();
     

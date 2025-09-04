@@ -37,7 +37,7 @@ Player* GetControlledPlayer() {
 }
 
 // Stair piece ID arrays from trigs.cpp
-const uint16_t TownDownList[] = { 715, 714, 718, 719, 720, 722, 723, 724, 725, 726 };
+const uint16_t TownDownList[] = { 715, 714, 718, 719, 720, 722, 723, 724, 725, 726, 119, 120, 123, 124, 125, 126 };
 const uint16_t TownWarp1List[] = { 1170, 1171, 1172, 1173, 1174, 1175, 1176, 1177, 1178, 1180, 1182, 1184 };
 const uint16_t TownCryptList[] = { 1330, 1331, 1332, 1333, 1334, 1335, 1336, 1337 };
 const uint16_t TownHiveList[] = { 1306, 1307, 1308, 1309 };
@@ -390,7 +390,8 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     std::string stairs_type = "";
     
     // Check for dungeon features within moderate radius for exploration
-    int exploration_radius = std::min(lightRadius + 3, 8);  // Limited area for exploration
+    // Use larger radius for stair detection so companions can follow leaders through level changes
+    int exploration_radius = std::min(lightRadius + 5, 15);  // Larger radius for better stair detection
     for (int dy = -exploration_radius; dy <= exploration_radius; dy++) {
         for (int dx = -exploration_radius; dx <= exploration_radius; dx++) {
             Point checkPos = {playerPos.x + dx, playerPos.y + dy};
@@ -399,10 +400,21 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
                 uint16_t pieceId = dPiece[checkPos.x][checkPos.y];
                 std::string detected_type = DetectStairType(pieceId, static_cast<int>(currlevel));
                 
+                // Debug: Log all non-zero piece IDs for stair detection debugging
+                if (pieceId != 0 && (checkPos.x == playerPos.x + dx && std::abs(checkPos.y - playerPos.y) <= 2) ||
+                    (checkPos.y == playerPos.y + dy && std::abs(checkPos.x - playerPos.x) <= 2)) {
+                    std::cout << "GAP Debug: Tile (" << checkPos.x << "," << checkPos.y << ") has pieceId=" << pieceId;
+                    if (!detected_type.empty()) {
+                        std::cout << " -> " << detected_type;
+                    }
+                    std::cout << std::endl;
+                }
+                
                 if (!detected_type.empty()) {
                     stairs_visible = true;
                     stairs_pos = checkPos;
                     stairs_type = detected_type;
+                    std::cout << "GAP Debug: STAIRS FOUND! Type=" << detected_type << " at (" << checkPos.x << "," << checkPos.y << ")" << std::endl;
                     break; // Found stairs, exit search
                 }
             }
