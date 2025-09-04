@@ -182,12 +182,102 @@ We're at a state where the client can influence the characters movement. So the 
 - **Balanced**: llama3.2:latest (2.0GB) - Good speed/intelligence balance  
 - **Powerful**: llama3.1:8b - Higher intelligence but slower responses
 
-### Phase 4: Advanced Features & Polish
-1. **Spell casting intents** (current protocol gap)
-2. **Inventory management** (pick up items, use potions)
-3. **Quest completion strategies**
-4. **Dungeon exploration with memory**
-5. **Cooperative multiplayer AI teammates**
+### Phase 4: Combat & Survival Systems 🎯 **NEXT DEVELOPMENT FOCUS**
+
+**Status**: With level transitions working perfectly, focus shifts to tactical gameplay improvements.
+
+#### **Combat Enhancements** ⚔️ HIGH PRIORITY
+1. **Defensive Behavior**: 
+   - Companion attacks enemies that are attacking it
+   - Self-preservation during combat encounters
+   - Proper threat response and engagement rules
+
+2. **Threat Prioritization**:
+   - Target closest/most dangerous enemies first
+   - Assess enemy types and adjust tactics accordingly
+   - Multi-enemy situation management
+
+3. **Combat Positioning**:
+   - Stay in formation with player during combat
+   - Avoid blocking player movement or attacks
+   - Maintain optimal range for weapon type
+
+4. **Weapon-Appropriate Tactics**:
+   - Melee behavior: Close distance, tank damage
+   - Ranged behavior: Maintain distance, kiting
+   - Hybrid builds: Context-aware switching
+
+#### **Survival Systems** 🛡️ HIGH PRIORITY
+1. **Auto-Healing Intelligence**:
+   - Use health potions when HP drops below thresholds
+   - Respect potion cooldowns and inventory limits
+   - Emergency healing overrides for critical situations
+
+2. **Emergency Retreating**:
+   - Kite when overwhelmed by multiple enemies
+   - Retreat to safer positions when health is critical
+   - Resume engagement when situation improves
+
+3. **Resource Management**:
+   - Don't waste potions on minor damage
+   - Prioritize potion types based on situation
+   - Manage limited inventory space effectively
+
+4. **Danger Recognition**:
+   - Avoid getting surrounded by enemies
+   - Recognize dangerous enemy combinations
+   - React to environmental hazards
+
+#### **Loot Intelligence** 💎 MEDIUM PRIORITY
+1. **Item Evaluation**:
+   - Assess item value and usefulness
+   - Pick up valuable items automatically
+   - Understand equipment upgrades vs current gear
+
+2. **Inventory Management**:
+   - Drop lesser items to make room for better ones
+   - Organize inventory efficiently
+   - Return to town when inventory is full
+
+3. **Gold & Currency**:
+   - Always prioritize gold pickup
+   - Understand item selling strategies
+   - Economic decision-making for purchases
+
+4. **Equipment Intelligence**:
+   - Auto-equip better items when found
+   - Understand stat requirements and bonuses
+   - Coordinate equipment with player (don't compete for same items)
+
+#### **Advanced Coordination** 🤝 LOW PRIORITY (FUTURE)
+1. **Formation Keeping**:
+   - Maintain helpful distance from player
+   - Position for optimal coverage and support
+   - Adapt formation to dungeon layout
+
+2. **Resource Sharing**:
+   - Drop useful items for player when needed
+   - Coordinate potion usage to avoid waste
+   - Share rare finds and upgrades
+
+3. **Strategic Communication**:
+   - Chat about identified threats and opportunities
+   - Report important findings (stairs, items, dangers)
+   - Explain tactical decisions and status
+
+4. **Role Specialization**:
+   - Tank mode: Draw aggro, absorb damage
+   - DPS mode: Maximum damage output
+   - Support mode: Healing, buffing, utility
+   - Adaptive behavior based on player playstyle
+
+#### **Technical Implementation Notes**
+- **Combat intents**: Extend existing attack system with defensive triggers
+- **Health monitoring**: Use existing player HP state for potion decisions
+- **Item evaluation**: Leverage existing item data for value assessment
+- **Formation logic**: Build on existing movement system with relative positioning
+
+**Expected Timeline**: Combat and survival features should be significantly easier to implement now that the core multiplayer architecture is solid. Level transitions were the hard part - everything else builds on proven foundations.
 
 ## GAP Protocol Data Structure (Current)
 
