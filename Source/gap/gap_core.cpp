@@ -129,8 +129,7 @@ private:
                 Players[requested_slot].position.future = companionPos;
                 Players[requested_slot].position.old = companionPos;
                 
-                std::cout << "GAP: Positioned companion at (" << companionPos.x << "," << companionPos.y 
-                          << ") near player at (" << mainPlayerPos.x << "," << mainPlayerPos.y << ")" << std::endl;
+                // Positioned companion near player (reduced logging)
                 
                 std::cout << "GAP: Successfully loaded companion " << Players[requested_slot]._pName 
                           << " from save #" << companionSaveNum << " into slot " << requested_slot << std::endl;

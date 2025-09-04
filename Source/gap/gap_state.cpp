@@ -209,7 +209,7 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     static int lastActiveCount = -1;
     
     if (playerPos.x != lastPlayerPos.x || playerPos.y != lastPlayerPos.y) {
-        std::cout << "GAP: Player moved to (" << playerPos.x << "," << playerPos.y << ")" << std::endl;
+        // Player moved - update last position (removed excessive logging)
         lastPlayerPos = playerPos;
     }
     
@@ -237,9 +237,7 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     bool first_monster = true;
     
     // Only log when monsters are found
-    if (ActiveMonsterCount > 0) {
-        std::cout << "GAP: Scanning " << ActiveMonsterCount << " active monsters" << std::endl;
-    }
+    // Scan monsters (removed excessive logging)
     
     for (size_t i = 0; i < ActiveMonsterCount; i++) {
         const auto& monster = Monsters[ActiveMonsters[i]];

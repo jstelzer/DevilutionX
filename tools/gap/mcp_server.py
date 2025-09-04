@@ -177,27 +177,26 @@ If player is chatting with you, prioritize chat response over combat (unless in 
         """Send message to GAP socket."""
         try:
             # COMPREHENSIVE DEBUG LOGGING
-            logger.info(f"📤 RAW INTENT TO SEND: {json.dumps(msg)}")
-            logger.info(f"📤 Intent structure: type={msg.get('type')}, action={msg.get('action')}, has_params={('params' in msg)}")
+            # Sending intent to GAP (reduced logging)
             
             # Debug: Log movement details
             if msg.get('action') == 'move':
                 params = msg.get('params', {})
                 target_x = params.get('x', 0)
                 target_y = params.get('y', 0)
-                logger.info(f"🚶 SENDING MOVE to GAP: target=({target_x},{target_y})")
+                pass  # Move intent
             elif msg.get('action') == 'attack':
                 params = msg.get('params', {})
-                logger.info(f"⚔️ SENDING ATTACK to GAP: params={params}")
+                pass  # Attack intent
             elif msg.get('action') == 'chat':
                 params = msg.get('params', {})
-                logger.info(f"💬 SENDING CHAT to GAP: message='{params.get('kind', '')}'")
+                # Chat intent
                 
             data = json.dumps(msg).encode('utf-8')
-            logger.info(f"📤 ENCODED BYTES: {len(data)} bytes, content: {data[:200]}")
+            # Encoding message
             length = struct.pack('<I', len(data))
             self.gap_socket.sendall(length + data)
-            logger.info(f"✅ SENT TO GAP SUCCESSFULLY")
+            pass  # Sent successfully
             return True
         except Exception as e:
             logger.error(f"❌ Error sending GAP message: {e}")
@@ -234,11 +233,11 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             if msg.get('type') == 'ack':
                 status = msg.get('status')
                 if status == 'success':
-                    logger.info(f"✅ RECEIVED ACK: {msg}")
+                    pass  # Received ACK
                 else:
-                    logger.warning(f"⚠️ RECEIVED ACK: {msg}")
+                    logger.warning(f"ACK warning: {msg}")
             else:
-                logger.debug(f"📥 Received {msg.get('type')} message, size: {len(data)} bytes")
+                pass  # Received message
             
             return msg
         except json.JSONDecodeError as e:
@@ -351,17 +350,15 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Debug: Log the raw game state structure to understand chat data location
             nearby_data = data.get('nearby', {})
             if 'chat' in nearby_data:
-                logger.info(f"💬 DEBUG: Found chat in data.nearby: {nearby_data['chat']}")
+                pass  # Found chat in nearby data
             elif 'chat' in data:
-                logger.info(f"💬 DEBUG: Found chat in data: {data['chat']}")
+                pass  # Found chat in data
             elif 'chat' in game_state:
-                logger.info(f"💬 DEBUG: Found chat at top level: {game_state['chat']}")
+                pass  # Found chat at top level
             else:
                 # Log full structure to find where chat might be  
                 full_json = json.dumps(game_state, indent=2)
-                logger.info(f"💬 DEBUG: No chat found. JSON length: {len(full_json)} chars")
-                logger.info(f"💬 DEBUG: Full game state structure: {full_json[:500]}...")
-                logger.info(f"💬 DEBUG: JSON ends with: ...{full_json[-100:]}")
+                pass  # No chat found in game state
             
             # Essential player info
             player = data.get("player", {})
@@ -496,16 +493,16 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             
             # Debug logging for chat
             if chat_data:
-                logger.info(f"💬 CHAT DATA FOUND: {chat_data}")
+                pass  # Chat data found
             else:
-                logger.debug("💬 No chat data in game state")
+                pass  # No chat data
             
             if recent_messages:
-                logger.info(f"💬 RECENT MESSAGES: {len(recent_messages)} messages found")
+                # Processing recent messages
                 for i, msg in enumerate(recent_messages):
-                    logger.info(f"💬   [{i}] From: '{msg.get('from', '')}' Text: '{msg.get('text', '')}'")
+                    pass  # Message processed
             else:
-                logger.debug("💬 No recent messages in chat data")
+                pass  # No recent messages
             
             chat_summary = []
             for msg in recent_messages[-3:]:  # Last 3 messages only
@@ -513,7 +510,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 msg_text = msg.get('text', '')
                 if msg_from == 'player' and msg_text:  # Only include player messages
                     chat_summary.append(f"Player: {msg_text}")
-                    logger.info(f"💬 ADDED TO LLM CONTEXT: Player: {msg_text}")
+                    # Added to LLM context
             
             # Add navigation awareness context
             navigation_context = {
@@ -614,7 +611,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             
         # Skip if this tick is older than what we already processed
         if current_tick <= self.last_processed_tick:
-            logger.debug(f"Skipping stale tick {current_tick} (last processed: {self.last_processed_tick})")
+            pass  # Skipping stale tick
             return False
             
         # Get current state info
@@ -626,7 +623,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
         
         # In companion mode, use different filtering logic
         if self.companion_slot is not None and self.companion_slot > 0:
-            logger.debug(f"🤖 COMPANION: Position check - current: {current_pos}, last: {self.last_player_pos}")
+            # Companion position check
             
             # For companions, process if:
             # 1. Position changed (need to follow)
@@ -654,26 +651,26 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             has_other_players = bool(other_players)
             
             if position_changed:
-                logger.debug(f"🤖 COMPANION: Processing - position changed from {self.last_player_pos} to {current_pos}")
+                pass  # Companion position changed
                 return True
             elif close_monsters:
-                logger.debug(f"🤖 COMPANION: Processing - {len(close_monsters)} close monsters detected")
+                pass  # Close monsters detected
                 return True
             elif has_recent_chat:
-                logger.debug(f"🤖 COMPANION: Processing - chat messages detected")
+                pass  # Chat messages detected
                 return True
             elif has_other_players:
-                logger.debug(f"🤖 COMPANION: Processing - {len(other_players)} other players detected")
+                pass  # Other players detected
                 return True
             else:
-                logger.debug(f"🤖 COMPANION: Skipping - no position change, monsters, chat, or other players")
+                pass  # Skipping - no relevant changes
                 return False
         
         # Original logic for non-companion mode
         if self.last_player_pos and current_pos == self.last_player_pos:
             # Same position, only process if there are monsters nearby
             if not monsters:
-                logger.debug("Same position, no monsters - skipping redundant state")
+                pass  # Skipping redundant state
                 return False
         
         return True
@@ -793,7 +790,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             
             # In companion mode, we need to handle positioning differently
             if self.companion_slot is not None and self.companion_slot > 0:
-                logger.info(f"🤖 COMPANION MODE: Slot {self.companion_slot} at ({player_pos[0]},{player_pos[1]})")
+                # Companion mode active
                 
                 # Store companion position for proximity-based decisions
                 if not hasattr(self, 'companion_last_pos'):
@@ -801,7 +798,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 
                 # Track if companion moved (for debugging)
                 if self.companion_last_pos and self.companion_last_pos != player_pos:
-                    logger.info(f"🤖 COMPANION MOVED: {self.companion_last_pos} → {player_pos}")
+                    pass  # Companion moved
                 self.companion_last_pos = player_pos
                 
                 # Check for other players (especially the leader) to follow
@@ -822,12 +819,11 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     main_dungeon_level = main_player[6]  # dlevel
                     companion_dungeon_level = player_data.get('level', 0)
                     
-                    logger.info(f"🎯 LEADER at ({main_pos[0]},{main_pos[1]}) distance={distance} level={main_dungeon_level}")
-                    logger.info(f"🤖 COMPANION at ({player_pos[0]},{player_pos[1]}) level={companion_dungeon_level}")
+                    # Leader and companion position tracking
                     
                     # Check for level change - leader disappeared to different level
                     if main_dungeon_level != companion_dungeon_level:
-                        logger.info(f"📍 LEVEL CHANGE DETECTED: Leader on level {main_dungeon_level}, companion on {companion_dungeon_level}")
+                        # Level change detected
                         
                         # Store the last known position where leader was before level change
                         if not hasattr(self, 'last_leader_pos'):
@@ -835,7 +831,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                         
                         # If we have a last known position, move there to follow through level change
                         if self.last_leader_pos:
-                            logger.info(f"🚪 FOLLOWING THROUGH LEVEL: Moving to last seen position {self.last_leader_pos}")
+                            pass  # Following through level change
                             return {
                                 "type": "intent",
                                 "action": "move",
@@ -850,7 +846,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     if distance > 3:  # Follow if more than 3 tiles away
                         follow_pos = self._calculate_follow_position(main_pos, player_pos, ideal_distance=2)
                         if follow_pos:
-                            logger.info(f"🏃 AUTO-FOLLOW: Moving to {follow_pos} to stay near leader")
+                            pass  # Auto-follow movement (reduced logging)
                             return {
                                 "type": "intent",
                                 "action": "move",
@@ -868,12 +864,12 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     stairs_type = exploration_data.get('stairs_type', '')
                     
                     if stairs_visible and stairs_pos != [0, 0]:
-                        logger.info(f"🚪 STAIRS DETECTED: {stairs_type} at ({stairs_pos[0]},{stairs_pos[1]})")
+                        # Stairs detected
                         
                         # If leader disappeared and we have stairs, move to stairs to follow
                         if hasattr(self, 'last_leader_level') and hasattr(self, 'last_leader_pos'):
                             if self.last_leader_level != companion_dungeon_level:
-                                logger.info(f"🚪 FOLLOWING LEADER THROUGH {stairs_type}: Moving to stairs at {stairs_pos}")
+                                pass  # Following leader through stairs
                                 return {
                                     "type": "intent",
                                     "action": "move", 
@@ -883,23 +879,23 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     # Fallback: try last known leader position
                     if hasattr(self, 'last_leader_level') and hasattr(self, 'last_leader_pos'):
                         if self.last_leader_level != companion_dungeon_level and self.last_leader_pos:
-                            logger.info(f"🚪 LEADER DISAPPEARED: Following to last position {self.last_leader_pos}")
+                            pass  # Leader disappeared, following last position
                             return {
                                 "type": "intent",
                                 "action": "move", 
                                 "params": {"x": self.last_leader_pos[0], "y": self.last_leader_pos[1]}
                             }
                     
-                    logger.debug("🤖 No other players detected in companion mode")
+                    # No other players in companion mode
                 
             else:
-                logger.info(f"🗺️  PROCESSING: Player at ({player_pos[0]},{player_pos[1]}) in_town={in_town}")
+                pass  # Processing player state
             
             # Detect if player is stuck
             current_pos_tuple = (player_pos[0], player_pos[1])
             if self.last_position == current_pos_tuple:
                 self.stuck_counter += 1
-                logger.info(f"🚧 STUCK DETECTION: Counter={self.stuck_counter}/{self.stuck_threshold}")
+                pass  # Stuck detection check
             else:
                 self.stuck_counter = 0
                 self.last_position = current_pos_tuple
@@ -917,21 +913,20 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 if player:
                     player_hp_pct = (player.get("hp", 0) * 100) // max(player.get("hp_max", 1), 1)
             
-            logger.info(f"Situation: {monster_count} monsters nearby, player HP: {player_hp_pct}%")
+            # Evaluating tactical situation
             if monster_count > 0:
                 closest = compressed_state.get("monsters", [{}])[0]
-                logger.info(f"  Closest threat: {closest.get('name', 'Unknown')} at distance {closest.get('dist', '?')} (threat: {closest.get('threat', 'UNKNOWN')})")
+                # Closest threat identified
             
             # Log chat messages going to LLM
             chat_messages = compressed_state.get("chat", [])
             if chat_messages:
-                logger.info(f"💬 SENDING TO LLM: {len(chat_messages)} chat messages: {chat_messages}")
+                pass  # Sending chat messages to LLM
             else:
-                logger.debug("💬 No chat messages to send to LLM")
+                pass  # No chat messages for LLM
             
             # Log the compressed state being sent to LLM for debugging
-            logger.debug(f"Compressed state for LLM: {json.dumps(compressed_state, indent=2)[:500]}...")
-            logger.debug("Querying LLM...")
+            # Compressed state and querying LLM
             
             # Add timeout to LLM query to prevent getting stuck
             try:
@@ -958,8 +953,8 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     
                     # CRITICAL: Never override combat actions
                     if llm_intent.get('action') == 'attack':
-                        logger.info(f"⚔️  COMBAT PRIORITY: Keeping attack action despite being stuck")
-                        # Don't override attack actions
+                        # Combat priority override
+                        pass  # Don't override attack actions
                     elif llm_intent.get('action') == 'move':
                         # Only override movement if we're not in immediate danger
                         compressed_state = self.compress_game_state(state_msg)
@@ -968,7 +963,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                         # Check for immediate threats (distance <= 2)
                         immediate_threats = [m for m in monsters if m.get('distance', 999) <= 2]
                         if immediate_threats:
-                            logger.info(f"⚔️  COMBAT EMERGENCY: {len(immediate_threats)} threats at melee range - NO PATHFINDING")
+                            # Combat emergency mode
                             # Force attack on closest threat instead of movement
                             closest_threat = min(immediate_threats, key=lambda m: m.get('distance', 999))
                             response = json.dumps({
@@ -976,7 +971,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "action": "attack",
                                 "params": {"x": closest_threat['id'], "y": -1}
                             })
-                            logger.info(f"⚔️  EMERGENCY ATTACK: Targeting {closest_threat['name']} (ID:{closest_threat['id']})")
+                            pass  # Emergency attack
                         else:
                             # Safe to do pathfinding assistance
                             target_pos = [llm_intent['params']['x'], llm_intent['params']['y']]
@@ -984,7 +979,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                             
                             better_pos = self._find_walkable_path(player_pos, target_pos, walkable_grid)
                             if better_pos:
-                                logger.info(f"🧭 PATHFINDING OVERRIDE: LLM wanted {target_pos}, suggesting {better_pos}")
+                                # Pathfinding override
                                 response = json.dumps({
                                     "type": "intent",
                                     "action": "move", 
@@ -1044,16 +1039,15 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "action": "chat", 
                                 "params": {"kind": "Sorry, I'm having trouble processing that. How can I help you?"}
                             }
-                            logger.info(f"💬 FORCED CHAT RESPONSE: {chat_intent}")
+                            pass  # Forced chat response
                             return chat_intent
                     
                     action_type = intent.get("action", "unknown")
-                    logger.info(f"➡️  {action_type.upper()} (pure nested): {intent}")
-                    logger.info(f"🔍 RAW LLM RESPONSE WAS: {response}")
+                    pass  # LLM intent processed
                     return intent
                 
                 # Check if response has feedback channel
-                elif "intent" in llm_response and "feedback" in llm_response:
+                if "intent" in llm_response and "feedback" in llm_response:
                     # Extract intent for game and feedback for logging
                     intent = llm_response["intent"]
                     feedback = llm_response["feedback"]
@@ -1062,7 +1056,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     # Special logging for chat intents
                     if action_type == "chat":
                         chat_message = intent.get("params", {}).get("kind", "")
-                        logger.info(f"💬 LLM WANTS TO CHAT: '{chat_message}'")
+                        # LLM chat response
                         
                         # Validate intent before executing
                         if not self.validate_intent(intent, state_msg):
@@ -1074,7 +1068,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                             monsters = compressed_state.get("monsters", [])
                             
                             if chat_messages and not monsters:
-                                logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                                # Forcing chat response
                                 # Re-prompt the LLM specifically for chat response
                                 chat_prompt = f"{self.base_prompt}\n\n**CHAT MODE - RESPOND TO PLAYER**\nPlayer said: '{chat_messages[0].replace('Player: ', '')}'\nNo monsters nearby. Respond as a friendly AI companion in the game. Keep it brief (under 50 characters).\n\nRespond with: {{\"type\":\"intent\",\"action\":\"chat\",\"params\":{{\"kind\":\"Your response here\"}}}}"
                                 
@@ -1087,19 +1081,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                         if start_idx >= 0 and end_idx > start_idx:
                                             json_str = chat_response[start_idx:end_idx]
                                             chat_intent = json.loads(json_str)
-                                            logger.info(f"💬 LLM CHAT RESPONSE: {chat_intent}")
+                                            pass  # LLM chat response
                                             return chat_intent
                                 except Exception as e:
                                     logger.warning(f"Failed to get LLM chat response: {e}")
                                 
                                 # Fallback to hardcoded response if LLM fails
-                                logger.info("💬 USING FALLBACK CHAT RESPONSE")
+                                # Using fallback chat
                                 chat_intent = {
                                     "type": "intent",
                                     "action": "chat",
                                     "params": {"kind": "I'm here! No monsters around, just exploring."}
                                 }
-                                logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                                pass  # Fallback chat response
                                 return chat_intent
                             
                             # Otherwise fallback to movement
@@ -1112,7 +1106,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "action": "move", 
                                 "params": {"x": pos[0] + 1, "y": pos[1] + 1}
                             }
-                            logger.info(f"➡️  MOVE (invalid-intent-fallback): {fallback_intent}")
+                            pass  # Fallback movement intent
                             return fallback_intent
                             
                         # Check for stuck loops before executing
@@ -1125,12 +1119,10 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "action": "move", 
                                 "params": {"x": intent["params"]["x"] + 2, "y": intent["params"].get("y", 0) + 1}
                             }
-                            logger.info(f"🤖 AI: {feedback} → OVERRIDE: Moving to break attack loop")
-                            logger.info(f"➡️  MOVE (fallback): {fallback_intent}")
+                            pass  # AI override: moving to break loop
                             return fallback_intent
                         
-                        logger.info(f"🤖 AI: {feedback}")
-                        logger.info(f"➡️  {action_type.upper()}: {intent}")
+                        pass  # AI decision processed
                         return intent
                     elif "type" in llm_response and llm_response.get("type") == "intent":
                         # Direct intent format (backward compatibility)
@@ -1145,7 +1137,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                             monsters = compressed_state.get("monsters", [])
                             
                             if chat_messages and not monsters:
-                                logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                                # Forcing chat response
                                 # Re-prompt the LLM specifically for chat response
                                 chat_prompt = f"{self.base_prompt}\n\n**CHAT MODE - RESPOND TO PLAYER**\nPlayer said: '{chat_messages[0].replace('Player: ', '')}'\nNo monsters nearby. Respond as a friendly AI companion in the game. Keep it brief (under 50 characters).\n\nRespond with: {{\"type\":\"intent\",\"action\":\"chat\",\"params\":{{\"kind\":\"Your response here\"}}}}"
                                 
@@ -1158,19 +1150,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                         if start_idx >= 0 and end_idx > start_idx:
                                             json_str = chat_response[start_idx:end_idx]
                                             chat_intent = json.loads(json_str)
-                                            logger.info(f"💬 LLM CHAT RESPONSE: {chat_intent}")
+                                            pass  # LLM chat response
                                             return chat_intent
                                 except Exception as e:
                                     logger.warning(f"Failed to get LLM chat response: {e}")
                                 
                                 # Fallback to hardcoded response if LLM fails
-                                logger.info("💬 USING FALLBACK CHAT RESPONSE")
+                                # Using fallback chat
                                 chat_intent = {
                                     "type": "intent",
                                     "action": "chat",
                                     "params": {"kind": "I'm here! No monsters around, just exploring."}
                                 }
-                                logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                                pass  # Fallback chat response
                                 return chat_intent
                                 
                             # Otherwise fallback to movement
@@ -1183,7 +1175,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "action": "move", 
                                 "params": {"x": pos[0] + 1, "y": pos[1] + 1}
                             }
-                            logger.info(f"➡️  MOVE (invalid-direct-intent-fallback): {fallback_intent}")
+                            pass  # Invalid direct intent fallback
                             return fallback_intent
                         
                         if self.detect_stuck_loop(llm_response):
@@ -1197,7 +1189,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 "action": "move", 
                                 "params": {"x": pos[0] + 3, "y": pos[1] + 2}
                             }
-                            logger.info(f"➡️  MOVE (loop-break): {fallback_intent}")
+                            pass  # Loop-break movement
                             return fallback_intent
                         
                         action_type = llm_response.get("action", "unknown")
@@ -1205,9 +1197,9 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                         # Special logging for chat intents
                         if action_type == "chat":
                             chat_message = llm_response.get("params", {}).get("kind", "")
-                            logger.info(f"💬 LLM WANTS TO CHAT: '{chat_message}'")
+                            # LLM chat response
                         
-                        logger.info(f"➡️  {action_type.upper()}: {llm_response}")
+                        pass  # LLM response processed
                         return llm_response
                     else:
                         # Handle nested intent format {"intent": {...}}
@@ -1224,7 +1216,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                 monsters = compressed_state.get("monsters", [])
                                 
                                 if chat_messages and not monsters:
-                                    logger.info("💬 FORCING CHAT RESPONSE - re-prompting LLM for chat only")
+                                    # Forcing chat response
                                     # Re-prompt the LLM specifically for chat response
                                     chat_prompt = f"{self.base_prompt}\n\n**CHAT MODE - RESPOND TO PLAYER**\nPlayer said: '{chat_messages[0].replace('Player: ', '')}'\nNo monsters nearby. Respond as a friendly AI companion in the game. Keep it brief (under 50 characters).\n\nRespond with: {{\"type\":\"intent\",\"action\":\"chat\",\"params\":{{\"kind\":\"Your response here\"}}}}"
                                     
@@ -1237,19 +1229,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                                             if start_idx >= 0 and end_idx > start_idx:
                                                 json_str = chat_response[start_idx:end_idx]
                                                 chat_intent = json.loads(json_str)
-                                                logger.info(f"💬 LLM CHAT RESPONSE: {chat_intent}")
+                                                pass  # LLM chat response
                                                 return chat_intent
                                     except Exception as e:
                                         logger.warning(f"Failed to get LLM chat response: {e}")
                                     
                                     # Fallback to hardcoded response if LLM fails
-                                    logger.info("💬 USING FALLBACK CHAT RESPONSE")
+                                    # Using fallback chat
                                     chat_intent = {
                                         "type": "intent",
                                         "action": "chat",
                                         "params": {"kind": "I'm here! No monsters around, just exploring."}
                                     }
-                                    logger.info(f"💬 FALLBACK CHAT RESPONSE: {chat_intent}")
+                                    pass  # Fallback chat response
                                     return chat_intent
                                 
                                 # Otherwise fallback to movement
