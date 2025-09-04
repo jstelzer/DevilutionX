@@ -10,8 +10,7 @@ cd build
 
 # Configure with GAP enabled
 echo "Configuring with GAP enabled..."
-cmake -DENABLE_GAP=ON -DCMAKE_BUILD_TYPE=Debug ..
-#cmake -DENABLE_GAP=ON  ..
+cmake -DENABLE_GAP=ON -DCMAKE_BUILD_TYPE=Debug -DASAN=OFF -DUBSAN=OFF -DCMAKE_INSTALL_PREFIX="$HOME/.local/devilutionx" ..
 
 if [ $? -ne 0 ]; then
     echo "Configuration failed!"
@@ -21,7 +20,12 @@ fi
 # Build
 echo
 echo "Building..."
-make -j$(nproc)
+# Use macOS-compatible core count detection
+if command -v nproc >/dev/null 2>&1; then
+    make -j$(nproc)
+else
+    make -j$(sysctl -n hw.ncpu)
+fi
 
 if [ $? -ne 0 ]; then
     echo "Build failed!"
