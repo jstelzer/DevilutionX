@@ -401,6 +401,77 @@ This approach transforms GAP from **"AI plays alone"** to **"AI adventuring budd
 
 ---
 
+## 🤖 HEADLESS AI PEER MODE - NEXT GENERATION ARCHITECTURE
+
+**BREAKTHROUGH INSIGHT**: Instead of fighting companion synchronization complexity, we're pivoting to a **headless AI peer** approach that leverages DevilutionX's proven multiplayer architecture.
+
+### The Headless AI Peer Concept ✨
+
+```
+Human Player (GUI)          AI Player (Headless)
+┌─────────────────┐        ┌─────────────────┐
+│   DevilutionX   │◄──────►│   DevilutionX   │◄── LLM
+│   (Normal UI)   │  TCP/IP│   (--headless)  │    (GAP)
+│                 │        │   No Graphics   │
+└─────────────────┘        └─────────────────┘
+       │                           │
+       ▼                           ▼
+   Human Save                  AI Save
+   multi_1.sv                  multi_2.sv
+```
+
+### Architecture Benefits 🎯
+
+1. **Natural Multiplayer Flow**: Uses existing, proven networking code
+2. **Level Transitions Work**: Each client handles its own state - no sync issues!
+3. **Independent Save Management**: Each player uses their own save file
+4. **Leverages Existing Headless Mode**: DevilutionX already supports `HeadlessMode`
+5. **Authentic Multiplayer Experience**: AI appears as real player to human
+6. **Scalable**: Could support multiple AI players easily
+
+### Implementation Plan
+
+**Phase 1: Basic Headless AI Peer**
+```bash
+# 1. Start human multiplayer game
+./devilutionx --multiplayer --save multi_1.sv
+
+# 2. Start headless AI instance  
+./devilutionx --headless --save multi_2.sv --gap --connect <host>
+```
+
+**Phase 2: GAP Integration**
+- GAP socket created by headless instance (for LLM control)
+- LLM connects to headless client via GAP protocol
+- Standard multiplayer networking between human and AI clients
+
+**Phase 3: Enhanced Features**
+- Auto-connect mechanics
+- AI character selection
+- Multiple AI peers
+- Persistent AI personalities
+
+### Key Differences from Companion Mode
+
+| Aspect | Companion Mode | Headless AI Peer |
+|--------|----------------|------------------|
+| **Instances** | Single game + companion slot | Two separate game instances |
+| **Level Transitions** | Manual sync required | Automatic (standard multiplayer) |
+| **Save Files** | Shared/loaded into slots | Independent save files |
+| **State Management** | Complex companion sync | Natural multiplayer state |
+| **Architecture** | Fighting the engine | Working with the engine |
+
+### Implementation Status: Planning Phase
+
+**Next Steps:**
+1. Add `--headless` CLI argument support
+2. Enable GAP socket creation in headless mode  
+3. Test basic multiplayer connection between GUI and headless clients
+4. Adapt MCP server to control headless instance
+5. Verify level transitions work naturally
+
+---
+
 ## 🎮 MULTIPLAYER COMPANION MODE - CURRENT STATUS ✅
 
 **BREAKTHROUGH ACHIEVED**: Successfully implemented multiplayer companion system with AI-controlled second characters!

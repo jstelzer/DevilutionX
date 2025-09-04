@@ -3139,6 +3139,90 @@ void LoadGameLevelSyncPlayerEntry(lvl_entry lvldir)
 			}
 		}
 	}
+
+#ifdef ENABLE_GAP
+	// Synchronize GAP companions to current level after level transition
+	gap::GapCore& gapCore = gap::GapCore::Instance();
+	int controlledSlot = gapCore.GetControlledPlayer();
+	
+	std::cerr << "GAP: Level sync check - controlledSlot=" << controlledSlot 
+			  << " MyPlayerId=" << MyPlayerId 
+			  << " gbIsMultiplayer=" << gbIsMultiplayer;
+	if (controlledSlot >= 0 && controlledSlot < MAX_PLRS) {
+		std::cerr << " Players[" << controlledSlot << "].plractive=" << Players[controlledSlot].plractive;
+	}
+	std::cerr << std::endl;
+	
+	// Only sync if we have a valid controlled companion and we're in multiplayer mode
+	if (controlledSlot >= 0 && controlledSlot < MAX_PLRS && 
+		controlledSlot != MyPlayerId && MyPlayerId < MAX_PLRS && gbIsMultiplayer &&
+		Players[controlledSlot].plractive) {
+		
+		Player& companion = Players[controlledSlot];
+		Player& mainPlayer = Players[MyPlayerId];
+		
+		// Force companion to current level - critical for movement command processing
+		companion.plrlevel = mainPlayer.plrlevel;
+		companion.plrIsOnSetLevel = mainPlayer.plrIsOnSetLevel;
+		
+		// Position companion near main player (offset by 2 tiles to avoid overlap)
+		Point companionPos = mainPlayer.position.tile + Displacement { 2, 0 };
+		if (InDungeonBounds(companionPos)) {
+			companion.position.tile = companionPos;
+			companion.position.future = companionPos;
+			companion.position.last = companionPos;
+		}
+		
+		// Mark companion as NOT level changing and ensure proper network state
+		companion._pLvlChanging = false;
+		companion.plractive = true;
+		
+		// Ensure player_state is properly set for networking
+		if (controlledSlot < 4) {  // player_state array size check
+			player_state[controlledSlot] |= PS_CONNECTED;
+			player_state[controlledSlot] |= PS_ACTIVE;
+		}
+		
+		// Reset companion to a safe state during level transition
+		companion._pmode = PM_STAND;
+		companion.destAction = ACTION_NONE;
+		companion.walkpath[0] = WALK_NONE;
+		companion._pInvincible = false;
+		
+		// Clear any ongoing animations that might cause sprite issues
+		companion.AnimInfo.ticksPerFrame = 0;
+		companion.AnimInfo.tickCounterOfCurrentFrame = 0;
+		companion.AnimInfo.currentFrame = 0;
+		
+		// Reinitialize graphics - this loads proper sprites for current level
+		InitPlayerGFX(companion);
+		SetPlrAnims(companion);
+		
+		// Set to standing animation to avoid sprite index issues
+		NewPlrAnim(companion, player_graphic::Stand, companion._pdir);
+		
+		// Initialize companion position manually to avoid networking issues
+		// (SyncInitPlrPos can cause crashes during level transitions)
+		if (!PosOkPlayer(companion, companion.position.tile)) {
+			// Find a safe position near the companion's current position
+			const WorldTileDisplacement offset[9] = { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 }, { 2, 0 }, { 0, 2 }, { 1, 2 }, { 2, 1 }, { 2, 2 } };
+			for (int i = 0; i < 9; i++) {
+				Point testPos = companion.position.tile + offset[i];
+				if (InDungeonBounds(testPos) && PosOkPlayer(companion, testPos)) {
+					companion.position.tile = testPos;
+					companion.position.future = testPos;
+					companion.position.last = testPos;
+					break;
+				}
+			}
+		}
+		
+		std::cerr << "GAP: Synchronized companion " << controlledSlot 
+				  << " (getId=" << static_cast<int>(companion.getId()) << ")"
+				  << " to level " << static_cast<int>(companion.plrlevel)
+				  << " (setlevel=" << companion.plrIsOnSetLevel << ")" << std::endl;
+	}
+#endif
 }
 
 void LoadGameLevelLightVision()
