@@ -1,5 +1,6 @@
 #include "gap_intent.h"
 #include "gap_json.h"
+#include "gap_core.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
 #endif
@@ -19,6 +20,30 @@
 
 namespace devilution::gap {
 
+namespace {
+// Get the controlled player for GAP operations
+Player* GetControlledPlayer() {
+    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
+        return &Players[controlled_slot];
+    }
+    // Fallback to MyPlayer if controlled player not available
+    if (MyPlayerId < MAX_PLRS) {
+        return &Players[MyPlayerId];
+    }
+    return nullptr;
+}
+
+// Get the controlled player ID for GAP operations  
+int GetControlledPlayerId() {
+    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
+        return controlled_slot;
+    }
+    // Fallback to MyPlayerId
+    return MyPlayerId;
+}
+} // namespace
 
 void GapIntentProcessor::QueueIntent(const JsonParser& intent_msg) {
     if (intent_queue_.size() >= 3) {
@@ -86,13 +111,12 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
 }
 
 bool GapIntentProcessor::ExecuteMove(int x, int y) {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return false;
     }
     
-    auto& player = Players[MyPlayerId];
-    
-    if (player._pmode != PM_STAND) {
+    if (player->_pmode != PM_STAND) {
         return false;
     }
     
@@ -102,30 +126,29 @@ bool GapIntentProcessor::ExecuteMove(int x, int y) {
         return false;
     }
     
-    if (player.position.tile == target) {
+    if (player->position.tile == target) {
         return false; // Already at target
     }
     
     // Use the game's pathfinding system like the normal controls do
-    MakePlrPath(player, target, true);
-    player.destAction = ACTION_WALK;
+    MakePlrPath(*player, target, true);
+    player->destAction = ACTION_WALK;
     
     // Send network command for multiplayer compatibility
     if (gbIsMultiplayer) {
-        NetSendCmdLoc(player.getId(), true, CMD_WALKXY, target);
+        NetSendCmdLoc(GetControlledPlayerId(), true, CMD_WALKXY, target);
     }
     
     return true;
 }
 
 bool GapIntentProcessor::ExecuteAttack(int x, int y) {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return false;
     }
     
-    auto& player = Players[MyPlayerId];
-    
-    if (player._pmode != PM_STAND) {
+    if (player->_pmode != PM_STAND) {
         return false;
     }
     
@@ -133,7 +156,7 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
     // This allows attacking specific monsters by ID
     if (y == -1) {
         int monsterId = x;
-        if (monsterId >= 0 && monsterId < MaxMonsters) {
+        if (monsterId >= 0 && static_cast<size_t>(monsterId) < MaxMonsters) {
             const auto& monster = Monsters[monsterId];
             
             // Check if monster is alive
@@ -143,7 +166,7 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
             
             // Check if monster is in range (reasonable attack range)
             Point monsterPos = monster.position.tile;
-            Point playerPos = player.position.tile;
+            Point playerPos = player->position.tile;
             int dx = std::abs(monsterPos.x - playerPos.x);
             int dy = std::abs(monsterPos.y - playerPos.y);
             
@@ -153,7 +176,7 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
             }
             
             // Use appropriate attack command based on weapon type
-            if (player.UsesRangedWeapon()) {
+            if (player->UsesRangedWeapon()) {
                 NetSendCmdParam1(true, CMD_RATTACKID, monsterId);
             } else {
                 NetSendCmdParam1(true, CMD_ATTACKID, monsterId);
@@ -170,10 +193,10 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
         }
         
         // Use appropriate attack command for position
-        if (player.UsesRangedWeapon()) {
-            NetSendCmdLoc(MyPlayerId, true, CMD_RATTACKXY, target);
+        if (player->UsesRangedWeapon()) {
+            NetSendCmdLoc(GetControlledPlayerId(), true, CMD_RATTACKXY, target);
         } else {
-            NetSendCmdLoc(MyPlayerId, true, CMD_SATTACKXY, target);
+            NetSendCmdLoc(GetControlledPlayerId(), true, CMD_SATTACKXY, target);
         }
         
         return true;
@@ -183,13 +206,12 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
 }
 
 bool GapIntentProcessor::ExecuteCast(int slot, int x, int y) {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return false;
     }
     
-    auto& player = Players[MyPlayerId];
-    
-    if (player._pmode != PM_STAND) {
+    if (player->_pmode != PM_STAND) {
         return false;
     }
     
@@ -200,13 +222,12 @@ bool GapIntentProcessor::ExecuteCast(int slot, int x, int y) {
 }
 
 bool GapIntentProcessor::ExecutePickup(int item_id) {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return false;
     }
     
-    auto& player = Players[MyPlayerId];
-    
-    if (player._pmode != PM_STAND) {
+    if (player->_pmode != PM_STAND) {
         return false;
     }
     
@@ -217,7 +238,7 @@ bool GapIntentProcessor::ExecutePickup(int item_id) {
             
             // Check if item is within reasonable range (adjacent)
             Point itemPos = item.position;
-            Point playerPos = player.position.tile;
+            Point playerPos = player->position.tile;
             int dx = std::abs(itemPos.x - playerPos.x);
             int dy = std::abs(itemPos.y - playerPos.y);
             
@@ -233,13 +254,12 @@ bool GapIntentProcessor::ExecutePickup(int item_id) {
 }
 
 bool GapIntentProcessor::ExecuteUsePotion(const std::string& kind, int slot) {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return false;
     }
     
-    auto& player = Players[MyPlayerId];
-    
-    if (player._pmode != PM_STAND) {
+    if (player->_pmode != PM_STAND) {
         return false;
     }
     
@@ -250,13 +270,12 @@ bool GapIntentProcessor::ExecuteUsePotion(const std::string& kind, int slot) {
 }
 
 bool GapIntentProcessor::ExecuteInteract(int object_id) {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return false;
     }
     
-    auto& player = Players[MyPlayerId];
-    
-    if (player._pmode != PM_STAND) {
+    if (player->_pmode != PM_STAND) {
         return false;
     }
     
@@ -267,13 +286,13 @@ bool GapIntentProcessor::ExecuteInteract(int object_id) {
             
             // Check if object is within range (adjacent)
             Point objPos = obj.position;
-            Point playerPos = player.position.tile;
+            Point playerPos = player->position.tile;
             int dx = std::abs(objPos.x - playerPos.x);
             int dy = std::abs(objPos.y - playerPos.y);
             
             if (dx <= 1 && dy <= 1) {
                 // Use existing object interaction
-                NetSendCmdLoc(MyPlayerId, true, CMD_OPOBJXY, objPos);
+                NetSendCmdLoc(GetControlledPlayerId(), true, CMD_OPOBJXY, objPos);
                 return true;
             }
         }

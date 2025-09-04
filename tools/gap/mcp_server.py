@@ -21,13 +21,15 @@ logger = logging.getLogger(__name__)
 class GapMCPServer:
     def __init__(self, gap_socket_path: str, ollama_url: str = "http://localhost:11434", 
                  model: str = "llama3.2", password: Optional[str] = None, 
-                 personality: str = "balanced", compact: bool = True):
+                 personality: str = "balanced", compact: bool = True,
+                 companion_slot: Optional[int] = None):
         self.gap_socket_path = gap_socket_path
         self.ollama_url = ollama_url
         self.model = model
         self.password = password
         self.personality = personality
         self.compact = compact
+        self.companion_slot = companion_slot
         self.gap_socket = None
         self.session = None
         
@@ -36,7 +38,9 @@ class GapMCPServer:
         self.last_decision_time = 0
         self.min_decision_interval = 0.5  # Minimum 500ms between decisions
         self.last_player_pos = None
-        self.decision_timeout = 2.0  # Max 2s per decision
+        self.decision_timeout = 5.0  # Max 5s per decision (after warmup)
+        self.warmup_timeout = 30.0  # Max 30s for initial model loading
+        self.warmup_complete = False
         
         # Loop detection and attack cooldowns
         self.last_intent = None
@@ -98,6 +102,20 @@ class GapMCPServer:
 - You respond with GAP intent JSON to control the character
 - Available intents: move (to position), attack (monster ID or position), chat (respond to player)
 
+## CRITICAL: Response Format
+You MUST respond with valid JSON in this EXACT format (no extra text):
+
+For movement:
+{"intent": {"type": "intent", "action": "move", "params": {"x": 75, "y": 68}}}
+
+For attack:
+{"intent": {"type": "intent", "action": "attack", "params": {"x": monster_id, "y": -1}}}
+
+For chat:
+{"intent": {"type": "intent", "action": "chat", "params": {"kind": "Your message here"}}}
+
+NEVER include any text before or after the JSON. The JSON must be complete and valid.
+
 ## Intent Format:
 Move: {"type": "intent", "action": "move", "params": {"x": 50, "y": 45}}
 Attack Monster: {"type": "intent", "action": "attack", "params": {"x": monster_id, "y": -1}}
@@ -134,6 +152,9 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             
             if self.password:
                 hello_msg["password"] = self.password
+                
+            if self.companion_slot is not None:
+                hello_msg["control_player"] = self.companion_slot
                 
             await self.send_gap_message(hello_msg)
             
@@ -201,9 +222,53 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             logger.error(f"Error reading GAP message: {e}")
             return None
 
+    async def warmup_model(self):
+        """Warm up the model with a simple query to avoid cold start delays."""
+        if self.warmup_complete:
+            return
+        
+        logger.info(f"🔥 Warming up model {self.model}... (this may take 30+ seconds for first load)")
+        warmup_prompt = "Hello! Just respond with 'Ready' in JSON format: {\"response\": \"Ready\"}"
+        
+        try:
+            # Use longer timeout for warmup
+            timeout = aiohttp.ClientTimeout(total=self.warmup_timeout)
+            async with aiohttp.ClientSession(timeout=timeout) as warmup_session:
+                payload = {
+                    "model": self.model,
+                    "prompt": warmup_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "top_p": 0.9
+                    }
+                }
+                
+                start_time = time.time()
+                async with warmup_session.post(f"{self.ollama_url}/api/generate", json=payload) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        warmup_time = time.time() - start_time
+                        logger.info(f"🎯 Model warmed up successfully! Took {warmup_time:.1f}s")
+                        self.warmup_complete = True
+                        return True
+                    else:
+                        logger.error(f"Warmup failed with status: {response.status}")
+                        return False
+        except asyncio.TimeoutError:
+            logger.error(f"Model warmup timed out after {self.warmup_timeout}s")
+            return False
+        except Exception as e:
+            logger.error(f"Error during model warmup: {e}")
+            return False
+
     async def query_ollama(self, prompt: str) -> Optional[str]:
         """Query Ollama API with the given prompt."""
         try:
+            # Use appropriate timeout based on warmup status
+            current_timeout = self.warmup_timeout if not self.warmup_complete else self.decision_timeout
+            timeout = aiohttp.ClientTimeout(total=current_timeout)
+            
             payload = {
                 "model": self.model,
                 "prompt": prompt,
@@ -214,14 +279,23 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 }
             }
             
-            async with self.session.post(f"{self.ollama_url}/api/generate", 
-                                       json=payload) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    return result.get("response", "").strip()
-                else:
-                    logger.error(f"Ollama API error: {response.status}")
-                    return None
+            # Create session with timeout for this query
+            async with aiohttp.ClientSession(timeout=timeout) as query_session:
+                async with query_session.post(f"{self.ollama_url}/api/generate", 
+                                           json=payload) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        if not self.warmup_complete:
+                            logger.info("🎯 Model is now warmed up for future requests")
+                            self.warmup_complete = True
+                        return result.get("response", "").strip()
+                    else:
+                        logger.error(f"Ollama API error: {response.status}")
+                        return None
+        except asyncio.TimeoutError:
+            timeout_desc = "warmup" if not self.warmup_complete else "query"
+            logger.warning(f"LLM {timeout_desc} timed out after {current_timeout}s - skipping")
+            return None
         except Exception as e:
             logger.error(f"Error querying Ollama: {e}")
             return None
@@ -734,9 +808,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             try:
                 # Extract JSON from response (may have extra text)
                 start_idx = response.find('{')
-                end_idx = response.rfind('}') + 1
-                
-                if start_idx >= 0 and end_idx > start_idx:
+                if start_idx >= 0:
+                    # Count braces to find proper end instead of using rfind
+                    brace_count = 0
+                    end_idx = start_idx
+                    for i, char in enumerate(response[start_idx:], start_idx):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end_idx = i + 1
+                                break
+                    
                     json_str = response[start_idx:end_idx]
                     # Try to fix common JSON truncation issues
                     if not json_str.endswith('}'):
@@ -773,6 +857,7 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     
                     action_type = intent.get("action", "unknown")
                     logger.info(f"➡️  {action_type.upper()} (pure nested): {intent}")
+                    logger.info(f"🔍 RAW LLM RESPONSE WAS: {response}")
                     return intent
                 
                 # Check if response has feedback channel
@@ -1171,9 +1256,19 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                 try:
                     # Look for JSON in response
                     start_idx = llm_response_text.find('{')
-                    end_idx = llm_response_text.rfind('}') + 1
-                    
-                    if start_idx >= 0 and end_idx > start_idx:
+                    if start_idx >= 0:
+                        # Count braces to find proper end instead of using rfind
+                        brace_count = 0
+                        end_idx = start_idx
+                        for i, char in enumerate(llm_response_text[start_idx:], start_idx):
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    end_idx = i + 1
+                                    break
+                        
                         json_str = llm_response_text[start_idx:end_idx]
                         # Try to fix common JSON truncation issues
                         if not json_str.endswith('}'):
@@ -1232,7 +1327,11 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             if not await self.connect_gap():
                 return
             
-            logger.info("MCP Server ready - processing game states...")
+            # Warm up the model to avoid cold start delays
+            logger.info("MCP Server ready - warming up LLM...")
+            await self.warmup_model()
+            
+            logger.info("🚀 Ready for game! Processing game states...")
             
             # Main message loop
             while True:
@@ -1299,6 +1398,8 @@ def main():
     parser.add_argument("--full-context", action="store_true", 
                        help="Use full prompts (requires large context model)")
     parser.add_argument("--password", "-p", help="Password for multiplayer games")
+    parser.add_argument("--companion-slot", type=int, choices=[0, 1, 2, 3],
+                       help="Player slot to control (0-3) for companion mode")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     
     args = parser.parse_args()
@@ -1315,6 +1416,7 @@ def main():
     print(f"Personality: {args.personality}")
     print(f"Context Mode: {'Full' if args.full_context else 'Compact (default)'}")
     print(f"Password: {'***' if args.password else 'None'}")
+    print(f"Companion Slot: {args.companion_slot if args.companion_slot is not None else 'Default (0)'}")
     print()
     
     server = GapMCPServer(
@@ -1323,7 +1425,8 @@ def main():
         model=args.model,
         password=args.password,
         personality=args.personality,
-        compact=not args.full_context
+        compact=not args.full_context,
+        companion_slot=args.companion_slot
     )
     
     # Run the server

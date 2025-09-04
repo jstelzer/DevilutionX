@@ -5,6 +5,7 @@
  */
 #include <array>
 #include <cstdint>
+#include <iostream>
 #include <string_view>
 
 #include <fmt/format.h>
@@ -138,6 +139,43 @@ char gszProductName[64] = "DevilutionX vUnknown";
 #ifdef _DEBUG
 bool DebugDisableNetworkTimeout = false;
 std::vector<std::string> DebugCmdsFromCommandLine;
+#endif
+
+#ifdef ENABLE_GAP
+// Companion mode settings
+std::string gGapCompanionSave;
+int gGapCompanionSlot = -1;  // -1 means no companion, 0-3 for player slots
+
+// Helper function to parse save filename and extract save number
+// Handles filenames like "multi_1.sv" -> 1, or "/path/to/multi_0.sv" -> 0
+uint32_t ParseSaveNumber(const std::string& savePath) {
+	// Find the last occurrence of "multi_" or "single_" in the path
+	size_t pos = savePath.rfind("multi_");
+	if (pos == std::string::npos) {
+		pos = savePath.rfind("single_");
+	}
+	if (pos == std::string::npos) {
+		std::cerr << "GAP: Invalid save filename format: " << savePath << std::endl;
+		return 0; // Default to save 0
+	}
+	
+	// Move past the "multi_" or "single_" prefix
+	pos += (savePath.substr(pos, 6) == "multi_") ? 6 : 7;
+	
+	// Extract the number part before the extension
+	size_t endPos = savePath.find('.', pos);
+	if (endPos == std::string::npos) {
+		endPos = savePath.length();
+	}
+	
+	std::string numberStr = savePath.substr(pos, endPos - pos);
+	try {
+		return static_cast<uint32_t>(std::stoul(numberStr));
+	} catch (const std::exception&) {
+		std::cerr << "GAP: Failed to parse save number from: " << savePath << std::endl;
+		return 0; // Default to save 0
+	}
+}
 #endif
 GameLogicStep gGameLogicStep = GameLogicStep::None;
 
@@ -1120,6 +1158,25 @@ void DiabloParseFlags(int argc, char **argv)
 			gbVanilla = true;
 		} else if (arg == "--verbose") {
 			SDL_LogSetAllPriority(SDL_LOG_PRIORITY_VERBOSE);
+#ifdef ENABLE_GAP
+		} else if (arg == "--companion-save") {
+			if (i + 1 == argc) {
+				PrintFlagRequiresArgument("--companion-save");
+				diablo_quit(64);
+			}
+			gGapCompanionSave = argv[++i];
+		} else if (arg == "--companion-slot") {
+			if (i + 1 == argc) {
+				PrintFlagRequiresArgument("--companion-slot");
+				diablo_quit(64);
+			}
+			ParseIntResult<int> parsedParam = ParseInt<int>(argv[++i]);
+			if (!parsedParam.has_value() || parsedParam.value() < 0 || parsedParam.value() > 3) {
+				PrintFlagMessage("--companion-slot", " must be a number between 0-3");
+				diablo_quit(64);
+			}
+			gGapCompanionSlot = parsedParam.value();
+#endif
 #ifdef _DEBUG
 		} else if (arg == "-i") {
 			DebugDisableNetworkTimeout = true;

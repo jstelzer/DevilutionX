@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include <SDL.h>
 
@@ -114,6 +115,12 @@ extern bool DebugDisableNetworkTimeout;
  * @brief Specifies what game logic step is currently executed
  */
 extern GameLogicStep gGameLogicStep;
+
+#ifdef ENABLE_GAP
+// GAP companion mode globals
+extern std::string gGapCompanionSave;
+extern int gGapCompanionSlot;
+#endif
 
 #ifdef __UWP__
 void setOnInitialized(void (*)());

@@ -401,6 +401,132 @@ This approach transforms GAP from **"AI plays alone"** to **"AI adventuring budd
 
 ---
 
+## 🎮 MULTIPLAYER COMPANION MODE - CURRENT STATUS ✅
+
+**BREAKTHROUGH ACHIEVED**: Successfully implemented multiplayer companion system with AI-controlled second characters!
+
+### Implementation Complete ✅
+1. **CLI Arguments**: Added `--companion-save` and `--companion-slot` support to DevilutionX
+2. **GAP Protocol Extension**: Enhanced handshake to specify controlled player slot
+3. **Save File Loading**: Companions loaded from existing save files into multiplayer slots
+4. **Player State Management**: Added PS_CONNECTED and PS_ACTIVE flags for companion visibility
+5. **Level Synchronization**: Companions spawn on current level with proper multiplayer state
+6. **Controlled Player Architecture**: GAP now controls specific player slots (0-3) instead of always slot 0
+7. **Chat Integration**: AI companions can chat with human players naturally
+
+### Working Features ✅
+- **Companion Loading**: `./devilutionx --companion-save multi_1.sv --companion-slot 1`
+- **AI Control**: MCP server controls companion via `--companion-slot 1` parameter
+- **Multiplayer Visibility**: Companions appear as second character in-game
+- **Chat Interaction**: Natural conversation between human and AI companion
+- **State Extraction**: AI sees game state from companion's perspective
+- **Intent Processing**: AI can attempt to control companion movement and actions
+
+### Architecture Details
+
+**CLI Integration:**
+```cpp
+// DevilutionX CLI arguments
+std::string gGapCompanionSave;    // Save file to load (e.g., "multi_1.sv")
+int gGapCompanionSlot = -1;       // Player slot to control (1-3)
+```
+
+**GAP Protocol Enhancement:**
+```json
+// Handshake now includes companion slot request
+{
+  "type": "hello",
+  "password": "foo", 
+  "control_player": 1    // Request control of player slot 1
+}
+```
+
+**Companion Loading Process:**
+```cpp
+// Load companion from save file into multiplayer slot
+pfile_read_player_from_save(companionSaveNum, Players[requested_slot]);
+Players[requested_slot].plractive = true;
+
+// Critical for multiplayer visibility
+player_state[requested_slot] |= PS_CONNECTED;
+player_state[requested_slot] |= PS_ACTIVE;
+
+// Sync to current level
+Players[requested_slot].plrlevel = Players[MyPlayerId].plrlevel;
+Players[requested_slot].plrIsOnSetLevel = Players[MyPlayerId].plrIsOnSetLevel;
+```
+
+**MCP Server Integration:**
+```bash
+# Start game with companion
+./devilutionx --companion-save multi_1.sv --companion-slot 1
+
+# Start AI agent for companion
+python3 tools/gap/mcp_server.py --companion-slot 1 --password foo
+```
+
+### Current Issue - Movement Intent Execution ⚠️
+
+**Problem**: MCP server generates valid movement intents but game fails to execute them:
+- Combat agent: `"GAP: Executed intent: move"` ✅ 
+- MCP server: `"GAP: Failed to execute intent: move"` ❌
+
+**Investigation Status**: 
+- JSON format is identical between working combat agent and failing MCP server
+- Intent structure validated: `{"type": "intent", "action": "move", "params": {"x": 71, "y": 74}}`
+- Added comprehensive logging to MCP server for debugging
+- Suspected cause: Socket communication timing difference (async vs sync)
+
+**Logs Analyzed:**
+```
+MCP Server Log:
+➡️  MOVE (pure nested): {'type': 'intent', 'action': 'move', 'params': {'x': 71, 'y': 74}}
+🔍 RAW LLM RESPONSE WAS: {"intent": {"type": "intent", "action": "move", "params": {"x": 71, "y": 74}}}
+
+Server Log:
+GAP: Failed to execute intent: move
+```
+
+**Technical Debt**: Need to identify why identical JSON from MCP server fails while combat agent succeeds.
+
+### Files Modified for Companion Mode ✅
+
+**Core Engine:**
+- `Source/diablo.cpp`: Added companion globals and CLI parsing
+- `Source/diablo.h`: Added extern declarations for companion variables  
+- `Source/gap/gap_core.h/cpp`: Added controlled player management and companion loading
+- `Source/gap/gap_state.cpp`: Updated state extraction for controlled player
+- `Source/gap/gap_intent.cpp`: Updated intent execution for controlled player
+
+**AI Agents:**
+- `tools/gap/mcp_server.py`: Added companion slot parameter and enhanced JSON parsing
+- `tools/gap/log.sh`: Launch script for MCP server
+- `build/log.sh`: Launch script for DevilutionX with companion args
+
+### Current Status Summary 🎯
+
+**✅ WORKING:**
+- Companion character loading from save files
+- Multiplayer companion visibility (second character appears in-game)
+- Natural chat conversation between human and AI companion
+- State extraction from companion's perspective
+- CLI argument parsing and GAP protocol handshake
+- Level synchronization and multiplayer state management
+
+**⚠️ BLOCKED:**
+- Movement intent execution for MCP server (combat agent works fine)
+- Full companion AI behavior due to movement issue
+
+**🔧 NEXT STEPS:**
+- Debug socket communication difference between MCP server and combat agent
+- Implement movement intent fix for MCP server
+- Test full companion AI behavior once movement is resolved
+- Enhance companion personalities and follow behaviors
+
+**Achievement**: Successfully implemented the core companion architecture! The system loads companions, makes them visible, and enables chat interaction. Only the movement execution bug prevents full functionality.
+
+---
+
 ## DEVELOPMENT ROADMAP - NEXT STEPS
 
 ### Phase 0: Protocol Enhancements (High Impact, Low Effort) ✅ **COMPLETED**
@@ -629,11 +755,47 @@ async def process_chat_message(self, chat_msg: Dict[str, Any]) -> None:
 
 ---
 
+## Next Major Feature: Multiplayer Companion Mode
+
+### 🎯 Local Character Companions (Planned)
+Enable AI control of existing save files as multiplayer companions:
+
+**Concept:**
+```bash
+# Start multiplayer game with AI companion
+./devilutionx --multiplayer --gap --companion-save multi_1.sv --companion-slot 1
+python3 mcp_server.py --companion-slot 1
+```
+
+**Architecture:**
+- **Multiplayer-only**: Leverage existing TCP multiplayer framework
+- **Save file loading**: Load companion from existing saves into unused player slots
+- **Player slot control**: GAP controls specific multiplayer slot via CLI args
+- **No single-player complexity**: Keep it simple, focused on multiplayer mode
+
+**Implementation Steps:**
+1. Add CLI args for companion save file and slot selection
+2. Extend GAP handshake to specify controlled player slot
+3. Load companion save data into specified multiplayer slot
+4. Update GAP state extraction to use controlled player
+5. Modify intent execution for specific player slot
+
+**Benefits:**
+- ✅ Use existing character saves as AI companions
+- ✅ Character swapping mid-game via different saves  
+- ✅ No complex pathfinding (player leads, AI follows)
+- ✅ Clean save management (no extra files)
+- ✅ True co-op experience with your own alts
+
+**Difficulty: Easy** 🟢 - Builds on existing multiplayer architecture
+
+---
+
 ### Technical Debt & Improvements
 - Replace custom JSON with nlohmann/json for better performance
 - Add configuration file for GAP settings (socket path, tick divisor, etc.)
 - Implement state delta compression for efficiency
 - Add more robust error handling and reconnection logic
 - Performance profiling and optimization
-- (Future) Separate AI character support with headless mode
+- Implement multiplayer companion mode (see above)
 

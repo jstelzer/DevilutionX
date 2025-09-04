@@ -38,6 +38,11 @@
 #include "utils/language.h"
 #include "utils/str_cat.hpp"
 
+#ifdef ENABLE_GAP
+// Forward declaration for ParseSaveNumber function from diablo.cpp
+extern uint32_t ParseSaveNumber(const std::string& savePath);
+#endif
+
 namespace devilution {
 
 bool gbSomebodyWonGameKludge;
@@ -481,6 +486,9 @@ bool InitSingle(GameData *gameData)
 
 bool InitMulti(GameData *gameData)
 {
+#ifdef ENABLE_GAP
+	std::cout << "GAP: InitMulti function started" << std::endl;
+#endif
 	Players.resize(MAX_PLRS);
 
 	int playerId;
@@ -506,6 +514,48 @@ bool InitMulti(GameData *gameData)
 	gbIsMultiplayer = true;
 
 	pfile_read_player_from_save(gSaveNumber, *MyPlayer);
+
+#ifdef ENABLE_GAP
+	// Debug: Always log GAP companion status
+	std::cout << "GAP: Companion loading check - slot=" << gGapCompanionSlot 
+			  << " save='" << gGapCompanionSave << "' MyPlayerId=" << MyPlayerId << std::endl;
+	
+	// Load companion character if specified
+	if (gGapCompanionSlot >= 0 && gGapCompanionSlot < MAX_PLRS && 
+		gGapCompanionSlot != MyPlayerId && !gGapCompanionSave.empty()) {
+		
+		// Parse the companion save filename to get save number
+		uint32_t companionSaveNum = ParseSaveNumber(gGapCompanionSave);
+		
+		// Load companion character into the specified slot
+		try {
+			pfile_read_player_from_save(companionSaveNum, Players[gGapCompanionSlot]);
+			
+			// Mark the companion slot as active and connected
+			Players[gGapCompanionSlot].plractive = true;
+			Players[gGapCompanionSlot]._pGFXLoad = 0;  // Reset graphics load state
+			
+			// Mark as connected in multiplayer state - this is crucial!
+			player_state[gGapCompanionSlot] |= PS_CONNECTED;
+			player_state[gGapCompanionSlot] |= PS_ACTIVE;
+			
+			// Sync companion to current level - CRITICAL for rendering!
+			Players[gGapCompanionSlot].plrlevel = Players[MyPlayerId].plrlevel;
+			Players[gGapCompanionSlot].plrIsOnSetLevel = Players[MyPlayerId].plrIsOnSetLevel;
+			
+			// Set companion position to near the main player
+			Players[gGapCompanionSlot].position.tile = Players[MyPlayerId].position.tile;
+			Players[gGapCompanionSlot].position.future = Players[MyPlayerId].position.future;
+			Players[gGapCompanionSlot].position.old = Players[MyPlayerId].position.old;
+			
+			std::cout << "GAP: Loaded companion from " << gGapCompanionSave 
+					  << " (save #" << companionSaveNum << ") into slot " << gGapCompanionSlot 
+					  << " - " << Players[gGapCompanionSlot]._pName << " [CONNECTED & SYNCED]" << std::endl;
+		} catch (const std::exception& e) {
+			std::cerr << "GAP: Failed to load companion: " << e.what() << std::endl;
+		}
+	}
+#endif
 
 	return true;
 }
@@ -772,6 +822,9 @@ void NetClose()
 
 bool NetInit(bool bSinglePlayer)
 {
+#ifdef ENABLE_GAP
+	std::cout << "GAP: NetInit called - bSinglePlayer=" << bSinglePlayer << std::endl;
+#endif
 	while (true) {
 		SetRndSeed(0);
 		InitGameInfo();
@@ -785,9 +838,15 @@ bool NetInit(bool bSinglePlayer)
 		memset(sgwPackPlrOffsetTbl, 0, sizeof(sgwPackPlrOffsetTbl));
 		SNetSetBasePlayer(0);
 		if (bSinglePlayer) {
+#ifdef ENABLE_GAP
+			std::cout << "GAP: Calling InitSingle" << std::endl;
+#endif
 			if (!InitSingle(&sgGameInitInfo))
 				return false;
 		} else {
+#ifdef ENABLE_GAP
+			std::cout << "GAP: Calling InitMulti" << std::endl;
+#endif
 			if (!InitMulti(&sgGameInitInfo))
 				return false;
 		}

@@ -1,5 +1,6 @@
 #include "gap_state.h"
 #include "gap_json.h"
+#include "gap_core.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
 #endif
@@ -21,6 +22,20 @@
 namespace devilution::gap {
 
 namespace {
+
+// Get the controlled player for GAP operations
+Player* GetControlledPlayer() {
+    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
+        return &Players[controlled_slot];
+    }
+    // Fallback to MyPlayer if controlled player not available
+    if (MyPlayerId < MAX_PLRS) {
+        return &Players[MyPlayerId];
+    }
+    return nullptr;
+}
+
 // Stair piece ID arrays from trigs.cpp
 const uint16_t TownDownList[] = { 715, 714, 718, 719, 720, 722, 723, 724, 725, 726 };
 const uint16_t TownWarp1List[] = { 1170, 1171, 1172, 1173, 1174, 1175, 1176, 1177, 1178, 1180, 1182, 1184 };
@@ -100,19 +115,18 @@ std::string GapStateExtractor::ExtractState(uint32_t tick, uint32_t tick_rate) {
 }
 
 std::string GapStateExtractor::ExtractPlayerState() {
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         return "{}";
     }
     
-    const auto& player = Players[MyPlayerId];
-    
     JsonBuilder state;
     state.BeginObject()
-        .AddInt("hp", player._pHitPoints >> 6)
-        .AddInt("hp_max", player._pMaxHP >> 6)
-        .AddInt("mana", player._pMana >> 6)
-        .AddInt("mana_max", player._pMaxMana >> 6)
-        .AddArray("pos", {player.position.tile.x, player.position.tile.y})
+        .AddInt("hp", player->_pHitPoints >> 6)
+        .AddInt("hp_max", player->_pMaxHP >> 6)
+        .AddInt("mana", player->_pMana >> 6)
+        .AddInt("mana_max", player->_pMaxMana >> 6)
+        .AddArray("pos", {player->position.tile.x, player->position.tile.y})
         .AddInt("level", static_cast<int>(currlevel))
         .AddBool("in_town", leveltype == DTYPE_TOWN);
     
@@ -122,7 +136,7 @@ std::string GapStateExtractor::ExtractPlayerState() {
     for (int i = 0; i < MaxBeltItems; i++) {
         if (i > 0) belt_json << ",";
         
-        const auto& belt_item = player.SpdList[i];
+        const auto& belt_item = player->SpdList[i];
         if (!belt_item.isEmpty()) {
             std::string itemName = std::string(belt_item.getName());
             std::string itemType = "unknown";
@@ -174,7 +188,8 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     JsonBuilder result;
     result.BeginObject();
     
-    if (MyPlayerId >= MAX_PLRS) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
         result.AddRaw("monsters", "[]")
               .AddRaw("items", "[]")
               .AddRaw("other_players", "[]")
@@ -183,23 +198,48 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
         return result.ToString();
     }
     
-    const auto& player = Players[MyPlayerId];
-    Point playerPos = player.position.tile;
+    Point playerPos = player->position.tile;
     
     // Use player's actual light radius for vision
-    int lightRadius = player._pLightRad;
+    int lightRadius = player->_pLightRad;
     if (lightRadius <= 0) lightRadius = 10; // Default fallback
     
-    // Debug: Log player position and status
-    std::cerr << "GAP: Player at (" << playerPos.x << "," << playerPos.y << ") light_radius=" << lightRadius;
-    std::cerr << " level=" << static_cast<int>(currlevel) << " in_town=" << (leveltype == DTYPE_TOWN ? "true" : "false") << std::endl;
+    // Reduced logging - only log position changes and player status
+    static Point lastPlayerPos = {-1, -1};
+    static int lastActiveCount = -1;
+    
+    if (playerPos.x != lastPlayerPos.x || playerPos.y != lastPlayerPos.y) {
+        std::cout << "GAP: Player moved to (" << playerPos.x << "," << playerPos.y << ")" << std::endl;
+        lastPlayerPos = playerPos;
+    }
+    
+    // Log active players when count changes
+    int activePlayerCount = 0;
+    for (int i = 0; i < MAX_PLRS; i++) {
+        if (Players[i].plractive) activePlayerCount++;
+    }
+    
+    if (activePlayerCount != lastActiveCount) {
+        std::cout << "GAP: Active players: " << activePlayerCount << " (";
+        for (int i = 0; i < MAX_PLRS; i++) {
+            if (Players[i].plractive) {
+                std::cout << "slot" << i << ":" << Players[i]._pName;
+                if (i == GapCore::Instance().GetControlledPlayer()) std::cout << "*";
+                std::cout << " ";
+            }
+        }
+        std::cout << ")" << std::endl;
+        lastActiveCount = activePlayerCount;
+    }
     
     std::stringstream monsters_json;
     monsters_json << "[";
     bool first_monster = true;
     
-    // Debug: Log monster scan
-    std::cerr << "GAP: Scanning " << ActiveMonsterCount << " monsters within radius " << lightRadius << std::endl;
+    // Only log when monsters are found
+    if (ActiveMonsterCount > 0) {
+        std::cout << "GAP: Scanning " << ActiveMonsterCount << " active monsters" << std::endl;
+    }
     
     for (size_t i = 0; i < ActiveMonsterCount; i++) {
         const auto& monster = Monsters[ActiveMonsters[i]];
