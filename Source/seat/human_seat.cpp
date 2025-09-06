@@ -44,8 +44,8 @@ void HumanSeat::GatherIntents(std::vector<Intent>& out, uint64_t tick) {
 		return;
 	}
 
-	// Skip if menu active or timeout cursor (mirrors ProcessInput logic)
-	if (gmenu_is_active() || sgnTimeoutCurs != CURSOR_NONE) {
+	// Skip if menu active (simplified from ProcessInput logic)
+	if (gmenu_is_active()) {
 		return;
 	}
 	
