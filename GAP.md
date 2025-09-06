@@ -161,6 +161,7 @@ Respect game's input processing limits:
 
 ### 4.3 Intent Message (Agent → Game)
 
+**Standard Format (Development/Debug):**
 ```json
 {
   "type": "intent",
@@ -172,6 +173,34 @@ Respect game's input processing limits:
   "target_tick": 45125  // Optional: schedule for future tick
 }
 ```
+
+**Compact Format (Real-time Gaming):**
+```json
+{"m":[50,55]}           // move to position (13 chars vs 77)
+{"a":42}                // attack monster ID 42  
+{"a":[50,55]}           // attack position
+{"p":0}                 // pickup item ID 0
+{"h":0}                 // use health potion slot 0
+{"h":"mp",1}            // use mana potion slot 1  
+{"c":"Hello!"}          // chat message
+{"s":2}                 // cast spell slot 2
+```
+
+**Compact Protocol Benefits:**
+- 🚀 **6x smaller**: 13 chars vs 77 chars for move command
+- ⚡ **Faster parsing**: Single-character keys
+- 🧠 **Lower latency**: Less JSON processing overhead  
+- 🎯 **Higher reliability**: Less truncation risk for real-time gaming
+
+**Format Mapping:**
+| Standard Format | Compact Format | Description |
+|----------------|----------------|-------------|
+| `{"type":"intent","action":"move","params":{"x":50,"y":55}}` | `{"m":[50,55]}` | Move to position |
+| `{"type":"intent","action":"attack","params":{"x":42,"y":-1}}` | `{"a":42}` | Attack monster ID |
+| `{"type":"intent","action":"attack","params":{"x":50,"y":55}}` | `{"a":[50,55]}` | Attack position |
+| `{"type":"intent","action":"pickup","params":{"id":0}}` | `{"p":0}` | Pickup item |
+| `{"type":"intent","action":"use_potion","params":{"kind":"hp","slot":0}}` | `{"h":0}` | Health potion |
+| `{"type":"intent","action":"chat","params":{"kind":"Hello!"}}` | `{"c":"Hello!"}` | Chat message |
 
 ### 4.4 Response Messages
 

@@ -1207,6 +1207,12 @@ Always prioritize answering player questions with informative chat responses.
                     logger.warning(f"Could not find JSON bounds, trying full response: {response[:100]}...")
                     llm_response = json.loads(response)
                 
+                # COMPACT FORMAT DETECTION: Convert compact format to standard format
+                # {"m":[x,y]} -> {"type":"intent", "action":"move", "params":{"x":x, "y":y}}
+                if self._is_compact_format(llm_response):
+                    llm_response = self._convert_compact_to_standard(llm_response)
+                    logger.debug(f"🔧 COMPACT FORMAT CONVERTED: {llm_response}")
+                
                 # Check for pure nested format first: {"intent": {"type": "intent", ...}}
                 if ("intent" in llm_response and 
                     isinstance(llm_response["intent"], dict) and 
@@ -1700,6 +1706,11 @@ Always prioritize answering player questions with informative chat responses.
                         # Fallback: try to parse the whole response
                         llm_response = json.loads(llm_response_text)
                     
+                    # COMPACT FORMAT DETECTION for chat responses
+                    if self._is_compact_format(llm_response):
+                        llm_response = self._convert_compact_to_standard(llm_response)
+                        logger.debug(f"🔧 COMPACT CHAT FORMAT CONVERTED: {llm_response}")
+                    
                     # Check for pure nested format first: {"intent": {"type": "intent", ...}}
                     if ("intent" in llm_response and 
                         isinstance(llm_response["intent"], dict) and 
@@ -1805,6 +1816,81 @@ Always prioritize answering player questions with informative chat responses.
                 await self.session.close()
             if self.gap_socket:
                 self.gap_socket.close()
+    
+    def _is_compact_format(self, json_obj: dict) -> bool:
+        """Check if JSON object uses compact format ({"m":[x,y]}, {"a":id}, etc.)"""
+        if not isinstance(json_obj, dict):
+            return False
+        
+        # Compact format uses single-letter keys
+        compact_keys = {'m', 'a', 'p', 'h', 'c', 's'}  # move, attack, pickup, health potion, chat, spell
+        return any(key in compact_keys for key in json_obj.keys())
+    
+    def _convert_compact_to_standard(self, compact_obj: dict) -> dict:
+        """Convert compact format to standard format"""
+        if 'm' in compact_obj:
+            # Move: {"m":[x,y]} -> {"type":"intent", "action":"move", "params":{"x":x, "y":y}}
+            coords = compact_obj['m']
+            if isinstance(coords, list) and len(coords) >= 2:
+                return {
+                    "type": "intent",
+                    "action": "move", 
+                    "params": {"x": coords[0], "y": coords[1]}
+                }
+        
+        elif 'a' in compact_obj:
+            # Attack: {"a":id} or {"a":[x,y]} -> {"type":"intent", "action":"attack", "params":{"x":?, "y":?}}
+            attack_param = compact_obj['a']
+            if isinstance(attack_param, list) and len(attack_param) >= 2:
+                # Position attack: {"a":[x,y]}
+                return {
+                    "type": "intent",
+                    "action": "attack",
+                    "params": {"x": attack_param[0], "y": attack_param[1]}
+                }
+            elif isinstance(attack_param, int):
+                # Monster attack: {"a":42}
+                return {
+                    "type": "intent", 
+                    "action": "attack",
+                    "params": {"x": attack_param, "y": -1}  # y=-1 indicates monster ID
+                }
+        
+        elif 'p' in compact_obj:
+            # Pickup: {"p":id} -> {"type":"intent", "action":"pickup", "params":{"id":id}}
+            return {
+                "type": "intent",
+                "action": "pickup",
+                "params": {"id": compact_obj['p']}
+            }
+        
+        elif 'h' in compact_obj:
+            # Health potion: {"h":slot} -> {"type":"intent", "action":"use_potion", "params":{"kind":"hp", "slot":slot}}
+            return {
+                "type": "intent",
+                "action": "use_potion", 
+                "params": {"kind": "hp", "slot": compact_obj['h']}
+            }
+        
+        elif 'c' in compact_obj:
+            # Chat: {"c":"message"} -> {"type":"intent", "action":"chat", "params":{"kind":"message"}}
+            return {
+                "type": "intent",
+                "action": "chat",
+                "params": {"kind": compact_obj['c']}
+            }
+        
+        elif 's' in compact_obj:
+            # Spell: {"s":slot} -> {"type":"intent", "action":"cast", "params":{"slot":slot}}
+            return {
+                "type": "intent",
+                "action": "cast",
+                "params": {"slot": compact_obj['s']}
+            }
+        
+        # Fallback: return original if can't convert
+        logger.warning(f"Failed to convert compact format: {compact_obj}")
+        return compact_obj
 
 def main():
     parser = argparse.ArgumentParser(description="MCP Server for DevilutionX GAP Protocol")

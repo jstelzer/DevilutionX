@@ -69,6 +69,21 @@ Respond with exactly ONE intent JSON object:
 {"type": "intent", "action": "attack", "params": {"x": 50, "y": 45}}
 ```
 
+**Pickup Item by ID:**
+```json
+{"type": "intent", "action": "pickup", "params": {"id": 123}}
+```
+
+**Use Potion:**
+```json
+{"type": "intent", "action": "use_potion", "params": {"kind": "hp", "slot": 0}}
+```
+
+**Chat with Player:**
+```json
+{"type": "intent", "action": "chat", "params": {"kind": "Found stairs down!"}}
+```
+
 ### Important Details:
 - **Coordinates**: [x, y] format, starting from [0,0]
 - **Monster Attack**: Use monster "id" as x parameter, y=-1 

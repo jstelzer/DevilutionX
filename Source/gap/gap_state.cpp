@@ -388,6 +388,15 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     items_json << "[";
     bool first_item = true;
     
+    // Debug logging for companion item visibility (similar to monster debug)
+    static int lastItemCount = -1;
+    if (controlled_slot > 0 && static_cast<int>(ActiveItemCount) != lastItemCount) {
+        std::cout << "GAP Debug: Companion item detection - ActiveItemCount=" << ActiveItemCount 
+                  << " controlled_slot=" << controlled_slot 
+                  << " pos=(" << playerPos.x << "," << playerPos.y << ")" << std::endl;
+        lastItemCount = ActiveItemCount;
+    }
+    
     for (uint8_t i = 0; i < ActiveItemCount; i++) {
         const auto& item = Items[ActiveItems[i]];
         Point itemPos = item.position;

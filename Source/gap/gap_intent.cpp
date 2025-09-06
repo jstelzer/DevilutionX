@@ -70,15 +70,65 @@ void GapIntentProcessor::QueueIntent(const JsonParser& intent_msg) {
     }
     
     Intent intent;
-    intent.action = intent_msg.GetString("action");
     
-    std::string params_str = intent_msg.GetObjectString("params");
-    JsonParser params(params_str);
-    intent.param_x = params.GetInt("x");
-    intent.param_y = params.GetInt("y");
-    intent.param_id = params.GetInt("id");
-    intent.param_slot = params.GetInt("slot");
-    intent.param_kind = params.GetString("kind");
+    // Check for compact format first ({"m":[x,y]}, {"a":id}, {"p":id}, etc.)
+    if (intent_msg.HasKey("m")) {
+        // Compact move: {"m":[x,y]}
+        intent.action = "move";
+        std::string move_str = intent_msg.GetObjectString("m");
+        // Parse array [x,y] from string like "[50,55]"
+        if (move_str.size() >= 5 && move_str[0] == '[' && move_str.back() == ']') {
+            std::string coords = move_str.substr(1, move_str.size() - 2); // Remove [ ]
+            size_t comma_pos = coords.find(',');
+            if (comma_pos != std::string::npos) {
+                intent.param_x = std::stoi(coords.substr(0, comma_pos));
+                intent.param_y = std::stoi(coords.substr(comma_pos + 1));
+            }
+        }
+    } else if (intent_msg.HasKey("a")) {
+        // Compact attack: {"a":monster_id} or {"a":[x,y]}
+        intent.action = "attack";
+        std::string attack_str = intent_msg.GetObjectString("a");
+        if (attack_str.size() > 0 && attack_str[0] == '[') {
+            // Position attack: {"a":[x,y]}
+            if (attack_str.size() >= 5 && attack_str.back() == ']') {
+                std::string coords = attack_str.substr(1, attack_str.size() - 2); // Remove [ ]
+                size_t comma_pos = coords.find(',');
+                if (comma_pos != std::string::npos) {
+                    intent.param_x = std::stoi(coords.substr(0, comma_pos));
+                    intent.param_y = std::stoi(coords.substr(comma_pos + 1));
+                }
+            }
+        } else {
+            // Monster attack: {"a":42}
+            intent.param_x = intent_msg.GetInt("a");
+            intent.param_y = -1;
+        }
+    } else if (intent_msg.HasKey("p")) {
+        // Compact pickup: {"p":item_id}
+        intent.action = "pickup";
+        intent.param_id = intent_msg.GetInt("p");
+    } else if (intent_msg.HasKey("h")) {
+        // Compact use potion: {"h":slot}
+        intent.action = "use_potion";
+        intent.param_slot = intent_msg.GetInt("h");
+        intent.param_kind = "hp"; // Default to health potion
+    } else if (intent_msg.HasKey("c")) {
+        // Compact chat: {"c":"message"}
+        intent.action = "chat";
+        intent.param_kind = intent_msg.GetString("c");
+    } else {
+        // Standard format: {"type":"intent","action":"move","params":{"x":50,"y":55}}
+        intent.action = intent_msg.GetString("action");
+        
+        std::string params_str = intent_msg.GetObjectString("params");
+        JsonParser params(params_str);
+        intent.param_x = params.GetInt("x");
+        intent.param_y = params.GetInt("y");
+        intent.param_id = params.GetInt("id");
+        intent.param_slot = params.GetInt("slot");
+        intent.param_kind = params.GetString("kind");
+    }
     
     intent.target_tick = intent_msg.GetInt("target_tick");
     
