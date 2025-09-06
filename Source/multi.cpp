@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <iostream>
 
 #include <SDL.h>
 #include <config.h>
@@ -41,6 +42,9 @@
 #ifdef ENABLE_GAP
 // Forward declaration for ParseSaveNumber function from diablo.cpp
 extern uint32_t ParseSaveNumber(const std::string& savePath);
+// External GAP companion globals from diablo.cpp
+extern int gGapCompanionSlot;
+extern std::string gGapCompanionSave;
 #endif
 
 namespace devilution {
@@ -461,7 +465,17 @@ void UnregisterNetEventHandlers()
 
 bool InitSingle(GameData *gameData)
 {
+#ifdef ENABLE_GAP
+	// When companion mode is active, we need multiple player slots even in "single" player
+	if (gGapCompanionSlot >= 0 && gGapCompanionSlot < MAX_PLRS) {
+		std::cout << "GAP: Companion mode detected - resizing Players array to MAX_PLRS" << std::endl;
+		Players.resize(MAX_PLRS);
+	} else {
+		Players.resize(1);
+	}
+#else
 	Players.resize(1);
+#endif
 
 	if (!SNetInitializeProvider(SELCONN_LOOPBACK, gameData)) {
 		return false;
@@ -516,11 +530,14 @@ bool InitMulti(GameData *gameData)
 	pfile_read_player_from_save(gSaveNumber, *MyPlayer);
 
 #ifdef ENABLE_GAP
-	// Debug: Always log GAP companion status
+	// Load companion character if specified (at startup, not runtime)
 	std::cout << "GAP: Companion loading check - slot=" << gGapCompanionSlot 
 			  << " save='" << gGapCompanionSave << "' MyPlayerId=" << MyPlayerId << std::endl;
+	std::cout << "GAP: Condition check - gGapCompanionSlot >= 0: " << (gGapCompanionSlot >= 0)
+			  << " gGapCompanionSlot < MAX_PLRS: " << (gGapCompanionSlot < MAX_PLRS)
+			  << " gGapCompanionSlot != MyPlayerId: " << (gGapCompanionSlot != MyPlayerId)
+			  << " !gGapCompanionSave.empty(): " << (!gGapCompanionSave.empty()) << std::endl;
 	
-	// Load companion character if specified
 	if (gGapCompanionSlot >= 0 && gGapCompanionSlot < MAX_PLRS && 
 		gGapCompanionSlot != MyPlayerId && !gGapCompanionSave.empty()) {
 		
@@ -539,23 +556,27 @@ bool InitMulti(GameData *gameData)
 			player_state[gGapCompanionSlot] |= PS_CONNECTED;
 			player_state[gGapCompanionSlot] |= PS_ACTIVE;
 			
-			// Sync companion to current level - CRITICAL for rendering!
+			// Sync companion to current level (will be updated when entering levels)
 			Players[gGapCompanionSlot].plrlevel = Players[MyPlayerId].plrlevel;
 			Players[gGapCompanionSlot].plrIsOnSetLevel = Players[MyPlayerId].plrIsOnSetLevel;
 			
-			// Set companion position to near the main player
+			// Set companion position to near the main player (will be updated when entering levels)
 			Players[gGapCompanionSlot].position.tile = Players[MyPlayerId].position.tile;
 			Players[gGapCompanionSlot].position.future = Players[MyPlayerId].position.future;
 			Players[gGapCompanionSlot].position.old = Players[MyPlayerId].position.old;
 			
+			// Initialize companion position properly (critical for collision/damage systems)
+			// Note: SyncInitPlrPos will be called again when entering levels
+			
 			std::cout << "GAP: Loaded companion from " << gGapCompanionSave 
 					  << " (save #" << companionSaveNum << ") into slot " << gGapCompanionSlot 
-					  << " - " << Players[gGapCompanionSlot]._pName << " [CONNECTED & SYNCED]" << std::endl;
+					  << " - " << Players[gGapCompanionSlot]._pName << " [STARTUP LOADED]" << std::endl;
 		} catch (const std::exception& e) {
 			std::cerr << "GAP: Failed to load companion: " << e.what() << std::endl;
 		}
 	}
 #endif
+
 
 	return true;
 }

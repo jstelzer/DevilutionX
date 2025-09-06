@@ -17,6 +17,7 @@
 #include "pfile.h"
 #include "storm/storm_net.hpp"
 #include "utils/language.h"
+#include "diablo.h"  // For GAP companion globals
 
 namespace devilution {
 
@@ -58,7 +59,16 @@ bool InitMenu(_selhero_selections type)
 	if (type == SELHERO_PREVIOUS)
 		return true;
 
-	success = StartGame(type != SELHERO_CONTINUE, type != SELHERO_CONNECT);
+	// Force multiplayer mode when GAP companion mode is active (to enable InitMulti instead of InitSingle)
+	bool bNewGame = (type != SELHERO_CONTINUE);
+	bool bSinglePlayer = (type != SELHERO_CONNECT);
+	
+	// Override to multiplayer when GAP companion mode is detected
+	if (gGapCompanionSlot >= 0) {
+		bSinglePlayer = false;  // Force multiplayer to enable companion slot loading
+	}
+	
+	success = StartGame(bNewGame, bSinglePlayer);
 	if (success)
 		RefreshMusic();
 

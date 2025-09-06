@@ -25,6 +25,9 @@ public:
     
     bool SendMessage(const std::string& message);
     
+    // Companion utility functions
+    bool IsCompanionSlot(int slot) const;
+    
 private:
     GapCore() = default;
     ~GapCore() = default;

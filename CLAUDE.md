@@ -2,6 +2,8 @@
 
 GAP (Game Agent Protocol) enables LLM control of Diablo characters via IPC/JSON protocol.
 
+> **📋 Single Source of Truth**: This document contains the complete GAP roadmap and implementation guide. The `docs/gap-evolution-roadmap.md` content has been integrated here for unified reference.
+
 ## Project Overview
 - **Goal**: Run an LLM on NVIDIA GPU to play Diablo autonomously/cooperatively
 - **Architecture**: Unix socket IPC, JSON protocol, compile flag `-DENABLE_GAP`
@@ -253,8 +255,48 @@ GAP Protocol   → EntityController[3] → Player 3 Actions
 - `EntityManager` to coordinate all controllers
 - Direct player state manipulation without network commands
 
+## Critical Design Principle: Companions as First-Class Players ⚡
+
+**FUNDAMENTAL RULE**: AI companions must be indistinguishable from real players to the game engine. Never create special case logic - instead, ensure companions follow the same initialization and systems as human players.
+
+### ✅ Success Story: Universal Damage System (Sept 2025)
+**Problem**: Companions made hit sounds but took no damage due to engine restricting damage to `MyPlayerId` only.
+
+**Wrong Approach**: Patch compilation flags, add GAP-specific conditions
+**Correct Solution**: Remove player ID restriction entirely - ALL players take damage from monster attacks
+
+```cpp
+// ❌ BAD: Special cases and restrictions  
+if (player.getId() == MyPlayerId) {
+    ApplyPlrDamage(...);  // Only human player
+}
+#ifdef ENABLE_GAP
+else if (gap::IsCompanion(player.getId())) {
+    ApplyPlrDamage(...);  // Special companion case
+}
+#endif
+
+// ✅ GOOD: Universal behavior
+// Apply damage to any valid player in the game (multiplayer-like behavior)
+ApplyPlrDamage(DamageType::Physical, player, 0, 0, dam);
+```
+
+**Result**: Companions now take damage exactly like real players, no special handling required.
+
+### Design Guidelines
+1. **No Special Cases**: If you're writing `#ifdef ENABLE_GAP` to handle companion behavior differently, you're probably doing it wrong
+2. **Multiplayer Parity**: Ask "How does this work for player 2 in real multiplayer?" and make companions work the same way
+3. **Universal Systems**: Engine systems should work for ANY player, not just `MyPlayerId`
+4. **Proper Initialization**: Ensure companions go through same player initialization as joining multiplayer players
+
+### Code Review Questions
+- Does this code treat companions differently than multiplayer players?
+- Would this work if player 2 joined a multiplayer game?
+- Are we adding complexity instead of removing restrictions?
+- Is the engine properly recognizing the companion as a valid player entity?
+
 ## Technical Debt
-- **PRIORITY: Implement first-class entity control system** 🚨
+- ~~**PRIORITY: Implement first-class entity control system**~~ ✅ Fixed with universal damage system
 - Replace custom JSON with nlohmann/json
 - Add GAP config file  
 - Implement state delta compression

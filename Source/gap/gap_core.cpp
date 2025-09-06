@@ -87,18 +87,9 @@ private:
         core.SetControlledPlayer(requested_slot);
         
         // Register CompanionSeat for the actual companion slot when companion connects
+        // Note: CompanionSeat is now registered at startup, not dynamically
         if (requested_slot != MyPlayerId) {
-#ifdef ENABLE_GAP
-            auto& seatManager = devilution::SeatManager::Instance();
-            
-            // Unregister any existing seat for this slot
-            seatManager.UnregisterSeat(requested_slot);
-            
-            // Register new CompanionSeat for the actual companion slot
-            auto companionSeat = std::make_unique<devilution::CompanionSeat>(requested_slot);
-            seatManager.RegisterSeat(std::move(companionSeat));
-            std::cout << "GAP: Registered CompanionSeat for actual companion slot " << requested_slot << std::endl;
-#endif
+            std::cout << "GAP: Using pre-registered CompanionSeat for slot " << requested_slot << std::endl;
         }
         
         // Debug: Check companion loading conditions
@@ -312,6 +303,10 @@ bool GapCore::SendMessage(const std::string& message) {
     if (!enabled_ || !impl_) return false;
     
     return impl_->SendMessage(message);
+}
+
+bool GapCore::IsCompanionSlot(int slot) const {
+    return enabled_ && gGapCompanionSlot >= 0 && slot == gGapCompanionSlot;
 }
 
 } // namespace devilution::gap
