@@ -868,6 +868,8 @@ if(ENABLE_GAP)
     gap/gap_json.cpp
     gap/gap_chat.cpp
     gap/gap_network.cpp
+    seat/seat_manager.cpp
+    seat/human_seat.cpp
   )
 endif()
 

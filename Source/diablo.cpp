@@ -35,6 +35,8 @@
 #include "engine/backbuffer_state.hpp"
 #ifdef ENABLE_GAP
 #include "gap/gap_core.h"
+#include "seat/seat.h"
+#include "seat/human_seat.h"
 #endif
 #include "engine/clx_sprite.hpp"
 #include "engine/demomode.h"
@@ -893,6 +895,12 @@ void RunGameLoop(interface_mode uMsg)
 	
 #ifdef ENABLE_GAP
 	gap::GapCore::Instance().Initialize();
+	
+	// Initialize seat system - register human player seat
+	auto& seatManager = SeatManager::Instance();
+	auto humanSeat = std::make_unique<HumanSeat>(MyPlayerId);
+	seatManager.RegisterSeat(std::move(humanSeat));
+	LogVerbose("Registered HumanSeat for MyPlayerId {}", MyPlayerId);
 #endif
 	
 	run_delta_info();
@@ -1532,6 +1540,17 @@ void GameLogic()
 	if (!ProcessInput()) {
 		return;
 	}
+
+#ifdef ENABLE_GAP
+	// Phase 2.1: Process seats alongside existing input (testing phase)
+	// This runs in parallel with ProcessInput() to verify seat infrastructure
+	// without changing behavior. In Phase 2.2, we'll replace ProcessInput().
+	auto& seatManager = SeatManager::Instance();
+	if (seatManager.HasActiveSeats()) {
+		static uint64_t game_tick = 0;
+		seatManager.ProcessAllIntents(++game_tick);
+	}
+#endif
 	if (gbProcessPlayers) {
 		gGameLogicStep = GameLogicStep::ProcessPlayers;
 		ProcessPlayers();
