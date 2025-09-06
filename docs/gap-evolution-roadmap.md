@@ -169,10 +169,43 @@ class MonsterActor : public Actor {
 - ✅ Integrated with GAP state extraction demonstrating Actor usage
 - ✅ ActorId system for collision-free entity identification across types
 
-#### Milestone C2: Monster Read-Only (Week 2)
-- [ ] Implement MonsterActor with getters only
-- [ ] Unify GAP state publishing (monsters + players)
-- [ ] Improve LLM context with full actor visibility
+#### Milestone C2: Monster Read-Only ✅ COMPLETE  
+- ✅ Implemented MonsterActor with getters only (`Source/actor/monster_actor.h/cpp`)
+- ✅ Unified GAP state publishing (monsters + players through Actor interface)
+- ✅ ActorStore monster management with automatic refresh based on ActiveMonsters
+- ✅ Consistent state extraction patterns abstracting game's non-ECS architecture
+
+### 3.2.1 Why MonsterActor? Architectural Decision Rationale
+
+**The Problem**: DevilutionX doesn't use an Entity Component System (ECS). Game state is scattered across multiple systems making GAP state extraction complex and error-prone:
+
+```cpp
+// Before: Manual field extraction in gap_state.cpp
+for (size_t i = 0; i < ActiveMonsterCount; i++) {
+    const auto& monster = Monsters[ActiveMonsters[i]];
+    Point monsterPos = monster.position.tile;          // Manual field access
+    monsters_json << "\"hp\":" << monster.hitPoints;   // No consistency with Player
+    monsters_json << "\"hp_max\":" << monster.maxHitPoints; // Fixed-point conversions scattered
+    // ... repeat for every field, different patterns than Player extraction
+}
+```
+
+**The Solution**: MonsterActor provides a **consistent state publishing layer** that:
+
+1. **Abstracts scattered data structures** - Hides `ActiveMonsters[]` indirection and manual field access
+2. **Unified interface with PlayerActor** - Same methods, same patterns, same JSON structure  
+3. **Single source of truth** - All monster data access goes through one clean interface
+4. **Easier maintenance** - Add new monster properties in one place, not scattered across GAP code
+5. **Foundation for expansion** - Items, Objects, NPCs can follow same Actor pattern
+
+```cpp
+// After: Clean, consistent interface
+store.ForEachActiveMonster([&](const MonsterActor& actor) {
+    monsters_json << actor.ToJson(); // Consistent with PlayerActor patterns
+});
+```
+
+**This isn't about control** - it's about creating a **proper entity abstraction layer** for GAP that works with the game's existing non-ECS architecture without fighting against it.
 
 #### Milestone C3: Actor Store (Week 3)
 - [ ] Create unified ActorStore registry

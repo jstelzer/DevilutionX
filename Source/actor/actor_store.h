@@ -4,8 +4,10 @@
 
 #include "actor.h"
 #include "player_actor.h"
+#include "monster_actor.h"
 #include <memory>
 #include <unordered_map>
+#include <functional>
 
 namespace devilution {
 
@@ -38,24 +40,26 @@ public:
     PlayerActor* GetPlayerActor(int player_index);
     const PlayerActor* GetPlayerActor(int player_index) const;
     
-    // TODO: Milestone C2 - Add MonsterActor lookups
-    // MonsterActor* GetMonsterActor(int monster_index);
+    // Milestone C2: MonsterActor lookups
+    MonsterActor* GetMonsterActor(int monster_index);
+    const MonsterActor* GetMonsterActor(int monster_index) const;
     
     // === Iteration ===
     void ForEachActivePlayer(std::function<void(PlayerActor&)> callback);
     void ForEachActivePlayer(std::function<void(const PlayerActor&)> callback) const;
     
-    // TODO: Milestone C2 - Add monster iteration
-    // void ForEachActiveMonster(std::function<void(MonsterActor&)> callback);
+    // Milestone C2: Monster iteration
+    void ForEachActiveMonster(std::function<void(MonsterActor&)> callback);
+    void ForEachActiveMonster(std::function<void(const MonsterActor&)> callback) const;
     
     // === Utilities ===
     std::vector<ActorId> GetAllActiveActors() const;
     std::vector<ActorId> GetAllActivePlayers() const;
     int GetActivePlayerCount() const;
     
-    // TODO: Milestone C2
-    // std::vector<ActorId> GetAllActiveMonsters() const;
-    // int GetActiveMonsterCount() const;
+    // Milestone C2: Monster utilities
+    std::vector<ActorId> GetAllActiveMonsters() const;
+    int GetActiveMonsterCount() const;
     
 private:
     ActorStore() = default;
@@ -67,8 +71,8 @@ private:
     
     // Actor storage
     std::unordered_map<ActorId, std::unique_ptr<PlayerActor>> player_actors_;
-    // TODO: Milestone C2
-    // std::unordered_map<ActorId, std::unique_ptr<MonsterActor>> monster_actors_;
+    // Milestone C2: Monster storage (refreshed dynamically based on ActiveMonsters)
+    std::unordered_map<ActorId, std::unique_ptr<MonsterActor>> monster_actors_;
     
     bool initialized_ = false;
 };

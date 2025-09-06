@@ -873,6 +873,7 @@ if(ENABLE_GAP)
     seat/companion_seat.cpp
     actor/actor.cpp
     actor/player_actor.cpp
+    actor/monster_actor.cpp
     actor/actor_store.cpp
   )
 endif()

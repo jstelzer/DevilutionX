@@ -260,6 +260,16 @@ void GapCore::OnGameTick(uint32_t tick) {
     
     // Note: Level sync is now event-driven via setLevel() hooks - no polling needed
     
+#ifdef ENABLE_GAP
+    // Refresh ActorStore to sync with current monster spawns/deaths
+    // Only refresh periodically to avoid performance impact
+    static uint32_t last_refresh_tick = 0;
+    if (tick - last_refresh_tick >= 30) { // Refresh every 30 ticks (~1 second)
+        ActorStore::Instance().Refresh();
+        last_refresh_tick = tick;
+    }
+#endif
+    
     impl_->ProcessIncomingMessages();
     
     if (tick - last_state_tick_ >= state_divisor_) {
