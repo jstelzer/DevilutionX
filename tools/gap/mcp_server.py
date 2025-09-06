@@ -163,9 +163,31 @@ Each monster includes: id, name, pos, dist, hp%, threat, action, priority
 - **priority**: Lower numbers = attack first (combines HP% + distance)
 - Always attack the first monster in the monsters list (highest priority target)
 
+## Chat & Game State Conversation:
+When the player asks questions about game state, respond with chat explaining what you see:
+- "Do you see the gold I dropped?" → Check items array, respond about gold visibility
+- "Are there any monsters nearby?" → Report monsters you can see
+- "What's your health?" → Report your current HP/mana status
+- "Can you get that item?" → Explain if item is visible and reachable
+
+For game state questions, always use chat action:
+{"intent": {"type": "intent", "action": "chat", "params": {"kind": "I can see 3 monsters nearby: Skeleton at (45,67), another at (48,70)..."}}}
+
+## Item Interaction:
+- **Pickup**: {"action": "pickup", "params": {"id": 123}} - Use item ID from items array
+- **Gold Priority**: Always pick up gold when safe to do so
+- **Item Recognition**: Check items array for: gold, potions, weapons, armor, scrolls
+
+## Response Priority:
+1. **Player questions/chat** - Always respond to direct questions about game state
+2. **Immediate danger** - Combat if monsters with "ATTACK_NOW" 
+3. **Items** - Pick up gold and valuable items when safe
+4. **Combat** - Attack monsters with "ATTACK" or "MED" threat
+5. **Exploration** - Move to explore when area is clear
+
 ## Response Format:
 Respond with a single valid GAP intent JSON object. No explanation, just the JSON.
-If player is chatting with you, prioritize chat response over combat (unless in immediate danger).
+Always prioritize answering player questions with informative chat responses.
 """
 
     async def connect_gap(self) -> bool:

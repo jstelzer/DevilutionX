@@ -32,17 +32,31 @@ PlayerActor* GetControlledPlayerActor() {
     auto& store = ActorStore::Instance();
     
     int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    std::cout << "GAP: GetControlledPlayerActor - controlled_slot=" << controlled_slot << std::endl;
+    
     PlayerActor* actor = store.GetPlayerActor(controlled_slot);
-    if (actor && actor->IsValid()) {
-        return actor;
+    if (actor) {
+        bool is_valid = actor->IsValid();
+        bool is_active = (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive);
+        std::cout << "GAP: Companion actor found - IsValid()=" << is_valid 
+                  << " plractive=" << is_active 
+                  << " name='" << Players[controlled_slot]._pName << "'" << std::endl;
+        
+        if (is_valid) {
+            return actor;
+        }
+    } else {
+        std::cout << "GAP: No actor found for controlled_slot " << controlled_slot << std::endl;
     }
     
     // Fallback to main player if controlled player not available
     actor = store.GetPlayerActor(MyPlayerId);
     if (actor && actor->IsValid()) {
+        std::cout << "GAP: Falling back to main player " << MyPlayerId << std::endl;
         return actor;
     }
     
+    std::cout << "GAP: No valid player actor found" << std::endl;
     return nullptr;
 }
 #endif
@@ -51,13 +65,17 @@ PlayerActor* GetControlledPlayerActor() {
 Player* GetControlledPlayer() {
 #ifdef ENABLE_GAP
     PlayerActor* actor = GetControlledPlayerActor();
-    return actor ? actor->GetPlayer() : nullptr;
+    return (actor && actor->IsValid()) ? actor->GetPlayer() : nullptr;
 #else
+    std::cout << "GAP: Using NON-ACTOR path (ENABLE_GAP not defined)" << std::endl;
     int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    std::cout << "GAP: Non-actor path - controlled_slot=" << controlled_slot << " plractive=" << (controlled_slot >= 0 && controlled_slot < MAX_PLRS ? Players[controlled_slot].plractive : false) << std::endl;
     if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
+        std::cout << "GAP: Non-actor path returning companion player" << std::endl;
         return &Players[controlled_slot];
     }
     // Fallback to MyPlayer if controlled player not available
+    std::cout << "GAP: Non-actor path falling back to main player" << std::endl;
     if (MyPlayerId < MAX_PLRS) {
         return &Players[MyPlayerId];
     }
