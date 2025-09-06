@@ -28,7 +28,7 @@ bool MonsterActor::IsValid() const {
     
     // Check if monster is in ActiveMonsters list (the game's way of tracking active monsters)
     for (size_t i = 0; i < ActiveMonsterCount; i++) {
-        if (ActiveMonsters[i] == monster_index_) {
+        if (ActiveMonsters[i] == static_cast<unsigned>(monster_index_)) {
             return true;
         }
     }
@@ -44,7 +44,9 @@ ActorId MonsterActor::GetId() const {
 
 const char* MonsterActor::GetName() const {
     if (!IsValid()) return "";
-    return monster_->name();
+    // Cache the name as a string since monster_->name() returns string_view
+    name_cache_ = std::string(monster_->name());
+    return name_cache_.c_str();
 }
 
 const char* MonsterActor::GetTypeName() const {

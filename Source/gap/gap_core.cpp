@@ -6,6 +6,8 @@
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
 #include "../actor/actor_store.h"
+#include "../seat/seat.h"
+#include "../seat/companion_seat.h"
 #endif
 #include "../diablo.h"
 #include "../player.h"
@@ -83,6 +85,21 @@ private:
         // Set controlled player
         GapCore& core = GapCore::Instance();
         core.SetControlledPlayer(requested_slot);
+        
+        // Register CompanionSeat for the actual companion slot when companion connects
+        if (requested_slot != MyPlayerId) {
+#ifdef ENABLE_GAP
+            auto& seatManager = devilution::SeatManager::Instance();
+            
+            // Unregister any existing seat for this slot
+            seatManager.UnregisterSeat(requested_slot);
+            
+            // Register new CompanionSeat for the actual companion slot
+            auto companionSeat = std::make_unique<devilution::CompanionSeat>(requested_slot);
+            seatManager.RegisterSeat(std::move(companionSeat));
+            std::cout << "GAP: Registered CompanionSeat for actual companion slot " << requested_slot << std::endl;
+#endif
+        }
         
         // Debug: Check companion loading conditions
         std::cout << "GAP: Debug - requested_slot=" << requested_slot << " MyPlayerId=" << MyPlayerId 
@@ -225,11 +242,8 @@ bool GapCore::Initialize() {
         enabled_ = true;
         std::cout << "GAP: Initialized successfully" << std::endl;
         
-#ifdef ENABLE_GAP
-        // Initialize Actor system for unified entity access
-        ActorStore::Instance().Initialize();
-        std::cout << "GAP: Actor system initialized" << std::endl;
-#endif
+        // Note: ActorStore initialization moved to first game tick to ensure
+        // it happens after companion loading in HandleHello
         
         return true;
     } catch (const std::exception& e) {
@@ -245,7 +259,7 @@ void GapCore::Shutdown() {
     }
     
 #ifdef ENABLE_GAP
-    // Shutdown Actor system
+    // Shutdown Actor system (always safe to call)
     ActorStore::Instance().Shutdown();
     std::cout << "GAP: Actor system shutdown" << std::endl;
 #endif
@@ -261,6 +275,14 @@ void GapCore::OnGameTick(uint32_t tick) {
     // Note: Level sync is now event-driven via setLevel() hooks - no polling needed
     
 #ifdef ENABLE_GAP
+    // Initialize ActorStore on first tick (after companion loading)
+    static bool actor_store_initialized = false;
+    if (!actor_store_initialized) {
+        ActorStore::Instance().Initialize();
+        std::cout << "GAP: Actor system initialized after companion loading" << std::endl;
+        actor_store_initialized = true;
+    }
+    
     // Refresh ActorStore to sync with current monster spawns/deaths
     // Only refresh periodically to avoid performance impact
     static uint32_t last_refresh_tick = 0;

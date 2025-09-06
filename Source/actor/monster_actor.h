@@ -31,6 +31,7 @@ class MonsterActor : public Actor {
 private:
     int monster_index_;
     Monster* monster_;
+    mutable std::string name_cache_; // Cache for name string to return const char*
     
 public:
     explicit MonsterActor(int monster_index);

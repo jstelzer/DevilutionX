@@ -13,6 +13,12 @@ void ActorStore::Initialize() {
     
     std::cout << "ActorStore: Initializing actor registry" << std::endl;
     
+    // Debug: Show current player states before creating actors
+    for (int i = 0; i < MAX_PLRS; i++) {
+        std::cout << "ActorStore: Player slot " << i << " - active=" << Players[i].plractive 
+                  << " name='" << Players[i]._pName << "'" << std::endl;
+    }
+    
     // Create PlayerActor instances for all player slots
     for (int i = 0; i < MAX_PLRS; i++) {
         ActorId id = ActorIds::ForPlayer(i);
