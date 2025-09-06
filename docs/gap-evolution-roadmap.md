@@ -8,6 +8,7 @@ This document outlines the transformation of DevilutionX's GAP (Game Agent Proto
 
 **Target State**: AI companions as full peers to human players, with clean entity control abstractions supporting 1-3+ AI players in cooperative gameplay.
 
+
 ---
 
 ## Phase 1: Emergency Architecture Fix ✅ COMPLETE (Sept 2025)
@@ -25,6 +26,7 @@ Created network command isolation layer (`gap_network.h/cpp`) with:
 - `ExecuteDirectMove()` - Direct movement execution for companions
 - `ExecuteDirectAttack()` - Direct combat execution for companions (fixed with `ACTION_ATTACKMON`)
 - `ExecuteDirectInteract()` - Direct object interaction for companions
+
 
 Key fixes:
 - Commands now execute on companion's position, not main player's
@@ -75,6 +77,7 @@ private:
 };
 ```
 
+
 ### 2.2 Intent Pipeline
 
 ```
@@ -111,6 +114,7 @@ GAP Protocol      ───► CompanionSeat  ───►┘
 4. **Rate limiting** - Max 5 intents/tick, 10/second
 5. **UI isolation** - Companion never steals focus/camera
 
+
 ### 2.5 Deliverables ✅ COMPLETE
 - ✅ Seat abstraction layer (`Source/seat/seat.h`, `seat_manager.cpp`)
 - ✅ Intent queue with rate limiting and safety measures
@@ -129,7 +133,7 @@ GAP Protocol      ───► CompanionSeat  ───►┘
 
 ---
 
-## Phase 3: Actor Model Convergence (Week 1 ✅ COMPLETE)
+## Phase 3: Actor Model Convergence ✅ COMPLETE (Sept 2025)
 *Unify Players and Monsters under common Actor interface*
 
 ### 3.1 Actor Abstraction
@@ -142,14 +146,14 @@ public:
     virtual Point position() const = 0;
     virtual bool isAlive() const = 0;
     
-    // Commands (thin façade ove\]---r existing systems)
+    // Commands (thin facade over existing systems)
     virtual void moveTo(Point target) = 0;
     virtual void attack(ActorId target) = 0;
     virtual void cast(SpellId spell, Point target) = 0;
     virtual void useItem(ItemId item) = 0;
 };
 
-dclass PlayerActor : public Actor {
+class PlayerActor : public Actor {
     int pnum;  // Wraps existing PlayerStruct
 };
 
@@ -207,15 +211,28 @@ store.ForEachActiveMonster([&](const MonsterActor& actor) {
 
 **This isn't about control** - it's about creating a **proper entity abstraction layer** for GAP that works with the game's existing non-ECS architecture without fighting against it.
 
-#### Milestone C3: Actor Store (Week 3)
-- [ ] Create unified ActorStore registry
-- [ ] Support ActorId lookups across types
-- [ ] Move shared utilities to Actor level
 
-#### Milestone C4: Internal Migration (Week 4)
-- [ ] Convert threat calculation to Actor API
-- [ ] Convert pathfinding to Actor API
-- [ ] Convert vision/LOS to Actor API
+#### Milestone C3: Actor Store ✅ COMPLETE
+- ✅ Created unified ActorStore registry with player/monster management
+- ✅ ActorId lookups across types with collision-free ID system
+- ✅ Periodic refresh system for dynamic monster spawning/death
+- ✅ Iteration patterns (`ForEachActivePlayer`, `ForEachActiveMonster`)
+
+#### Critical Integration Fix ✅ COMPLETE
+**Problem**: Seat system broke companion loading timing - CompanionSeat registered at startup but companion loaded at runtime.
+
+**Solution**: Dynamic seat registration in `HandleHello()` when AI actually connects:
+```cpp
+// Register CompanionSeat for actual companion slot when companion connects
+if (requested_slot != MyPlayerId) {
+    auto& seatManager = devilution::SeatManager::Instance();
+    seatManager.UnregisterSeat(requested_slot);
+    auto companionSeat = std::make_unique<devilution::CompanionSeat>(requested_slot);
+    seatManager.RegisterSeat(std::move(companionSeat));
+}
+```
+
+✅ **Companion now works as distinct entity** - No more input control conflicts
 
 ### 3.3 Benefits
 - **Unified control** - Any actor controllable by any seat
@@ -225,55 +242,150 @@ store.ForEachActiveMonster([&](const MonsterActor& actor) {
 
 ---
 
-## Phase 4: Production Features (4-6 weeks)
-*Polish for real gameplay experience*
+## Phase 4: Incremental Production Polish (6-8 weeks)
+*From functional companion to intelligent gameplay partner*
 
-### 4.1 Companion Intelligence
+### 4.1 UI/UX: Companion as Real Player (Week 1-2)
+*Make companions feel like genuine party members*
 
-#### Advanced Combat AI
-- [ ] Threat prioritization matrix
-- [ ] Formation keeping algorithms  
-- [ ] Combo coordination with player
-- [ ] Spell rotation optimization
-- [ ] Kiting and positioning tactics
+#### Core Visibility Features
+- [ ] **Health Bar Display**: Companion health/mana bars visible on mouse-over (like monsters)
+- [ ] **Player Panel Integration**: Companion appears in party UI with portrait, HP/MP bars
+- [ ] **Status Indicators**: Visual indicators for companion state (fighting, following, looting, casting)
+- [ ] **Damage Numbers**: Companion damage appears over targets (like player damage)
+- [ ] **Nameplate Styling**: Distinctive companion nameplate color/styling (friendly blue vs enemy red)
 
-#### Loot & Inventory Management
-- [ ] Item evaluation heuristics
-- [ ] Auto-equip better gear
-- [ ] Smart potion management
-- [ ] Gold/item sharing protocols
+#### Interactive Features  
+- [ ] **Healing Support**: Player healing spells/potions affect companion
+- [ ] **Buff/Debuff Visibility**: Companion status effects visible in UI
+- [ ] **Equipment Display**: View companion gear when inspecting
+- [ ] **Shared UI Elements**: Companion appears in relevant game dialogs (resurrection, etc.)
 
-#### Communication
-- [ ] Contextual battle callouts
-- [ ] Strategy suggestions
-- [ ] Quest commentary
-- [ ] Personality system
+**Success Criteria**: Companion feels like a real party member, not an NPC
 
-### 4.2 Quality of Life
+### 4.2 Enhanced Game State (Week 3)
+*Give LLM complete situational awareness*
 
-#### Configuration
-- [ ] Companion personality presets
-- [ ] Behavior tuning (aggressive/defensive/balanced)
-- [ ] Model selection UI
-- [ ] Performance profiles
+#### GAP Protocol Extensions
+- [ ] **Detailed Spell State**: Available spells, cooldowns, mana costs, learned/unlearned
+- [ ] **Full Inventory State**: All items with stats, equipped gear, item comparisons
+- [ ] **Belt/Potion State**: Current potions, quantities, auto-use preferences
+- [ ] **NPC/Object State**: Interactive NPCs, doors, chests, shrines with context
+- [ ] **Economic State**: Gold, repair costs, vendor prices, item values
 
-#### Persistence
-- [ ] Save/load companion state
-- [ ] Experience/progression tracking
-- [ ] Companion-specific achievements
-- [ ] Statistics and analytics
+#### Environmental Awareness
+- [ ] **Level Context**: Current area, quest objectives, previously visited areas
+- [ ] **Danger Assessment**: Monster threat levels, environmental hazards
+- [ ] **Opportunity Recognition**: Valuable items, beneficial shrines, tactical positions
 
-### 4.3 Multiplayer Polish
-- [ ] Companion spectator mode
-- [ ] Multi-companion coordination
-- [ ] PvP companion arenas
-- [ ] Companion trading/sharing
+**Success Criteria**: LLM has complete game state for intelligent decision-making
 
-### 4.4 Performance & Reliability
-- [ ] Connection resilience (reconnect/fallback)
-- [ ] State delta compression
-- [ ] Adaptive quality (skip frames under load)
-- [ ] Profiling and optimization
+### 4.3 Combat Intelligence (Week 4-5)
+*Transform basic attack-follow into tactical combat*
+
+#### Smart Combat Decisions
+- [ ] **Threat Prioritization**: Attack low-HP enemies first, prioritize dangerous casters
+- [ ] **Formation Tactics**: Stay in healing range vs aggressive flanking based on situation
+- [ ] **Target Switching**: Abandon tough enemies when player is overwhelmed
+- [ ] **Spell Usage**: Cast appropriate spells based on situation (AOE for groups, single-target for elites)
+- [ ] **Resource Management**: Use potions intelligently, conserve mana for important spells
+
+#### Defensive Behaviors
+- [ ] **Emergency Retreat**: Fall back when low health, seek healing
+- [ ] **Player Support**: Prioritize helping player over personal combat
+- [ ] **Crowd Control**: Use available CC spells to protect player
+- [ ] **Positioning**: Avoid standing in fire, position for maximum effectiveness
+
+**Success Criteria**: Companion makes smart tactical decisions that help rather than hinder
+
+### 4.4 Inventory & Equipment Intelligence (Week 6)
+*Autonomous gear management and item decisions*
+
+#### Smart Looting
+- [ ] **Item Evaluation**: Compare new items to current gear, consider upgrades
+- [ ] **Duplicate Avoidance**: Don't pick up items player already has (uniques, quest items)
+- [ ] **Value Optimization**: Drop low-value items when inventory full
+- [ ] **Sharing Protocol**: Coordinate with player for item distribution
+
+#### Equipment Management  
+- [ ] **Auto-Equip Better Gear**: Automatically equip clear upgrades
+- [ ] **Repair Decisions**: Repair gear when appropriate, prioritize important items
+- [ ] **Potion Management**: Maintain appropriate potion supplies
+- [ ] **Economic Decisions**: Buy/sell items intelligently at vendors
+
+**Success Criteria**: Companion manages inventory without player micromanagement
+
+### 4.5 Social & Communication (Week 7)
+*Natural interaction and personality*
+
+#### Contextual Communication
+- [ ] **Combat Callouts**: "Behind you!", "Healing needed!", "Strong enemy ahead!"
+- [ ] **Discovery Comments**: React to finding good items, dangerous areas
+- [ ] **Strategic Suggestions**: "Should we rest in town?", "I need potions"
+- [ ] **Personality Responses**: Consistent character voice and reactions
+
+#### Communication Intelligence
+- [ ] **Spam Prevention**: Limit frequency of callouts to avoid annoyance
+- [ ] **Context Awareness**: Different communication styles for combat vs exploration vs town
+- [ ] **Player Adaptation**: Learn player's communication preferences
+- [ ] **Emergency Priority**: Important warnings override normal chat limits
+
+**Success Criteria**: Companion communicates naturally and helpfully
+
+### 4.6 Town & NPC Autonomy (Week 8)
+*Full autonomous behavior in town environments*
+
+#### NPC Interaction
+- [ ] **Vendor Intelligence**: Buy supplies, sell junk items, repair equipment
+- [ ] **Quest NPCs**: Interact with quest-givers appropriately
+- [ ] **Service NPCs**: Use healers, identify items, gambling
+- [ ] **Coordination**: Don't block player's NPC interactions
+
+#### Town Behavior
+- [ ] **Supply Management**: Maintain appropriate potions, arrows, keys
+- [ ] **Economic Planning**: Balance spending on upgrades vs supplies
+- [ ] **Preparation**: Get ready for next dungeon run (repairs, potions, spell preparation)
+- [ ] **Following Logic**: Stay with player but don't crowd interfaces
+
+**Success Criteria**: Companion handles town activities independently and intelligently
+
+### 4.7 LLM Autonomy Milestones
+*Progressive reduction of Python "helper code"*
+
+#### Milestone 1 (Week 3): Enhanced Context
+- Python provides rich game state, LLM makes all decisions
+- Remove hardcoded survival reflexes, let LLM reason about danger
+
+#### Milestone 2 (Week 5): Combat Reasoning  
+- LLM handles all combat decisions without Python assistance
+- Remove Python threat assessment, let LLM evaluate situations
+
+#### Milestone 3 (Week 7): Full Autonomy
+- Python becomes pure protocol bridge (GAP ↔ Ollama)
+- All game logic reasoning handled by LLM
+- Python only does JSON parsing and network communication
+
+**Success Criteria**: LLM demonstrates sophisticated reasoning about complex game states
+
+### Phase 4 Success Metrics
+
+#### Technical Metrics
+- [ ] Companion visible/interactive as real player
+- [ ] <200ms average decision latency  
+- [ ] Zero multiplayer desync issues
+- [ ] Clean LLM reasoning without Python helpers
+
+#### Gameplay Metrics
+- [ ] Companion makes smart combat decisions
+- [ ] Autonomous inventory/equipment management
+- [ ] Natural communication without spam
+- [ ] Effective town NPC interactions
+
+#### Player Experience
+- [ ] Companion feels like skilled human player
+- [ ] Reduces player micromanagement burden
+- [ ] Enhances rather than hinders gameplay
+- [ ] Demonstrates clear personality and intelligence
 
 ---
 
@@ -384,3 +496,166 @@ The key insight from IDEA.md is clear: **Path A (Bot Player Seat) → Path C (Ac
 Each phase delivers tangible value while setting up the next. Phase 1 unblocks immediate progress. Phase 2 establishes proper control abstractions. Phase 3 unifies the entity model. Phase 4 adds the polish needed for real gameplay. Phase 5 explores the future.
 
 Let's build the future of cooperative AI gaming, one carefully planned step at a time.
+
+### Ideas
+### Determinism & Replay
+
+**Invariant:** Companion actions must not introduce nondeterminism across SP/MP.
+
+
+**Replay harness**
+- Record `(tick, playerIndex, CMD_*, params)` to a ring buffer (host).
+- Add `--replay=<file>` mode that re-injects commands and asserts:
+  - same RNG seeds per level
+  - same final checksums for: player pos, HP/mana, active monsters (id,hp,pos).
+
+**Checksums**
+- `level_crc = crc32(all player states || all active monster states)`
+- Emit every N ticks; compare across host/client in MP test runs.
+
+**CI smoke**
+- Headless build + 30s replay on a known seed; ensure `level_crc` stability.
+
+
+### State Delta Strategy
+
+- **Keyed entities**: players by `pnum`, monsters by `midx`, objects by `oid`.
+- Send full snapshot on connect or every `K` seconds; otherwise:
+  - `{"type":"state_delta", "tick": T, "players":[...changed], "monsters":[...changed], "objects":[...changed]}`
+- Drop outbound frames under backpressure (never stall the sim). Client acks last-applied tick.
+
+### Multi-Companion Guardrails
+
+- One `CompanionSeat` per `pnum`; host-only activation.
+- SeatManager enforces unique `pnum` and denies duplicate registration.
+- On disconnect: seats become inert but remain registered until level transition (avoids focus flicker).
+
+# GAP v0.3 Delta
+
+This augments v0.2 with minimal fields to unlock combat, inventory, and traversal.
+
+## Intents (Agent → Game)
+
+```json
+{ "type":"intent", "data": { "cmd":"move_to",   "x":50, "y":55, "targetTick":12346 } }
+{ "type":"intent", "data": { "cmd":"attack_id", "id":42 } }
+{ "type":"intent", "data": { "cmd":"attack_pos","x":52, "y":47 } }
+{ "type":"intent", "data": { "cmd":"cast",      "slot":1, "x":52, "y":47 } }
+{ "type":"intent", "data": { "cmd":"pickup",    "id":16 } }
+{ "type":"intent", "data": { "cmd":"use_potion","kind":"hp" } }    // or {"slot":0}
+{ "type":"intent", "data": { "cmd":"interact",  "id":301 } }       // door/chest/stairs/portal
+{ "type":"intent", "data": { "cmd":"say",       "text":"On me!" } }
+{ "type":"intent", "data": { "cmd":"stop" } }
+
+## State additions Game -> Agent
+
+```
+{
+  "type":"state",
+  "tick":12345,
+  "data":{
+    "player": {
+      "id": 0,
+      "hp":150,"hp_max":200,
+      "mana":80,"mana_max":120,
+      "pos":[50,45],"level":8,"in_town":false,
+      "belt":[ {"t":"hp","n":2}, {"t":"mp","n":1}, null, null ],
+      "spells": { "slot1":"Firebolt", "slot2":"Town Portal" }
+    },
+    "monsters":[
+      {"id":42,"name":"Skeleton","pos":[52,47],
+       "hp":45,"hp_max":60,"hp_percent":75,"armor":12,
+       "is_alive":true,"is_minion":false,"distance":3}
+    ],
+    "objects":[
+      {"id":301,"kind":"chest","pos":[49,44],"locked":false},
+      {"id":302,"kind":"stairs_down","pos":[60,15]}
+    ],
+    "vision":{
+      "light_radius":10,
+      "player_pos":[50,45],
+      "walkable_grid":[[true,false,true], [true,true,true], ...]
+    }
+  }
+}
+```
+
+
+## Core Gameplay Feedback
+
+
+### Current Observations
+
+The companion follows, but rarely attacks.
+
+
+When I mouse over the frame I see no health like I do for monsters. Is the game engine seeing the companion as an attackable player with health?
+
+
+Can I heal the companion?
+
+
+Spell slots, we need to teach it about them.
+
+Inventory. Same issue.
+
+- Available spells and their appropriate usage contexts
+- Inventory space management and item prioritization  
+- Equipment comparison and upgrade decisions
+Consider adding detailed spell/inventory state to the GAP protocol. -->
+
+Then there's the game in town. The companion should use the townsfolk to get supplies, repair gear, buy upgrades, etc.
+
+- NPC interaction protocols in GAP
+- Economic decision-making (what to buy/sell/repair)
+- Coordination with player's town activities
+This could be a separate Phase 4 milestone: "Town Management AI" -->
+
+I would like the LLM to be able to reason about and do all of this.
+
+Right now there's some python code in the MCP that 'helps'. in a perfect world the MCP would bootstrap the LLM and the LLM would handle things.
+
+
+---
+
+## Overall Strategic Feedback
+
+### Roadmap Strengths
+
+1. **Incremental Approach**: The phase-by-phase progression allows for continuous validation and course correction. Each phase delivers tangible value while building toward the larger vision.
+
+2. **Technical Depth**: The document demonstrates deep understanding of both the legacy codebase constraints and modern architectural patterns. The Actor abstraction and Seat system are particularly well-designed.
+
+3. **Production Mindset**: The emphasis on determinism, replay systems, rate limiting, and multiplayer stability shows mature game development thinking.
+
+4. **Clear Success Criteria**: Each phase has well-defined deliverables and success metrics, making progress measurable.
+
+### Suggested Additions/Refinements
+
+1. **Phase 4 Prioritization**: Consider breaking Phase 4 into sub-phases based on impact:
+   - 4a: Core Intelligence (combat + inventory)  
+   - 4b: Communication & Personality
+   - 4c: Advanced Features (town NPCs, multi-companion)
+
+2. **Performance Benchmarking**: Add specific performance targets:
+   - Max latency for AI decisions (currently <100ms is mentioned)
+   - Memory usage limits for AI systems
+   - Frame rate impact measurements
+
+3. **Gradual LLM Autonomy**: Create a migration plan for reducing Python "helper code":
+   - Phase 4.1: Enhanced GAP protocol with spell/inventory details
+   - Phase 4.2: LLM reasoning about complex game states
+   - Phase 4.3: Remove Python decision-making layer
+
+4. **User Research Integration**: Consider adding user feedback loops:
+   - Alpha testing with companion behavior tuning
+   - Metrics collection on companion effectiveness
+   - Player satisfaction surveys
+
+### Risk Mitigation Suggestions
+
+1. **LLM Reliability**: Add fallback behaviors for when LLM responses are malformed/delayed
+2. **Configuration Management**: Create companion behavior profiles (conservative/balanced/aggressive) for different player preferences  
+3. **Debugging Infrastructure**: Enhance the replay system with AI decision audit trails
+
+This roadmap represents excellent planning for a complex technical and gameplay challenge. The foundation work (Phases 1-3) is solid, and the production features (Phase 4) address the real gameplay needs identified in your observations.
