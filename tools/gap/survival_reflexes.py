@@ -25,9 +25,9 @@ class SurvivalReflexes:
     def __init__(self):
         self.last_potion_time = 0
         self.potion_cooldown = 500  # ms - matches Diablo's potion cooldown
-        self.emergency_hp_threshold = 0.25  # 25% HP
-        self.preemptive_hp_threshold = 0.45  # 45% HP for pre-emptive healing
-        self.overwhelming_enemy_count = 4  # 4+ enemies = overwhelming
+        self.emergency_hp_threshold = 0.15  # COMBAT: More aggressive - 15% HP for emergency
+        self.preemptive_hp_threshold = 0.35  # COMBAT: More aggressive - 35% HP for pre-emptive healing  
+        self.overwhelming_enemy_count = 6  # COMBAT: More aggressive - 6+ enemies = overwhelming (was 4)
         self.min_kiting_distance = 3  # minimum tiles away from enemies
         
         # Track recent actions for smarter decision making

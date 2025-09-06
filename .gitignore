@@ -467,3 +467,4 @@ uwp-project/Assets/ui_art
 /.s390x-ccache/
 hackery
 gap_logs
+tools/gap/log.sh

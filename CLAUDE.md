@@ -7,6 +7,9 @@ GAP (Game Agent Protocol) enables LLM control of Diablo characters via IPC/JSON 
 - **Architecture**: Unix socket IPC, JSON protocol, compile flag `-DENABLE_GAP`
 - **Integration**: Hooks in `game_loop()` for state, `GameEventHandler()` for input
 - **Status**: Multiplayer companion mode with chat fully functional
+## Documentation
+
+- **docs**: Review the ./docs directory for context.
 
 ## Notes
 

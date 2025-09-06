@@ -1,6 +1,7 @@
 #include "gap_intent.h"
 #include "gap_json.h"
 #include "gap_core.h"
+#include "gap_network.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
 #endif
@@ -159,10 +160,17 @@ bool GapIntentProcessor::ExecuteMove(int x, int y) {
     MakePlrPath(*player, target, true);
     player->destAction = ACTION_WALK;
     
-    // Send network command for multiplayer compatibility
-    if (gbIsMultiplayer) {
+    // Handle both single-player and multiplayer modes
+    // In single-player mode with companion, we need direct execution
+    // In multiplayer, use network isolation for correct routing
+    if (controlled_id != MyPlayerId) {
+        // Controlling a companion - use direct execution
+        std::cerr << "GAP: Using direct execution for companion " << controlled_id << std::endl;
+        return ExecuteDirectMove(controlled_id, target);
+    } else if (gbIsMultiplayer) {
+        // Controlling main player in multiplayer
         std::cerr << "GAP: Sending network command CMD_WALKXY for player " << controlled_id << std::endl;
-        NetSendCmdLoc(GetControlledPlayerId(), true, CMD_WALKXY, target);
+        NetSendCmdLocForPlayer(controlled_id, true, CMD_WALKXY, target);
     }
     
     std::cerr << "GAP: ExecuteMove succeeded - path set for player " << controlled_id << std::endl;
@@ -203,10 +211,26 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
             }
             
             // Use appropriate attack command based on weapon type
-            if (player->UsesRangedWeapon()) {
-                NetSendCmdParam1(true, CMD_RATTACKID, monsterId);
+            int controlled_id = GetControlledPlayerId();
+            
+            // Direct execution for companions
+            if (controlled_id != MyPlayerId) {
+                std::cerr << "GAP: Using direct attack for companion " << controlled_id << std::endl;
+                return ExecuteDirectAttack(controlled_id, monsterId);
+            } else if (gbIsMultiplayer) {
+                // Network command for main player in multiplayer
+                if (player->UsesRangedWeapon()) {
+                    NetSendCmdParam1ForPlayer(controlled_id, true, CMD_RATTACKID, monsterId);
+                } else {
+                    NetSendCmdParam1ForPlayer(controlled_id, true, CMD_ATTACKID, monsterId);
+                }
             } else {
-                NetSendCmdParam1(true, CMD_ATTACKID, monsterId);
+                // Single player main character - use standard commands
+                if (player->UsesRangedWeapon()) {
+                    NetSendCmdParam1(true, CMD_RATTACKID, monsterId);
+                } else {
+                    NetSendCmdParam1(true, CMD_ATTACKID, monsterId);
+                }
             }
             
             return true;
@@ -220,10 +244,11 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
         }
         
         // Use appropriate attack command for position
+        int controlled_id = GetControlledPlayerId();
         if (player->UsesRangedWeapon()) {
-            NetSendCmdLoc(GetControlledPlayerId(), true, CMD_RATTACKXY, target);
+            NetSendCmdLocForPlayer(controlled_id, true, CMD_RATTACKXY, target);
         } else {
-            NetSendCmdLoc(GetControlledPlayerId(), true, CMD_SATTACKXY, target);
+            NetSendCmdLocForPlayer(controlled_id, true, CMD_SATTACKXY, target);
         }
         
         return true;
@@ -318,8 +343,9 @@ bool GapIntentProcessor::ExecuteInteract(int object_id) {
             int dy = std::abs(objPos.y - playerPos.y);
             
             if (dx <= 1 && dy <= 1) {
-                // Use existing object interaction
-                NetSendCmdLoc(GetControlledPlayerId(), true, CMD_OPOBJXY, objPos);
+                // Use existing object interaction with correct player routing
+                int controlled_id = GetControlledPlayerId();
+                NetSendCmdLocForPlayer(controlled_id, true, CMD_OPOBJXY, objPos);
                 return true;
             }
         }

@@ -40,18 +40,21 @@ class GapMCPServer:
         # State management for freshness
         self.last_processed_tick = 0
         self.last_decision_time = 0
-        self.min_decision_interval = 0.5  # Minimum 500ms between decisions
+        self.min_decision_interval = 0.2  # COMBAT: Faster decisions - 200ms between decisions
+        self.combat_decision_interval = 0.1  # COMBAT: Even faster when enemies present - 100ms
         self.last_player_pos = None
-        self.decision_timeout = 5.0  # Max 5s per decision (after warmup)
+        self.decision_timeout = 2.0  # COMBAT: Faster timeout - Max 2s per decision (after warmup)
         self.warmup_timeout = 30.0  # Max 30s for initial model loading
         self.warmup_complete = False
         
         # Loop detection and attack cooldowns
         self.last_intent = None
         self.same_intent_count = 0
-        self.max_same_intent = 3  # Max 3 identical attacks before changing strategy
+        self.max_same_intent = 5  # COMBAT: Allow more persistent attacking - 5 identical attacks before changing strategy
         self.monster_attack_history = {}  # monster_id -> [timestamps]
-        self.attack_cooldown = 1.0  # 1 second between attacks on same monster
+        self.attack_cooldown = 0.3  # COMBAT: Faster attacks - 300ms between attacks on same monster
+        self.combat_focus_target = None  # COMBAT: Track which monster we're focusing on
+        self.combat_focus_time = 0      # COMBAT: When we started focusing on current target
         
         # Invalid intent tracking - clear context when too many invalid attempts
         self.invalid_intent_count = 0
@@ -443,25 +446,50 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             sorted_monsters = sorted(alive_monsters, key=lambda m: m.get("distance", 999))
             
             essential_monsters = []
-            for monster in sorted_monsters[:5]:  # Top 5 threats
+            for monster in sorted_monsters[:8]:  # Top 8 threats for better selection
                 dist = monster.get("distance", 999)
                 hp_pct = monster.get("hp_percent", 100)
                 monster_id = monster.get("id")
+                monster_name = monster.get("name", "Unknown")
                 
-                # Determine threat level and action
-                if dist <= 3:
-                    threat = "HIGH"
+                # COMBAT IMPROVEMENT: Enhanced threat assessment
+                if dist <= 2:
+                    threat = "CRITICAL"  # Immediate melee range
                     action = "ATTACK_NOW"
-                elif dist <= 6:
-                    threat = "MED" 
+                elif dist <= 4:
+                    threat = "HIGH"      # Close combat range
+                    action = "ATTACK_NOW" 
+                elif dist <= 8:
+                    threat = "MED"       # Medium engagement range
                     action = "ATTACK"
                 else:
                     threat = "LOW"
                     action = "IGNORE"
                 
-                # Priority for target selection (lower is higher priority)
-                # Prioritize: low HP monsters (easy kills) that are close
-                priority = hp_pct + (dist * 10)  # Low HP + close = low score = high priority
+                # COMBAT IMPROVEMENT: Advanced priority calculation
+                # Factor in multiple threat indicators
+                base_priority = 100  # Higher base = lower priority
+                
+                # Distance penalty (closer = higher priority)
+                distance_penalty = dist * 8  # Reduced multiplier for more aggressive engagement
+                
+                # HP bonus (lower HP = higher priority for finishing kills)
+                hp_bonus = (100 - hp_pct) * 0.3  # Wounded enemies easier to finish
+                
+                # Threat type bonus (based on monster name)
+                threat_bonus = 0
+                if any(archer in monster_name.lower() for archer in ["archer", "bow", "crossbow"]):
+                    threat_bonus = -25  # Prioritize ranged attackers
+                elif any(mage in monster_name.lower() for mage in ["mage", "sorcerer", "witch"]):
+                    threat_bonus = -20  # Prioritize spellcasters
+                elif any(elite in monster_name.lower() for elite in ["unique", "champion", "elite"]):
+                    threat_bonus = -15  # Prioritize elite monsters
+                
+                # Range penalty for very close threats (avoid being surrounded)
+                if dist <= 1:
+                    threat_bonus -= 10  # Extra priority for adjacent threats
+                
+                priority = base_priority + distance_penalty + hp_bonus + threat_bonus
                 
                 essential_monsters.append({
                     "id": monster_id,
@@ -477,11 +505,33 @@ If player is chatting with you, prioritize chat response over combat (unless in 
             # Sort by priority for attack targeting (lowest priority score = attack first)
             essential_monsters.sort(key=lambda m: m.get("priority", 999))
             
+            # COMBAT IMPROVEMENT: Apply combat focus system to prioritize current target
+            if essential_monsters and hasattr(self, 'combat_focus_target'):
+                # Check if our focus target is still valid and present
+                focus_target = None
+                for monster in essential_monsters:
+                    if monster['id'] == self.combat_focus_target:
+                        focus_target = monster
+                        break
+                
+                # If focus target is still alive and within combat range (distance <= 6), keep it as priority
+                if focus_target and focus_target['dist'] <= 6 and focus_target['hp%'] > 0:
+                    # Move focused target to front of list for continued engagement
+                    essential_monsters.remove(focus_target)
+                    focus_target['action'] = "FOCUS_FIRE"  # Special action for focused target
+                    essential_monsters.insert(0, focus_target)
+                    logger.debug(f"🎯 COMBAT FOCUS: Continuing focus on target {focus_target['id']} {focus_target['name']}")
+                else:
+                    # Clear focus target if it's dead, too far, or invalid
+                    self.combat_focus_target = None
+                    logger.debug("🎯 COMBAT FOCUS: Cleared focus target (dead/far/invalid)")
+            
             # Debug logging for monster processing
             if essential_monsters:
                 logger.info(f"🎯 MONSTERS DETECTED: {len(essential_monsters)} threats")
                 for i, monster in enumerate(essential_monsters[:3]):  # Log top 3 threats
-                    logger.info(f"   {i+1}. ID:{monster['id']} {monster['name']} HP:{monster['hp%']}% Dist:{monster['dist']} Action:{monster['action']} Priority:{monster['priority']}")
+                    action_display = f"{'🔥 ' if monster.get('action') == 'FOCUS_FIRE' else ''}{monster['action']}"
+                    logger.info(f"   {i+1}. ID:{monster['id']} {monster['name']} HP:{monster['hp%']}% Dist:{monster['dist']} Action:{action_display} Priority:{monster['priority']}")
             else:
                 logger.debug("No monsters detected in current area")
             
@@ -683,8 +733,17 @@ If player is chatting with you, prioritize chat response over combat (unless in 
         current_time = time.time()
         current_tick = state_msg.get("tick", 0)
         
-        # Skip if too soon since last decision
-        if current_time - self.last_decision_time < self.min_decision_interval:
+        # COMBAT IMPROVEMENT: Check for nearby monsters first to determine decision speed
+        data = state_msg.get("data", {})
+        nearby = data.get("nearby", {})
+        monsters = nearby.get("monsters", [])
+        
+        # Combat mode: faster decisions when monsters are present
+        close_monsters = [m for m in monsters if m.get("distance", 999) <= 8]
+        decision_interval = self.combat_decision_interval if close_monsters else self.min_decision_interval
+        
+        # Skip if too soon since last decision (adaptive timing)
+        if current_time - self.last_decision_time < decision_interval:
             return False
             
         # Skip if this tick is older than what we already processed
@@ -1056,17 +1115,18 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     compressed_state = self.compress_game_state(state_msg)
                     monsters = compressed_state.get('monsters', [])
                     
-                    # Check for immediate threats (distance <= 2)
-                    immediate_threats = [m for m in monsters if m.get('distance', 999) <= 2]
+                    # COMBAT IMPROVEMENT: More aggressive threat detection for navigation override
+                    immediate_threats = [m for m in monsters if m.get('distance', 999) <= 4]  # Increased from 2 to 4
                     if immediate_threats:
-                        # Combat emergency - force attack instead of movement
-                        closest_threat = min(immediate_threats, key=lambda m: m.get('distance', 999))
+                        # Combat takes priority - force attack instead of movement
+                        # Use the priority-sorted monster list from compressed state for better targeting
+                        priority_target = immediate_threats[0]  # First monster is highest priority
                         response = json.dumps({
                             "type": "intent",
                             "action": "attack",
-                            "params": {"x": closest_threat['id'], "y": -1}
+                            "params": {"x": priority_target['id'], "y": -1}
                         })
-                        logger.info(f"🗡️  NAVIGATION OVERRIDE: Combat emergency - attacking monster {closest_threat['id']}")
+                        logger.info(f"🗡️  COMBAT PRIORITY: Overriding movement - attacking priority target {priority_target['id']} at distance {priority_target.get('distance', 'N/A')}")
                     else:
                         # Safe to use NavigationPlanner for better pathfinding
                         target_pos = (llm_intent['params']['x'], llm_intent['params']['y'])
@@ -1130,6 +1190,14 @@ If player is chatting with you, prioritize chat response over combat (unless in 
                     isinstance(llm_response["intent"], dict) and 
                     llm_response["intent"].get("type") == "intent"):
                     intent = llm_response["intent"]
+                    
+                    # COMBAT IMPROVEMENT: Track combat focus target when attacking
+                    if intent.get("action") == "attack" and intent.get("params", {}).get("y") == -1:
+                        new_target_id = intent.get("params", {}).get("x")
+                        if new_target_id != self.combat_focus_target:
+                            self.combat_focus_target = new_target_id
+                            self.combat_focus_time = time.time()
+                            logger.debug(f"🎯 COMBAT FOCUS: New target locked - ID {new_target_id}")
                     
                     # Validate the pure nested intent
                     if not self.validate_intent(intent, state_msg):
