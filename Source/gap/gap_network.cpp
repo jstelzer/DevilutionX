@@ -10,6 +10,7 @@
 #include "../items.h"
 #include "../inv.h"
 #include "../multi.h"
+#include "../engine/direction.hpp"
 #include <iostream>
 
 namespace devilution::gap {
@@ -86,8 +87,12 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     
     Player& player = Players[player_id];
     
-    if (player._pmode != PM_STAND) {
-        std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id << " not in stand mode" << std::endl;
+    // Allow attacking while walking or standing
+    if (player._pmode != PM_STAND && 
+        player._pmode != PM_WALK_NORTHWARDS && 
+        player._pmode != PM_WALK_SOUTHWARDS && 
+        player._pmode != PM_WALK_SIDEWAYS) {
+        std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id << " in mode " << player._pmode << " (not ready to attack)" << std::endl;
         return false;
     }
     
@@ -120,17 +125,29 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
               << " at (" << monsterPos.x << "," << monsterPos.y << ")" << std::endl;
     
     // Direct attack execution
-    // Set up the attack
-    player.destAction = ACTION_ATTACK;
+    // Set up the attack action - use ATTACKMON for monsters
+    player.destAction = ACTION_ATTACKMON;
     player.destParam1 = monster_id;
     
-    // For ranged weapons, use appropriate attack mode
-    if (player.UsesRangedWeapon()) {
-        player._pmode = PM_RATTACK;
+    // Clear any existing path so the attack happens immediately
+    ClrPlrPath(player);
+    
+    // If we're within melee range (adjacent), we can attack immediately
+    if (dx <= 1 && dy <= 1) {
+        // Calculate direction to monster
+        Direction dir = GetDirection(playerPos, monsterPos);
+        player._pdir = dir;
+        
+        // Set attack mode based on weapon type
+        if (player.UsesRangedWeapon()) {
+            player._pmode = PM_RATTACK;
+        } else {
+            player._pmode = PM_ATTACK;
+        }
         player.AnimInfo.currentFrame = 0;
-    } else {
-        player._pmode = PM_ATTACK;
-        player.AnimInfo.currentFrame = 0;
+    } else if (dx <= 10 && dy <= 10) {
+        // For ranged attacks or when not adjacent, move closer first
+        MakePlrPath(player, monsterPos, false);
     }
     
     // Sync to network if multiplayer

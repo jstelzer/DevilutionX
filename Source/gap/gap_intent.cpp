@@ -183,7 +183,12 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
         return false;
     }
     
-    if (player->_pmode != PM_STAND) {
+    // Allow attacking while walking or standing  
+    if (player->_pmode != PM_STAND && 
+        player->_pmode != PM_WALK_NORTHWARDS && 
+        player->_pmode != PM_WALK_SOUTHWARDS && 
+        player->_pmode != PM_WALK_SIDEWAYS) {
+        std::cerr << "GAP: ExecuteAttack - Player not in attackable mode (mode=" << player->_pmode << ")" << std::endl;
         return false;
     }
     
