@@ -12,6 +12,9 @@
 #include <fmt/format.h>
 
 #include "control.h"
+#ifdef ENABLE_GAP
+#include "gap/gap_chat.h"
+#endif
 #include "engine/render/primitive_render.hpp"
 #include "engine/render/text_render.hpp"
 #include "inv.h"
@@ -70,6 +73,13 @@ void EventPlrMsg(std::string_view text, UiFlags style)
 	message.prefixLength = 0;
 	message.lineHeight = GetLineHeight(message.text, GameFont12) + 3;
 	AddMessageToChatLog(text);
+
+#ifdef ENABLE_GAP
+	// Process chat messages through GAP for AI companion responses
+	if (text.length() > 0) {
+		GAPChatHandler::getInstance().ProcessChatMessage(text);
+	}
+#endif
 }
 
 void SendPlrMsg(Player &player, std::string_view text)

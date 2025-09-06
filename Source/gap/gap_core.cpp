@@ -3,6 +3,10 @@
 #include "gap_state.h"
 #include "gap_intent.h"
 #include "gap_json.h"
+#ifdef ENABLE_GAP
+#include "gap_chat.h"
+#include "../actor/actor_store.h"
+#endif
 #include "../diablo.h"
 #include "../player.h"
 #include "../pfile.h"
@@ -47,7 +51,14 @@ private:
         if (type == "hello") {
             HandleHello(msg);
         } else if (type == "intent") {
-            HandleIntent(msg);
+            // Check if this is a chat intent - handle globally, not as player action
+            std::string action = msg.GetString("action");
+            if (action == "chat") {
+                HandleChatIntent(msg);
+            } else {
+                // All other intents are player-specific and go through normal routing
+                HandleIntent(msg);
+            }
         }
     }
     
@@ -172,6 +183,25 @@ private:
     void HandleIntent(const JsonParser& msg) {
         intent_processor.QueueIntent(msg);
     }
+    
+    void HandleChatIntent(const JsonParser& msg) {
+        // Handle chat as global GAP protocol event - no player routing needed
+        std::string params_str = msg.GetObjectString("params");
+        JsonParser params(params_str);
+        std::string message = params.GetString("kind"); // Chat message is stored in "kind" field
+        
+        if (!message.empty()) {
+#ifdef ENABLE_GAP
+            // Execute chat directly as global broadcast
+            GAPChatHandler::getInstance().SendAIResponse(message);
+            std::cout << "GAP: Executed global chat intent: " << message << std::endl;
+#else
+            std::cerr << "GAP: Chat intent requires ENABLE_GAP flag" << std::endl;
+#endif
+        } else {
+            std::cerr << "GAP: Chat intent missing message in params.kind" << std::endl;
+        }
+    }
 };
 
 GapCore& GapCore::Instance() {
@@ -194,6 +224,13 @@ bool GapCore::Initialize() {
         
         enabled_ = true;
         std::cout << "GAP: Initialized successfully" << std::endl;
+        
+#ifdef ENABLE_GAP
+        // Initialize Actor system for unified entity access
+        ActorStore::Instance().Initialize();
+        std::cout << "GAP: Actor system initialized" << std::endl;
+#endif
+        
         return true;
     } catch (const std::exception& e) {
         std::cerr << "GAP: Initialization failed: " << e.what() << std::endl;
@@ -206,6 +243,13 @@ void GapCore::Shutdown() {
         impl_->ipc.Shutdown();
         impl_.reset();
     }
+    
+#ifdef ENABLE_GAP
+    // Shutdown Actor system
+    ActorStore::Instance().Shutdown();
+    std::cout << "GAP: Actor system shutdown" << std::endl;
+#endif
+    
     enabled_ = false;
 }
 
@@ -228,7 +272,8 @@ void GapCore::OnGameTick(uint32_t tick) {
 void GapCore::ProcessIntents(uint32_t tick) {
     if (!enabled_ || !impl_) return;
     
-    impl_->intent_processor.ProcessPendingIntents(tick);
+    // Use seat-based intent processing if available, otherwise fall back to direct execution
+    impl_->intent_processor.ProcessPendingIntentsViaSeat(tick);
 }
 
 bool GapCore::SendMessage(const std::string& message) {

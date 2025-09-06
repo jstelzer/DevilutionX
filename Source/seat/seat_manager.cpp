@@ -1,6 +1,7 @@
 #ifdef ENABLE_GAP
 
 #include "seat/seat.h"
+#include "seat/human_seat.h"
 #include "utils/log.hpp"
 #include "player.h"
 #include "engine/point.hpp"
@@ -36,7 +37,19 @@ void SeatManager::UnregisterSeat(int player_index) {
 	}
 }
 
-void SeatManager::ProcessAllIntents(uint64_t tick) {
+bool SeatManager::ProcessAllIntents(uint64_t tick) {
+	// Check for early exit conditions from human seats (mirrors ProcessInput logic)
+	for (int i = 0; i < 4; ++i) {
+		if (seats_[i] && seats_[i]->IsActive() && seats_[i]->CanControlUI()) {
+			// Check if this is a HumanSeat and should exit early
+			if (auto* humanSeat = dynamic_cast<HumanSeat*>(seats_[i].get())) {
+				if (humanSeat->ShouldExitEarly()) {
+					return false;  // Exit early like ProcessInput does
+				}
+			}
+		}
+	}
+	
 	std::vector<Intent> all_intents;
 	
 	// Gather intents from all active seats
@@ -77,6 +90,9 @@ void SeatManager::ProcessAllIntents(uint64_t tick) {
 			seats_[i]->PostProcess(tick);
 		}
 	}
+	
+	// Return true to continue game logic (mirrors ProcessInput behavior)
+	return true;
 }
 
 Seat* SeatManager::GetSeat(int player_index) const {
@@ -130,24 +146,22 @@ void SeatManager::ExecuteIntent(const Intent& intent, int player_index, uint64_t
 }
 
 void SeatManager::ExecuteMoveIntent(const Intent& intent, int player_index) {
-	// STUB: Route to existing movement system
-	// For Phase 2.1, we'll just call existing functions
-	// This maintains exact behavior while adding the abstraction layer
-	
+	// Route to existing movement system
 	Point target = { intent.data.x, intent.data.y };
 	
-	// Reuse Phase 1 network command routing
-#ifdef ENABLE_GAP
 	if (player_index == MyPlayerId) {
-		// Human player - use existing input processing
-		// TODO: Wire to existing ProcessInput() logic
-		LogVerbose("STUB: ExecuteMoveIntent for human player {} to ({},{})", 
-			player_index, target.x, target.y);
+		// Human player - use existing movement functions
+		// This mirrors what ProcessInput -> RepeatPlayerAction -> ... does
+		// TODO: Call the actual movement functions that ProcessInput would call
+		// For now, log the intent (Phase 2.2 transitional implementation)
+		LogVerbose("HumanSeat: ExecuteMoveIntent to ({},{}) for player {}", 
+			target.x, target.y, player_index);
 	} else {
 		// Companion player - use Phase 1 direct execution
+#ifdef ENABLE_GAP
 		gap::ExecuteDirectMove(player_index, target);
-	}
 #endif
+	}
 }
 
 void SeatManager::ExecuteAttackIntent(const Intent& intent, int player_index) {

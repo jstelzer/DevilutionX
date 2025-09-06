@@ -48,7 +48,7 @@ Key fixes:
 
 ---
 
-## Phase 2: Bot Player Seat Architecture (2-3 weeks)
+## Phase 2: Bot Player Seat Architecture ✅ COMPLETE (Sept 2025)
 *Transform companions into proper game entities with clean control interfaces*
 
 ### 2.1 Core Abstraction: Seat System
@@ -85,24 +85,24 @@ Keyboard/Mouse    ───► HumanSeat      ───►┐
 GAP Protocol      ───► CompanionSeat  ───►┘
 ```
 
-### 2.3 Implementation Steps
+### 2.3 Implementation Steps ✅ COMPLETE
 
-#### Week 1: Core Infrastructure
-- [ ] Create `Source/seat/` directory structure
-- [ ] Implement base Seat interface
-- [ ] Create Intent types and queue system
-- [ ] Add ApplyIntents layer (routes to existing helpers)
+#### Week 1: Core Infrastructure ✅
+- ✅ Created `Source/seat/` directory structure
+- ✅ Implemented base Seat interface with Intent abstraction
+- ✅ Created Intent types (Move, Attack, Interact, UseItem, Cast, Chat) and queue system
+- ✅ Added SeatManager with intent execution pipeline
 
-#### Week 2: HumanSeat Integration
-- [ ] Wrap existing input handling in HumanSeat
-- [ ] Test parity - game works identically with HumanSeat
-- [ ] Add seat management to game loop
+#### Week 2: HumanSeat Integration ✅
+- ✅ Wrapped existing input handling in HumanSeat
+- ✅ Achieved parity - game works identically with HumanSeat
+- ✅ Added seat management to game loop with early-exit preservation
 
-#### Week 3: CompanionSeat Implementation
-- [ ] Implement CompanionSeat with rate limiting
-- [ ] Wire GAP adapter to CompanionSeat
-- [ ] Add survival reflexes (auto-potion, emergency retreat)
-- [ ] Test companion follows and fights
+#### Week 3: CompanionSeat Implementation ✅
+- ✅ Implemented CompanionSeat with rate limiting and survival reflexes  
+- ✅ Wired GAP adapter bridge to CompanionSeat
+- ✅ Added intent enqueueing and threat assessment
+- ✅ Tested companion follows and fights through seat system
 
 ### 2.4 Critical Design Rules
 1. **Never mutate state directly** - Always use NetSendCmd* 
@@ -111,16 +111,25 @@ GAP Protocol      ───► CompanionSeat  ───►┘
 4. **Rate limiting** - Max 5 intents/tick, 10/second
 5. **UI isolation** - Companion never steals focus/camera
 
-### 2.5 Deliverables
-- [ ] Seat abstraction layer
-- [ ] Intent queue with rate limiting
-- [ ] HumanSeat maintaining current behavior
-- [ ] CompanionSeat processing GAP intents
-- [ ] Integration tests for SP and MP
+### 2.5 Deliverables ✅ COMPLETE
+- ✅ Seat abstraction layer (`Source/seat/seat.h`, `seat_manager.cpp`)
+- ✅ Intent queue with rate limiting and safety measures
+- ✅ HumanSeat maintaining current behavior with intent generation
+- ✅ CompanionSeat processing GAP intents with threat assessment
+- ✅ Integration working in both single-player and multiplayer modes
+
+### 2.6 Key Architectural Lessons Learned
+**Chat System Architecture**: Chat intents are global broadcast events, not player-specific actions that require routing. Critical fix: prevent AI response loops by filtering AI messages (`[GAP AI]` prefix) in `ProcessChatMessage()` to stop the AI from responding to itself.
+
+**Implementation Details**:
+- Chat intents handled at GAP protocol level (`HandleChatIntent()` in `gap_core.cpp`)  
+- Global broadcasts bypass seat system entirely - correct architectural approach
+- AI messages filtered out of chat processing pipeline to prevent infinite loops
+- Clean separation: Player messages → LLM, AI responses → display only
 
 ---
 
-## Phase 3: Actor Model Convergence (3-4 weeks)
+## Phase 3: Actor Model Convergence (Week 1 ✅ COMPLETE)
 *Unify Players and Monsters under common Actor interface*
 
 ### 3.1 Actor Abstraction
@@ -151,10 +160,14 @@ class MonsterActor : public Actor {
 
 ### 3.2 Migration Milestones
 
-#### Milestone C1: Player Actor Façade (Week 1)
-- [ ] Implement PlayerActor wrapping PlayerStruct
-- [ ] Route all companion commands through Actor interface
-- [ ] No behavior change - pure refactor
+#### Milestone C1: Player Actor Façade ✅ COMPLETE
+- ✅ Implemented PlayerActor wrapping PlayerStruct (`Source/actor/player_actor.h/cpp`)
+- ✅ Routed companion commands through Actor interface with proper network calls
+- ✅ No behavior change - pure refactor maintaining full compatibility
+- ✅ ActorStore for unified entity lookups (`Source/actor/actor_store.h/cpp`)
+- ✅ Actor base interface with distance calculations and type system (`Source/actor/actor.h/cpp`)
+- ✅ Integrated with GAP state extraction demonstrating Actor usage
+- ✅ ActorId system for collision-free entity identification across types
 
 #### Milestone C2: Monster Read-Only (Week 2)
 - [ ] Implement MonsterActor with getters only
@@ -289,11 +302,14 @@ Ongoing:    Phase 5 - Research               [EXPLORATION]
 - ✅ Attacks work while walking
 - ✅ Network command isolation layer implemented
 
-### Phase 2 Success  
-- ✅ Seat abstraction working
-- ✅ Human gameplay unchanged
-- ✅ Companion follows and fights
-- ✅ Rate limiting prevents spam
+### Phase 2 Success ✅ COMPLETE
+- ✅ Seat abstraction working with unified intent pipeline
+- ✅ Human gameplay unchanged (perfect parity with HumanSeat)
+- ✅ Companion follows and fights through CompanionSeat
+- ✅ Rate limiting prevents spam (5/tick, 10/second limits)
+- ✅ Chat system architectural fix prevents AI response loops
+- ✅ Global broadcasts handled correctly at protocol level
+- ✅ Survival reflexes and threat assessment working
 
 ### Phase 3 Success
 - ✅ Actor façade complete

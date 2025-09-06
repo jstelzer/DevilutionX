@@ -154,8 +154,9 @@ public:
 	/**
 	 * @brief Process all seat intents for this game tick
 	 * @param tick Current game tick
+	 * @return true if game logic should continue, false if should exit early (mirrors ProcessInput)
 	 */
-	void ProcessAllIntents(uint64_t tick);
+	bool ProcessAllIntents(uint64_t tick);
 
 	/**
 	 * @brief Get seat for specific player (for debugging/queries)

@@ -3,6 +3,8 @@
 #include "gap_core.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
+#include "../actor/actor_store.h"
+#include "../actor/player_actor.h"
 #endif
 #include "../player.h"
 #include "../monster.h"
@@ -25,7 +27,32 @@ namespace devilution::gap {
 namespace {
 
 // Get the controlled player for GAP operations
+#ifdef ENABLE_GAP
+PlayerActor* GetControlledPlayerActor() {
+    auto& store = ActorStore::Instance();
+    
+    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    PlayerActor* actor = store.GetPlayerActor(controlled_slot);
+    if (actor && actor->IsValid()) {
+        return actor;
+    }
+    
+    // Fallback to main player if controlled player not available
+    actor = store.GetPlayerActor(MyPlayerId);
+    if (actor && actor->IsValid()) {
+        return actor;
+    }
+    
+    return nullptr;
+}
+#endif
+
+// Legacy function for compatibility
 Player* GetControlledPlayer() {
+#ifdef ENABLE_GAP
+    PlayerActor* actor = GetControlledPlayerActor();
+    return actor ? actor->GetPlayer() : nullptr;
+#else
     int controlled_slot = GapCore::Instance().GetControlledPlayer();
     if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
         return &Players[controlled_slot];
@@ -35,6 +62,7 @@ Player* GetControlledPlayer() {
         return &Players[MyPlayerId];
     }
     return nullptr;
+#endif
 }
 
 // Stair piece ID arrays from trigs.cpp
@@ -116,6 +144,27 @@ std::string GapStateExtractor::ExtractState(uint32_t tick, uint32_t tick_rate) {
 }
 
 std::string GapStateExtractor::ExtractPlayerState() {
+#ifdef ENABLE_GAP
+    // Phase 3 Milestone C1: Use Actor interface for unified access
+    PlayerActor* actor = GetControlledPlayerActor();
+    if (actor == nullptr) {
+        return "{}";
+    }
+    
+    JsonBuilder state;
+    state.BeginObject()
+        .AddInt("hp", actor->GetHitPoints())
+        .AddInt("hp_max", actor->GetMaxHitPoints())
+        .AddInt("mana", actor->GetMana())
+        .AddInt("mana_max", actor->GetMaxMana())
+        .AddArray("pos", {actor->GetPosition().x, actor->GetPosition().y})
+        .AddInt("level", actor->GetLevel())
+        .AddBool("in_town", actor->IsInTown());
+    
+    // Access Player-specific data for belt (still needed for detailed info)
+    Player* player = actor->GetPlayer();
+#else
+    // Legacy path when GAP disabled
     Player* player = GetControlledPlayer();
     if (player == nullptr) {
         return "{}";
@@ -130,6 +179,7 @@ std::string GapStateExtractor::ExtractPlayerState() {
         .AddArray("pos", {player->position.tile.x, player->position.tile.y})
         .AddInt("level", static_cast<int>(currlevel))
         .AddBool("in_town", leveltype == DTYPE_TOWN);
+#endif
     
     // Add belt information
     std::stringstream belt_json;

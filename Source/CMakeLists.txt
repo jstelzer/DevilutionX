@@ -870,6 +870,10 @@ if(ENABLE_GAP)
     gap/gap_network.cpp
     seat/seat_manager.cpp
     seat/human_seat.cpp
+    seat/companion_seat.cpp
+    actor/actor.cpp
+    actor/player_actor.cpp
+    actor/actor_store.cpp
   )
 endif()
 

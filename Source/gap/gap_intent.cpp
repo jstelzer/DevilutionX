@@ -4,6 +4,8 @@
 #include "gap_network.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
+#include "../seat/seat.h"
+#include "../seat/companion_seat.h"
 #endif
 #include "../player.h"
 #include "../monster.h"
@@ -427,5 +429,67 @@ bool GapIntentProcessor::ExecuteChat(const std::string& message) {
     return false;
 #endif
 }
+
+#ifdef ENABLE_GAP
+void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
+    // Process GAP intents through the new Seat system instead of direct execution
+    // NOTE: Chat intents are handled globally at the GAP protocol level and never reach here
+    auto& seatManager = devilution::SeatManager::Instance();
+    
+    while (!intent_queue_.empty()) {
+        const Intent& gap_intent = intent_queue_.front();
+        
+        if (gap_intent.target_tick > 0 && gap_intent.target_tick > current_tick) {
+            break; // Wait for target tick
+        }
+        
+        // Convert GAP intent to Seat intent
+        devilution::Intent seat_intent = ConvertToSeatIntent(gap_intent, current_tick);
+        
+        // Get the companion seat for the controlled player
+        int controlled_player = GapCore::Instance().GetControlledPlayer();
+        auto* seat = seatManager.GetSeat(controlled_player);
+        
+        if (auto* companion_seat = dynamic_cast<devilution::CompanionSeat*>(seat)) {
+            companion_seat->EnqueueIntent(seat_intent);
+            std::cout << "GAP: Bridged " << gap_intent.action << " intent to CompanionSeat for player " << controlled_player << std::endl;
+        } else {
+            std::cerr << "GAP: No CompanionSeat found for player " << controlled_player << ", using direct execution" << std::endl;
+            // Fallback to direct execution
+            ExecuteIntent(gap_intent);
+        }
+        
+        intent_queue_.pop();
+    }
+}
+
+devilution::Intent GapIntentProcessor::ConvertToSeatIntent(const Intent& gap_intent, uint64_t tick) {
+    // Convert GAP intent format to Seat intent format
+    if (gap_intent.action == "move") {
+        return devilution::Intent(devilution::Intent::Type::Move, tick, 
+                                 gap_intent.param_x, gap_intent.param_y);
+    } else if (gap_intent.action == "attack") {
+        return devilution::Intent(devilution::Intent::Type::Attack, tick,
+                                 gap_intent.param_x, gap_intent.param_y, gap_intent.param_id);
+    } else if (gap_intent.action == "pickup") {
+        return devilution::Intent(devilution::Intent::Type::Interact, tick,
+                                 gap_intent.param_x, gap_intent.param_y);
+    } else if (gap_intent.action == "use_potion") {
+        return devilution::Intent(devilution::Intent::Type::UseItem, tick,
+                                 0, 0, gap_intent.param_slot);
+    } else if (gap_intent.action == "cast") {
+        return devilution::Intent(devilution::Intent::Type::Cast, tick,
+                                 gap_intent.param_x, gap_intent.param_y, gap_intent.param_slot);
+    } else if (gap_intent.action == "interact") {
+        return devilution::Intent(devilution::Intent::Type::Interact, tick,
+                                 gap_intent.param_x, gap_intent.param_y);
+    } else {
+        // Default to move for unknown actions
+        std::cerr << "GAP: Unknown action '" << gap_intent.action << "', defaulting to move" << std::endl;
+        return devilution::Intent(devilution::Intent::Type::Move, tick,
+                                 gap_intent.param_x, gap_intent.param_y);
+    }
+}
+#endif
 
 } // namespace devilution::gap

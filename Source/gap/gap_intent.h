@@ -4,6 +4,13 @@
 #include <queue>
 #include <string>
 
+#ifdef ENABLE_GAP
+// Forward declaration for seat intent
+namespace devilution {
+    struct Intent;
+}
+#endif
+
 namespace devilution::gap {
 
 class JsonParser;
@@ -24,6 +31,12 @@ class GapIntentProcessor {
 public:
     void QueueIntent(const JsonParser& intent_msg);
     void ProcessPendingIntents(uint32_t current_tick);
+    
+#ifdef ENABLE_GAP
+    // Bridge to new Seat system
+    void ProcessPendingIntentsViaSeat(uint32_t current_tick);
+    static devilution::Intent ConvertToSeatIntent(const Intent& gap_intent, uint64_t tick);
+#endif
     
 private:
     std::queue<Intent> intent_queue_;

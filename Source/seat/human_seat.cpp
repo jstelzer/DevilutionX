@@ -29,22 +29,27 @@ bool HumanSeat::IsActive() const {
 	return player_index_ == MyPlayerId;
 }
 
+bool HumanSeat::ShouldExitEarly() const {
+	// Mirror the early-exit conditions from ProcessInput()
+	if (PauseMode == 2) {
+		return true;
+	}
+	
+	if (!gbIsMultiplayer && gmenu_is_active()) {
+		return true;
+	}
+	
+	return false;
+}
+
 void HumanSeat::GatherIntents(std::vector<Intent>& out, uint64_t tick) {
 	if (!IsActive()) {
 		return;
 	}
 	
-	// Check pause state (mirrors ProcessInput logic)
-	if (PauseMode == 2) {
-		return;
-	}
-
-	// Skip if menu is active in single player (mirrors ProcessInput logic)
-	if (!gbIsMultiplayer && gmenu_is_active()) {
-		return;
-	}
-
-	// Skip if menu active (simplified from ProcessInput logic)
+	// Early exit checks are handled by SeatManager now
+	
+	// Skip if menu active (additional check for intent generation)
 	if (gmenu_is_active()) {
 		return;
 	}

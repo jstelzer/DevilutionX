@@ -26,6 +26,9 @@ public:
 	void PostProcess(uint64_t tick) override;
 	bool CanControlUI() const override { return true; }
 	const char* GetTypeName() const override { return "Human"; }
+	
+	// HumanSeat-specific methods
+	bool ShouldExitEarly() const;
 
 private:
 	int player_index_;

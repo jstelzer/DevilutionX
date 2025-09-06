@@ -55,6 +55,12 @@ bool GAPChatHandler::ProcessChatMessage(std::string_view message) {
         return false;
     }
     
+    // Ignore AI messages to prevent the AI from responding to itself
+    if (StartsWith(message, "[GAP AI]")) {
+        std::cout << "GAP: Ignoring AI message to prevent response loop: '" << message << "'" << std::endl;
+        return false;
+    }
+    
     std::cout << "GAP: Processing chat message: '" << message << "'" << std::endl;
     
     // Log all player messages for GAP state tracking
