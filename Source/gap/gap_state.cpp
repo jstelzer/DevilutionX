@@ -32,21 +32,9 @@ PlayerActor* GetControlledPlayerActor() {
     auto& store = ActorStore::Instance();
     
     int controlled_slot = GapCore::Instance().GetControlledPlayer();
-    std::cout << "GAP: GetControlledPlayerActor - controlled_slot=" << controlled_slot << std::endl;
-    
     PlayerActor* actor = store.GetPlayerActor(controlled_slot);
-    if (actor) {
-        bool is_valid = actor->IsValid();
-        bool is_active = (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive);
-        std::cout << "GAP: Companion actor found - IsValid()=" << is_valid 
-                  << " plractive=" << is_active 
-                  << " name='" << Players[controlled_slot]._pName << "'" << std::endl;
-        
-        if (is_valid) {
-            return actor;
-        }
-    } else {
-        std::cout << "GAP: No actor found for controlled_slot " << controlled_slot << std::endl;
+    if (actor && actor->IsValid()) {
+        return actor;
     }
     
     // Fallback to main player if controlled player not available
@@ -69,14 +57,13 @@ Player* GetControlledPlayer() {
 #else
     std::cout << "GAP: Using NON-ACTOR path (ENABLE_GAP not defined)" << std::endl;
     int controlled_slot = GapCore::Instance().GetControlledPlayer();
-    std::cout << "GAP: Non-actor path - controlled_slot=" << controlled_slot << " plractive=" << (controlled_slot >= 0 && controlled_slot < MAX_PLRS ? Players[controlled_slot].plractive : false) << std::endl;
-    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
+    if (controlled_slot >= 0 && controlled_slot < static_cast<int>(Players.size()) && Players[controlled_slot].plractive) {
         std::cout << "GAP: Non-actor path returning companion player" << std::endl;
         return &Players[controlled_slot];
     }
     // Fallback to MyPlayer if controlled player not available
     std::cout << "GAP: Non-actor path falling back to main player" << std::endl;
-    if (MyPlayerId < MAX_PLRS) {
+    if (MyPlayerId >= 0 && MyPlayerId < static_cast<int>(Players.size())) {
         return &Players[MyPlayerId];
     }
     return nullptr;
@@ -295,22 +282,12 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     
     // Log active players when count changes
     int activePlayerCount = 0;
-    for (int i = 0; i < MAX_PLRS; i++) {
+    int max_players = std::min(static_cast<int>(Players.size()), MAX_PLRS);
+    for (int i = 0; i < max_players; i++) {
         if (Players[i].plractive) activePlayerCount++;
     }
     
-    if (activePlayerCount != lastActiveCount) {
-        std::cout << "GAP: Active players: " << activePlayerCount << " (";
-        for (int i = 0; i < MAX_PLRS; i++) {
-            if (Players[i].plractive) {
-                std::cout << "slot" << i << ":" << Players[i]._pName;
-                if (i == GapCore::Instance().GetControlledPlayer()) std::cout << "*";
-                std::cout << " ";
-            }
-        }
-        std::cout << ")" << std::endl;
-        lastActiveCount = activePlayerCount;
-    }
+    lastActiveCount = activePlayerCount;
     
     std::stringstream monsters_json;
     monsters_json << "[";
@@ -321,14 +298,8 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     static int lastDebugTime = 0;
     int currentTime = SDL_GetTicks();
     
-    // Log every 2 seconds or when monster count changes
+    // Update tracking variables
     if (currentTime - lastDebugTime > 2000 || static_cast<int>(ActiveMonsterCount) != lastMonsterCount) {
-        std::cout << "GAP Debug: Controlled slot=" << controlled_slot 
-                  << " Player HP=" << (player->_pHitPoints >> 6) << "/" << (player->_pMaxHP >> 6)
-                  << " Pos=(" << playerPos.x << "," << playerPos.y << ")"
-                  << " LightRadius=" << lightRadius 
-                  << " ActiveMonsters=" << ActiveMonsterCount 
-                  << " currlevel=" << static_cast<int>(currlevel) << std::endl;
         lastDebugTime = currentTime;
         lastMonsterCount = ActiveMonsterCount;
     }
@@ -388,12 +359,9 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     items_json << "[";
     bool first_item = true;
     
-    // Debug logging for companion item visibility (similar to monster debug)
+    // Track item count changes
     static int lastItemCount = -1;
     if (controlled_slot > 0 && static_cast<int>(ActiveItemCount) != lastItemCount) {
-        std::cout << "GAP Debug: Companion item detection - ActiveItemCount=" << ActiveItemCount 
-                  << " controlled_slot=" << controlled_slot 
-                  << " pos=(" << playerPos.x << "," << playerPos.y << ")" << std::endl;
         lastItemCount = ActiveItemCount;
     }
     
@@ -505,21 +473,11 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
                 uint16_t pieceId = dPiece[checkPos.x][checkPos.y];
                 std::string detected_type = DetectStairType(pieceId, static_cast<int>(currlevel));
                 
-                // Debug: Log all non-zero piece IDs for stair detection debugging
-                if (pieceId != 0 && ((checkPos.x == playerPos.x + dx && std::abs(checkPos.y - playerPos.y) <= 2) ||
-                    (checkPos.y == playerPos.y + dy && std::abs(checkPos.x - playerPos.x) <= 2))) {
-                    std::cout << "GAP Debug: Tile (" << checkPos.x << "," << checkPos.y << ") has pieceId=" << pieceId;
-                    if (!detected_type.empty()) {
-                        std::cout << " -> " << detected_type;
-                    }
-                    std::cout << std::endl;
-                }
                 
                 if (!detected_type.empty()) {
                     stairs_visible = true;
                     stairs_pos = checkPos;
                     stairs_type = detected_type;
-                    std::cout << "GAP Debug: STAIRS FOUND! Type=" << detected_type << " at (" << checkPos.x << "," << checkPos.y << ")" << std::endl;
                     break; // Found stairs, exit search
                 }
             }
@@ -636,16 +594,16 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     
     // Reuse controlled_slot from earlier declaration
     
-    for (int i = 0; i < MAX_PLRS; i++) {
+    for (int i = 0; i < max_players; i++) {
         if (i == controlled_slot || !Players[i].plractive) {
             continue; // Skip self and inactive players
         }
         
         const Player& other_player = Players[i];
         
-        // Safety check: ensure player name is valid  
-        if (strlen(other_player._pName) == 0) {
-            continue; // Skip players with empty names
+        // Safety check: ensure player is active and has valid data
+        if (!other_player.plractive || other_player._pName[0] == '\0') {
+            continue; // Skip inactive players or players with empty names
         }
         Point otherPos = other_player.position.tile;
         

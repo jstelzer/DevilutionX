@@ -1165,18 +1165,11 @@ int GetMinHit()
 
 void MonsterAttackPlayer(Monster &monster, Player &player, int hit, int minDam, int maxDam)
 {
-	std::cout << "ATTACK DEBUG: MonsterAttackPlayer ENTRY - " << monster.name() << " -> " << player._pName 
-	          << " HP=" << (player._pHitPoints >> 6) << " hit=" << hit << " dam=" << minDam << "-" << maxDam << std::endl;
 	
 	if (player._pHitPoints >> 6 <= 0 || player._pInvincible || HasAnyOf(player._pSpellFlags, SpellFlag::Etherealize)) {
-		std::cout << "ATTACK DEBUG: Early return - HP=" << (player._pHitPoints >> 6) 
-		          << " invincible=" << player._pInvincible << " ethereal=" << HasAnyOf(player._pSpellFlags, SpellFlag::Etherealize) << std::endl;
 		return;
 	}
 	if (monster.position.tile.WalkingDistance(player.position.tile) >= 2) {
-		std::cout << "ATTACK DEBUG: Distance check failed - monster at " << monster.position.tile.x << "," << monster.position.tile.y 
-		          << " player at " << player.position.tile.x << "," << player.position.tile.y 
-		          << " distance=" << monster.position.tile.WalkingDistance(player.position.tile) << std::endl;
 		return;
 	}
 
@@ -1202,30 +1195,16 @@ void MonsterAttackPlayer(Monster &monster, Player &player, int hit, int minDam, 
 	int blk = player.GetBlockChance() - (monster.level(sgGameInitInfo.nDifficulty) * 2);
 	blk = std::clamp(blk, 0, 100);
 	
-	// DEBUG: Log attack attempt details - split getId() call to isolate crash
-	std::cout << "ATTACK DEBUG: Monster " << monster.name() << " attacking player " << player._pName << std::endl;
-	std::cout << "ATTACK DEBUG: About to call getId() on player " << player._pName << std::endl;
-	uint8_t playerId = player.getId();
-	std::cout << "ATTACK DEBUG: Player ID=" << (int)playerId << " MyPlayerId=" << MyPlayerId << std::endl;
-	std::cout << "ATTACK DEBUG: Player pointer=" << &player << " Players[0]=" << &Players[0] 
-	          << " distance=" << std::distance<const Player *>(&Players[0], &player) 
-	          << " Players.size()=" << Players.size() << std::endl;
-	std::cout << "ATTACK DEBUG: About to print combat values..." << std::endl;
-	std::cout << "ATTACK DEBUG: hper=" << hper << " hit=" << hit << " blkper=" << blkper << " blk=" << blk << std::endl;
-	std::cout << "ATTACK DEBUG: Combat values printed successfully" << std::endl;
 	
 	if (hper >= hit) {
-		std::cout << "ATTACK DEBUG: MISS - hper(" << hper << ") >= hit(" << hit << ")" << std::endl;
 		return;
 	}
 	if (blkper < blk) {
 		const Direction dir = GetDirection(player.position.tile, monster.position.tile);
 		StartPlrBlock(player, dir);
-		std::cout << "ATTACK DEBUG: BLOCKED - blkper(" << blkper << ") < blk(" << blk << ")" << std::endl;
 		if (player.getId() == MyPlayerId && player.wReflections > 0) {
 			int dam = GenerateRnd(((maxDam - minDam) << 6) + 1) + (minDam << 6);
 			dam = std::max(dam + (player._pIGetHit << 6), 64);
-			std::cout << "ATTACK DEBUG: Block reflection damage=" << dam << std::endl;
 			CheckReflect(monster, player, dam);
 		}
 		return;
@@ -1244,24 +1223,11 @@ void MonsterAttackPlayer(Monster &monster, Player &player, int hit, int minDam, 
 	int dam = RandomIntBetween(minDam << 6, maxDam << 6);
 	dam = std::max(dam + (player._pIGetHit << 6), 64);
 	
-	std::cout << "ATTACK DEBUG: HIT! Calculated damage=" << dam << " minDam=" << minDam << " maxDam=" << maxDam << std::endl;
-	std::cout << "ATTACK DEBUG: Player check - player.getId()=" << player.getId() << " MyPlayerId=" << MyPlayerId 
-	          << " match=" << (player.getId() == MyPlayerId) << std::endl;
-	
-	std::cout << "ATTACK DEBUG: COMPILATION CHECK - ENABLE_GAP is " 
-#ifdef ENABLE_GAP
-	          << "DEFINED" << std::endl;
-#else
-	          << "NOT DEFINED" << std::endl;
-#endif
-	
 	// Apply damage to any valid player in the game (multiplayer-like behavior)
 	if (player.wReflections > 0) {
 		const int reflectedDamage = CheckReflect(monster, player, dam);
 		dam = std::max(dam - reflectedDamage, 0);
-		std::cout << "ATTACK DEBUG: Reflection reduced damage to " << dam << std::endl;
 	}
-	std::cout << "ATTACK DEBUG: Applying " << dam << " damage to player " << player._pName << " (ID " << (int)player.getId() << ")" << std::endl;
 	ApplyPlrDamage(DamageType::Physical, player, 0, 0, dam);
 
 	// Reflect can also kill a monster, so make sure the monster is still alive

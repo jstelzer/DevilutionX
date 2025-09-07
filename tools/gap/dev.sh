@@ -34,6 +34,10 @@ case "${1:-help}" in
         echo "⚔️  Running combat agent..."
         python combat_gap_agent.py --password "${2:-foo}"
         ;;
+    "simple")
+        echo "🤖 Running simple LLM bridge..."
+        python simple_bridge.py --model "${2:-qwen2.5:3b}" --password foo
+        ;;
     "debug")
         echo "🔍 Running debug tools..."
         python debug_tools.py
@@ -50,6 +54,7 @@ case "${1:-help}" in
         echo ""
         echo "Commands:"
         echo "  run [password]    - Run enhanced MCP server (default password: foo)"
+        echo "  simple [model]    - Run simple LLM bridge (default model: qwen2.5:3b)"
         echo "  combat [password] - Run combat agent (default password: foo)"
         echo "  test              - Run validation tests"
         echo "  format            - Format code with black"

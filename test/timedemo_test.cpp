@@ -55,7 +55,15 @@ void RunTimedemo(std::string timedemoFolderName)
 
 	const int demoNumber = 0;
 
+#ifdef ENABLE_GAP
+	// GAP expects Players array to have 4 slots
+	Players.resize(4);
+	for (int i = 0; i < 4; i++) {
+		Players[i] = {};
+	}
+#else
 	Players.resize(1);
+#endif
 	MyPlayerId = demoNumber;
 	MyPlayer = &Players[MyPlayerId];
 	*MyPlayer = {};

@@ -11,14 +11,6 @@ void ActorStore::Initialize() {
         return;
     }
     
-    std::cout << "ActorStore: Initializing actor registry" << std::endl;
-    
-    // Debug: Show current player states before creating actors
-    for (int i = 0; i < MAX_PLRS; i++) {
-        std::cout << "ActorStore: Player slot " << i << " - active=" << Players[i].plractive 
-                  << " name='" << Players[i]._pName << "'" << std::endl;
-    }
-    
     // Create PlayerActor instances for all player slots
     for (int i = 0; i < MAX_PLRS; i++) {
         ActorId id = ActorIds::ForPlayer(i);
@@ -26,15 +18,12 @@ void ActorStore::Initialize() {
     }
     
     initialized_ = true;
-    std::cout << "ActorStore: Initialized with " << MAX_PLRS << " player slots" << std::endl;
 }
 
 void ActorStore::Shutdown() {
     if (!initialized_) {
         return;
     }
-    
-    std::cout << "ActorStore: Shutting down actor registry" << std::endl;
     
     player_actors_.clear();
     monster_actors_.clear();
@@ -61,11 +50,6 @@ void ActorStore::Refresh() {
             ActorId id = ActorIds::ForMonster(monster_index);
             monster_actors_[id] = std::make_unique<MonsterActor>(monster_index);
         }
-    }
-    
-    // Debug logging
-    if (ActiveMonsterCount > 0) {
-        std::cout << "ActorStore: Refreshed " << ActiveMonsterCount << " monster actors" << std::endl;
     }
 }
 
