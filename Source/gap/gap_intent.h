@@ -30,8 +30,12 @@ struct Intent {
 class GapIntentProcessor {
 public:
     void QueueIntent(const JsonParser& intent_msg);
+
+    // DSL intent parser - parses text commands like "MV 37 18", "AT 12", etc.
+    void QueueDSLIntent(const std::string& dsl_line);
+
     void ProcessPendingIntents(uint32_t current_tick);
-    
+
 #ifdef ENABLE_GAP
     // Bridge to new Seat system
     void ProcessPendingIntentsViaSeat(uint32_t current_tick);

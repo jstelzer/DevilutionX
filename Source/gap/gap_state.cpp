@@ -1,6 +1,7 @@
 #include "gap_state.h"
 #include "gap_json.h"
 #include "gap_core.h"
+#include "gap_dsl.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
 #include "../actor/actor_store.h"
@@ -663,8 +664,36 @@ std::string GapStateExtractor::ExtractUIState() {
         .AddBool("in_store", IsPlayerInStore())
         .AddBool("can_act", !gbIsMultiplayer || !nthread_has_500ms_passed(nullptr))
         .EndObject();
-    
+
     return state.ToString();
+}
+
+std::string GapStateExtractor::ExtractStateDSL(uint32_t tick, uint32_t tick_rate) {
+    // Use compact DSL encoding via gap_dsl.h
+    // This replaces the verbose JSON with ~100-200 byte compact representation
+
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        static int null_count = 0;
+        if (null_count++ < 5) {
+            std::cerr << "GAP DSL: GetControlledPlayer returned nullptr (tick " << tick << ")" << std::endl;
+        }
+        return "";
+    }
+
+    std::string dsl_state = EncodeDSLState(tick, player);
+
+    // Optional: Log both formats for comparison during migration
+    #ifdef GAP_DEBUG_DSL
+    static int log_counter = 0;
+    if (log_counter++ % 100 == 0) {  // Log every 100th frame
+        std::string json_state = ExtractState(tick, tick_rate);
+        std::cerr << "GAP JSON (" << json_state.size() << " bytes): " << json_state.substr(0, 100) << "..." << std::endl;
+        std::cerr << "GAP DSL  (" << dsl_state.size() << " bytes): " << dsl_state << std::endl;
+    }
+    #endif
+
+    return dsl_state;
 }
 
 } // namespace devilution::gap

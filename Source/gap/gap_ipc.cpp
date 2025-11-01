@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>   // FIONREAD
 #include <poll.h>        // (optional) could use poll if you prefer
+#include <csignal>       // For signal handling
 
 namespace devilution::gap {
 
@@ -56,6 +57,8 @@ public:
             if (w == 0) continue;
             if (errno == EINTR) continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK) { usleep(1000); continue; }
+            // EPIPE means broken pipe (client disconnected) - don't crash
+            if (errno == EPIPE) return false;
             return false;
         }
         return true;
@@ -72,6 +75,9 @@ public:
     }
 
     bool Initialize() {
+        // Ignore SIGPIPE to prevent crashes when writing to closed sockets
+        signal(SIGPIPE, SIG_IGN);
+
         unlink(SOCKET_PATH);
 
         server_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -142,8 +148,18 @@ public:
         if (client_fd_ == -1) return false;
 
         uint32_t length = message.size();
-        return write_full(client_fd_, &length, sizeof(length)) &&
-               write_full(client_fd_, message.data(), length);
+        bool success = write_full(client_fd_, &length, sizeof(length)) &&
+                       write_full(client_fd_, message.data(), length);
+
+        if (!success) {
+            // Write failed - likely client disconnected
+            std::cout << "GAP IPC: Agent disconnected (write error)" << std::endl;
+            close(client_fd_);
+            client_fd_ = -1;
+            return false;
+        }
+
+        return true;
     }
 
     bool ReceiveMessage(std::string& message) {

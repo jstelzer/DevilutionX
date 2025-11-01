@@ -864,6 +864,7 @@ if(ENABLE_GAP)
     gap/gap_core.cpp
     gap/gap_ipc.cpp
     gap/gap_state.cpp
+    gap/gap_dsl.cpp
     gap/gap_intent.cpp
     gap/gap_json.cpp
     gap/gap_chat.cpp

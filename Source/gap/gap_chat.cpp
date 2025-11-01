@@ -18,6 +18,7 @@
 #include "utils/str_cat.hpp"
 #include "gap_core.h"
 #include "gap_json.h"
+#include "gap_state.h"  // For GAP_USE_DSL macro
 
 namespace devilution {
 
@@ -249,7 +250,19 @@ void GAPChatHandler::HandleExecuteCommand(std::string_view command) {
 }
 
 void GAPChatHandler::SendGAPChatMessage(std::string_view text, std::string_view from) {
-    // Create chat message JSON
+    auto& gapCore = gap::GapCore::Instance();
+    if (!gapCore.IsEnabled()) {
+        std::cout << "GAP: Core not enabled, cannot send chat message" << std::endl;
+        return;
+    }
+
+#if GAP_USE_DSL
+    // DSL mode: Send compact chat notification
+    std::string message = StrCat("CHAT ", from, ": ", text);
+    std::cout << "GAP DSL: Sending chat: " << message << std::endl;
+    gapCore.SendMessage(message);
+#else
+    // JSON mode: Create chat message JSON
     gap::JsonBuilder chatMessage;
     chatMessage.BeginObject()
         .AddString("type", "chat")
@@ -257,16 +270,11 @@ void GAPChatHandler::SendGAPChatMessage(std::string_view text, std::string_view 
         .AddString("from", std::string(from))
         .AddUInt("timestamp", static_cast<uint32_t>(time(nullptr) * 1000))
         .EndObject();
-    
-    // Send via GAP protocol
-    auto& gapCore = gap::GapCore::Instance();
-    if (gapCore.IsEnabled()) {
-        std::string message = chatMessage.ToString();
-        std::cout << "GAP: Sending chat message: " << message << std::endl;
-        gapCore.SendMessage(message);
-    } else {
-        std::cout << "GAP: Core not enabled, cannot send chat message" << std::endl;
-    }
+
+    std::string message = chatMessage.ToString();
+    std::cout << "GAP: Sending chat message: " << message << std::endl;
+    gapCore.SendMessage(message);
+#endif
 }
 
 // Global function for integration with existing chat system

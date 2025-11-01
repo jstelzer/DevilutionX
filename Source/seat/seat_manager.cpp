@@ -8,6 +8,7 @@
 
 // For existing command execution - reuse Phase 1 network fixes
 #include "gap/gap_network.h"
+#include "gap/gap_chat.h"
 
 namespace devilution {
 
@@ -49,37 +50,25 @@ bool SeatManager::ProcessAllIntents(uint64_t tick) {
 			}
 		}
 	}
-	
-	std::vector<Intent> all_intents;
-	
-	// Gather intents from all active seats
+
+	// Gather and execute intents from each active seat
 	for (int i = 0; i < 4; ++i) {
 		if (seats_[i] && seats_[i]->IsActive()) {
 			std::vector<Intent> seat_intents;
 			seats_[i]->GatherIntents(seat_intents, tick);
-			
+
 			// Rate limiting check
 			if (seat_intents.size() > Seat::MAX_INTENTS_PER_TICK) {
-				LogWarn("Seat {} exceeded intent limit ({} intents), truncating", 
+				LogWarn("Seat {} exceeded intent limit ({} intents), truncating",
 					i, seat_intents.size());
 				seat_intents.resize(Seat::MAX_INTENTS_PER_TICK);
 			}
-			
-			// Add player context and append to master list
-			for (auto& intent : seat_intents) {
-				all_intents.push_back(std::move(intent));
-			}
-		}
-	}
 
-	// Execute all intents
-	for (int i = 0; i < 4; ++i) {
-		if (!seats_[i] || !seats_[i]->IsActive()) continue;
-		
-		for (const auto& intent : all_intents) {
-			// Only process intents for this seat's player
-			if (intent.timestamp == tick) {
-				ExecuteIntent(intent, i, tick);
+			// Execute intents for THIS seat only
+			for (const auto& intent : seat_intents) {
+				if (intent.timestamp == tick) {
+					ExecuteIntent(intent, i, tick);
+				}
 			}
 		}
 	}
@@ -215,11 +204,12 @@ void SeatManager::ExecuteCastIntent(const Intent& intent, int player_index) {
 }
 
 void SeatManager::ExecuteChatIntent(const Intent& intent, int player_index) {
-	// STUB: Route to existing chat system
-	LogVerbose("STUB: ExecuteChatIntent for player {}: '{}'", 
-		player_index, intent.data.text);
-	
-	// TODO: Wire to existing chat functions
+	// Route to GAP chat system
+	if (!intent.data.text.empty()) {
+		GAPChatHandler::getInstance().SendAIResponse(intent.data.text);
+		LogVerbose("ExecuteChatIntent for player {}: '{}'",
+			player_index, intent.data.text.c_str());
+	}
 }
 
 } // namespace devilution

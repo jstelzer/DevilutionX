@@ -20,6 +20,7 @@
 #include "../spells.h"
 #include "../inv.h"
 #include <iostream>
+#include <sstream>
 
 namespace devilution::gap {
 
@@ -131,8 +132,97 @@ void GapIntentProcessor::QueueIntent(const JsonParser& intent_msg) {
     }
     
     intent.target_tick = intent_msg.GetInt("target_tick");
-    
+
     intent_queue_.push(intent);
+}
+
+void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
+    if (intent_queue_.size() >= 3) {
+        std::cerr << "GAP: Intent queue full, dropping DSL intent" << std::endl;
+        return;
+    }
+
+    // Parse DSL command: "MV x y", "AT id", "PK id", etc.
+    std::istringstream iss(dsl_line);
+    std::string cmd;
+    iss >> cmd;
+
+    if (cmd.empty()) {
+        return;  // Empty line, ignore
+    }
+
+    Intent intent;
+    intent.param_x = 0;
+    intent.param_y = 0;
+    intent.param_id = 0;
+    intent.param_slot = -1;
+    intent.target_tick = 0;
+
+    if (cmd == "MV") {
+        // MV x y
+        intent.action = "move";
+        iss >> intent.param_x >> intent.param_y;
+
+    } else if (cmd == "AT") {
+        // AT id
+        intent.action = "attack";
+        iss >> intent.param_id;
+        // Will need to convert monster ID to position in ExecuteAttack
+
+    } else if (cmd == "PK") {
+        // PK id
+        intent.action = "pickup";
+        iss >> intent.param_id;
+
+    } else if (cmd == "IN") {
+        // IN id
+        intent.action = "interact";
+        iss >> intent.param_id;
+
+    } else if (cmd == "CS") {
+        // CS spell t=id  OR  CS spell xy=x,y
+        std::string spell, target_spec;
+        iss >> spell >> target_spec;
+
+        intent.action = "cast";
+        intent.param_kind = spell;
+
+        if (target_spec.substr(0, 2) == "t=") {
+            // Cast at target monster: t=12
+            intent.param_id = std::stoi(target_spec.substr(2));
+        } else if (target_spec.substr(0, 3) == "xy=") {
+            // Cast at ground: xy=35,18
+            std::string xy = target_spec.substr(3);
+            size_t comma = xy.find(',');
+            if (comma != std::string::npos) {
+                intent.param_x = std::stoi(xy.substr(0, comma));
+                intent.param_y = std::stoi(xy.substr(comma + 1));
+            }
+        }
+
+    } else if (cmd == "US") {
+        // US slot
+        intent.action = "use_potion";
+        iss >> intent.param_slot;
+        intent.param_kind = "hp";  // Default to health potion
+
+    } else if (cmd == "SAY") {
+        // SAY text...
+        intent.action = "chat";
+        // Get rest of line as chat message
+        std::getline(iss, intent.param_kind);
+        // Trim leading space
+        if (!intent.param_kind.empty() && intent.param_kind[0] == ' ') {
+            intent.param_kind = intent.param_kind.substr(1);
+        }
+
+    } else {
+        std::cerr << "GAP DSL: Unknown command: " << cmd << std::endl;
+        return;
+    }
+
+    intent_queue_.push(intent);
+    std::cout << "GAP DSL: Queued " << intent.action << " command" << std::endl;
 }
 
 void GapIntentProcessor::ProcessPendingIntents(uint32_t current_tick) {
@@ -533,6 +623,9 @@ devilution::Intent GapIntentProcessor::ConvertToSeatIntent(const Intent& gap_int
     } else if (gap_intent.action == "interact") {
         return devilution::Intent(devilution::Intent::Type::Interact, tick,
                                  gap_intent.param_x, gap_intent.param_y);
+    } else if (gap_intent.action == "chat") {
+        return devilution::Intent(devilution::Intent::Type::Chat, tick,
+                                 gap_intent.param_kind);
     } else {
         // Default to move for unknown actions
         std::cerr << "GAP: Unknown action '" << gap_intent.action << "', defaulting to move" << std::endl;

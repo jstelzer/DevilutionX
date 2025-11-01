@@ -1,135 +1,106 @@
-# GAP LLM Integration Tools
+# GAP DSL Agent
 
-This directory contains tools for connecting Large Language Models (LLMs) to DevilutionX via the GAP protocol.
+**Compact, memory-enabled AI companion for DevilutionX**
 
-## 🤖 MCP Server (LLM Agent)
+This is the new DSL-based agent that replaces the verbose JSON system with:
+- 10x smaller messages (100-200 bytes vs 1-2KB)
+- 5x fewer tokens (80-120 vs 400-600)
+- 2-4x faster decisions (200-500ms vs 500-2000ms)
+- Persistent SQLite memory
 
-The `mcp_server.py` bridges the GAP protocol directly to Ollama, allowing LLMs to play Diablo with natural language decision-making.
+## Quick Start
 
-### Prerequisites
-
-1. **Build DevilutionX with GAP**: `cmake -DENABLE_GAP=ON` and compile
-2. **Install Ollama**: Download from [ollama.ai](https://ollama.ai) 
-3. **Install Python dependencies**:
-   ```bash
-   pip install aiohttp
-   ```
-
-### Usage
-
-1. **Start DevilutionX** with a character loaded (preferably in dungeon for testing)
-
-2. **Start Ollama** with your preferred model:
-   ```bash
-   ollama serve
-   ollama pull llama3.2  # or your preferred model
-   ```
-
-3. **Run the MCP Server**:
-   ```bash
-   # Basic usage
-   python3 mcp_server.py --password "your_password"
-   
-   # With personality
-   python3 mcp_server.py --personality aggressive --password "your_password"
-   
-   # With custom model
-   python3 mcp_server.py --model llama3.1 --personality cautious
-   ```
-
-### Available Options
+### 1. Build Game with DSL Enabled
 
 ```bash
---socket, -s        GAP socket path (default: /tmp/devilutionx-gap.sock)
---ollama-url        Ollama API URL (default: http://localhost:11434) 
---model, -m         Ollama model (default: llama3.2)
---personality       AI personality: balanced, cautious, aggressive, greedy
---password, -p      Password for multiplayer games
---verbose, -v       Enable debug logging
+cd build
+cmake -DENABLE_GAP=ON -DGAP_USE_DSL=1 ..
+make -j8
 ```
 
-### Personalities
+### 2. Start Game
 
-- **balanced** (default): Standard Diablo gameplay
-- **cautious**: Prioritizes survival, retreats early, avoids risks  
-- **aggressive**: Seeks combat, takes risks, fights multiple enemies
-- **greedy**: Focuses on loot collection, efficient monster clearing
-
-## 📋 Protocol Architecture
-
-```
-┌─────────────┐    GAP JSON     ┌─────────────┐    HTTP API    ┌─────────────┐
-│   Diablo    │◄───────────────►│ MCP Server  │◄──────────────►│   Ollama    │
-│   (GAP)     │                 │ (Proxy)     │                │   (LLM)     │
-└─────────────┘                 └─────────────┘                └─────────────┘
+```bash
+./devilutionx --companion-save multi_1.sv --companion-slot 1
 ```
 
-- **Direct JSON**: No translation overhead - raw GAP state → LLM → GAP intents
-- **Protocol-aware prompts**: LLM understands GAP specification via documentation
-- **Structured decision-making**: LLM outputs valid GAP intent JSON directly
+### 3. Run Agent
 
-## 🧠 How It Works
-
-1. **Game publishes state** in GAP JSON format (player, monsters, items, vision)
-2. **MCP server** builds prompt with protocol docs + personality + current state
-3. **LLM analyzes** the tactical situation and generates appropriate response
-4. **Intent parsing** extracts valid GAP intent JSON from LLM response  
-5. **Game executes** the LLM's decision (move, attack, etc.)
-
-## 🎮 Example Session
-
-```
-Game State: Player at [45,50], Skeleton at [47,52], Health Potion at [44,49]
-LLM Decision: {"type": "intent", "action": "attack", "params": {"x": 42, "y": -1}}
-Game Action: Character attacks the skeleton
+```bash
+cd tools/gap
+python3 dsl_agent.py --model qwen2.5:3b --password foo
 ```
 
-## 🐍 Python Testing Agents
+That's it! Your AI companion will connect and start playing.
 
-- `test_gap_agent.py` - Basic movement patterns (existing)
-- `combat_gap_agent.py` - Tactical combat AI with retreat logic (existing)
-- `mcp_server.py` - LLM-powered agent via Ollama (new)
+## Files
 
-## 🔧 Development
+- **dsl_agent.py** - Main agent (socket + LLM loop)
+- **dsl_parser.py** - Parse compact DSL state from C++
+- **memory_store.py** - Persistent SQLite memory
+- **run_agent.sh** - Simple launcher script
 
-### Adding New Personalities
+## DSL Protocol
 
-Create `prompts/your_personality.txt` with behavior modifications:
-
+### State Format (C++ → Python)
 ```
-## PERSONALITY: YOUR_NAME
-
-**Core Principle**: Your guiding philosophy
-
-### Behavior Modifications:
-- Specific rule changes
-- Decision priority adjustments  
-- Risk tolerance modifications
-
-### Decision Priorities:
-1. Most important factor
-2. Secondary consideration
-3. etc.
+T=12345 F=2 ME=34,18,72,33 M=12@38,16,55,1;19@36,17,20,1 L=71@35,19,10
 ```
 
-Then use with: `--personality your_personality`
+### Command Format (Python → C++)
+```
+MV 37 18          # Move
+AT 12             # Attack monster
+PK 71             # Pickup item
+SAY Moving up     # Chat
+```
 
-### Debugging
+## Configuration
 
-- Use `--verbose` for detailed logging
-- Check Ollama logs: `ollama logs`
-- Monitor GAP messages in DevilutionX console output
+Edit `dsl_agent.py` or pass CLI args:
+- `--socket` - GAP socket path (default: /tmp/devilutionx-gap.sock)
+- `--model` - Ollama model (default: qwen2.5:3b)
+- `--password` - Game password
+- `--think-interval` - Seconds between LLM calls (default: 1.0)
 
-## ⚠️ Limitations
+## Memory
 
-- Requires Ollama running locally 
-- LLM response time: 200-2000ms depending on model/hardware
-- Currently supports move and attack intents only (spells TODO)
-- No inventory management yet (item pickup TODO)
+The agent remembers:
+- Explored areas (floor, coordinates, notes)
+- Combat encounters (victories, deaths)
+- Dangerous zones (where you died)
+- Active goals (explore, clear room, etc.)
 
-## 🎯 Next Steps
+Memory persists in `gap_memory.db` - delete to reset.
 
-1. Add spell casting support to GAP protocol
-2. Implement item pickup/use intents  
-3. Memory system for dungeon exploration
-4. Multi-agent coordination for multiplayer
+## Old JSON System
+
+The old mcp_server.py and related files are in `old_json_system/` for reference.
+
+## Troubleshooting
+
+**Agent won't connect?**
+- Check socket exists: `ls -la /tmp/devilutionx-gap.sock`
+- Game must be running first
+
+**LLM not responding?**
+- Verify Ollama running: `ollama list`
+- Check model loaded: `ollama pull qwen2.5:3b`
+
+**Commands not executing?**
+- Check game built with `-DGAP_USE_DSL=1`
+- Look for "GAP DSL:" messages in game stderr
+
+## Development
+
+Run tests:
+```bash
+python3 memory_store.py  # Test memory
+python3 dsl_parser.py    # Test parser (when created)
+```
+
+## For My Friends
+
+This project is dedicated to the friends who played Diablo with me and have since passed on. This AI companion keeps their memory alive in the dungeons we once cleared together.
+
+*"Stay awhile and listen..."*

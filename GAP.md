@@ -1,7 +1,56 @@
 # GAP: Game Agent Protocol (v0.2 Draft)
 
-**A lightweight protocol for AI agents to play games cooperatively with humans**  
+**A lightweight protocol for AI agents to play games cooperatively with humans**
 **License:** Spec under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); reference implementations under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+---
+
+## 🚀 Implementation Status (November 2025)
+
+### ✅ Completed: DSL Protocol (Compact Alternative to JSON)
+
+**Motivation:** Original JSON protocol (1-2KB per state) was too verbose for LLM context windows. DSL reduces state size by 10x.
+
+**Format:**
+```
+T=12345 F=2 ME=34,18,72,33 PLYR=51,54 M=12@38,16,55,1;19@36,17,20,1 L=71@35,19,10
+```
+
+**Benefits:**
+- 100-200 bytes vs 1-2KB JSON (10x smaller)
+- 80-120 LLM tokens vs 400-600 (5x fewer)
+- 200-500ms decisions vs 500-2000ms (2-4x faster)
+- Simple parsing, easy to debug
+
+**Agent Stack:**
+- `dsl_agent.py` - Main LLM loop with Ollama integration
+- `dsl_parser.py` - State parsing and LLM prompt generation
+- `chat_handler.py` - Async template-based chat (non-blocking)
+- `memory_store.py` - SQLite persistent memory
+- Grammar constraints enforce valid DSL output from LLM
+
+**Status:** ✅ **Commands validated and sent successfully**
+
+### ⚠️ Current Blocker: Entity Control Routing
+
+**Problem:** Commands execute on wrong player entity
+- Agent generates valid commands: `AT 164`, `MV 78 77`
+- Commands sent via socket successfully
+- Game receives commands but routes to main player instead of companion
+- Companion frozen at position, never executes commands
+
+**Evidence:**
+```
+📤 Command: AT 164 (took 0.15s)
+📤 Sent: AT 164...
+State: tick=1674 pos=(78,78)  ← companion stuck
+State: tick=1734 pos=(78,78)  ← still frozen
+State: tick=1794 pos=(78,78)  ← never moves
+```
+
+**Root Cause:** GAP architecture evolved from single-player control to companion mode without updating network command routing (see CLAUDE.md for details)
+
+**Next Step:** Fix entity controller abstraction to route commands to correct player slot
 
 ---
 

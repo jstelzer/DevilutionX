@@ -36,12 +36,18 @@ public:
     bool ProcessIncomingMessages() {
         std::string msg;
         while (ipc.ReceiveMessage(msg)) {
+#if GAP_USE_DSL
+            // DSL mode: treat message as text command
+            intent_processor.QueueDSLIntent(msg);
+#else
+            // JSON mode: parse as JSON object
             JsonParser parser(msg);
             if (parser.ParseObject()) {
                 HandleMessage(parser);
             } else {
                 std::cerr << "GAP: Failed to parse message" << std::endl;
             }
+#endif
         }
         return true;
     }
@@ -232,10 +238,22 @@ bool GapCore::Initialize() {
         
         enabled_ = true;
         std::cout << "GAP: Initialized successfully" << std::endl;
-        
+
+#if GAP_USE_DSL
+        // DSL mode: Auto-set controlled player from companion slot if specified
+        if (gGapCompanionSlot >= 0) {
+            SetControlledPlayer(gGapCompanionSlot);
+            std::cout << "GAP DSL: Auto-controlling slot " << gGapCompanionSlot << std::endl;
+        } else {
+            // Default to main player
+            SetControlledPlayer(0);
+            std::cout << "GAP DSL: Controlling main player (slot 0)" << std::endl;
+        }
+#endif
+
         // Note: ActorStore initialization moved to first game tick to ensure
         // it happens after companion loading in HandleHello
-        
+
         return true;
     } catch (const std::exception& e) {
         std::cerr << "GAP: Initialization failed: " << e.what() << std::endl;
@@ -266,6 +284,69 @@ void GapCore::OnGameTick(uint32_t tick) {
     // Note: Level sync is now event-driven via setLevel() hooks - no polling needed
     
 #ifdef ENABLE_GAP
+    // DSL mode: Load companion on first tick
+    static bool companion_loaded = false;
+    if (!companion_loaded && gGapCompanionSlot >= 0 && !gGapCompanionSave.empty()) {
+        int requested_slot = gGapCompanionSlot;
+        // Only load if main player is active and we're in-game
+        if (requested_slot != MyPlayerId && MyPlayerId < MAX_PLRS && Players[MyPlayerId].plractive) {
+            std::cout << "GAP DSL: Loading companion from " << gGapCompanionSave << " into slot " << requested_slot << std::endl;
+
+            try {
+                // Parse save filename to get save number
+                size_t pos = gGapCompanionSave.rfind("multi_");
+                if (pos == std::string::npos) {
+                    pos = gGapCompanionSave.rfind("single_");
+                }
+                uint32_t companionSaveNum = 0;
+                if (pos != std::string::npos) {
+                    pos += (gGapCompanionSave.substr(pos, 6) == "multi_") ? 6 : 7;
+                    size_t endPos = gGapCompanionSave.find('.', pos);
+                    if (endPos == std::string::npos) endPos = gGapCompanionSave.length();
+
+                    std::string numberStr = gGapCompanionSave.substr(pos, endPos - pos);
+                    companionSaveNum = static_cast<uint32_t>(std::stoul(numberStr));
+                } else {
+                    std::cerr << "GAP DSL: Invalid save filename format: " << gGapCompanionSave << std::endl;
+                }
+
+                if (companionSaveNum > 0) {
+                    // Load companion character
+                    pfile_read_player_from_save(companionSaveNum, Players[requested_slot]);
+
+                    // Mark as active and connected
+                    Players[requested_slot].plractive = true;
+                    player_state[requested_slot] |= PS_CONNECTED;
+                    player_state[requested_slot] |= PS_ACTIVE;
+
+                    // Sync to current level
+                    Players[requested_slot].plrlevel = Players[MyPlayerId].plrlevel;
+                    Players[requested_slot].plrIsOnSetLevel = Players[MyPlayerId].plrIsOnSetLevel;
+
+                    // Position near main player
+                    Point mainPlayerPos = Players[MyPlayerId].position.tile;
+                    Point companionPos = mainPlayerPos;
+                    companionPos.y = mainPlayerPos.y + 2;
+
+                    Players[requested_slot].position.tile = companionPos;
+                    Players[requested_slot].position.future = companionPos;
+                    Players[requested_slot].position.old = companionPos;
+
+                    // Initialize light radius
+                    if (Players[requested_slot]._pLightRad <= 0) {
+                        Players[requested_slot]._pLightRad = 10;
+                    }
+
+                    std::cout << "GAP DSL: Successfully loaded companion " << Players[requested_slot]._pName
+                              << " from save #" << companionSaveNum << " into slot " << requested_slot << std::endl;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "GAP DSL: Failed to load companion: " << e.what() << std::endl;
+            }
+        }
+        companion_loaded = true;
+    }
+
     // Initialize ActorStore on first tick (after companion loading)
     static bool actor_store_initialized = false;
     if (!actor_store_initialized) {
@@ -284,10 +365,22 @@ void GapCore::OnGameTick(uint32_t tick) {
 #endif
     
     impl_->ProcessIncomingMessages();
-    
+
     if (tick - last_state_tick_ >= state_divisor_) {
+#if GAP_USE_DSL
+        // Use compact DSL format (100-200 bytes)
+        std::string state = impl_->state_extractor.ExtractStateDSL(tick, tick_rate_);
+#else
+        // Use verbose JSON format (1-2KB)
         std::string state = impl_->state_extractor.ExtractState(tick, tick_rate_);
-        impl_->SendMessage(state);
+#endif
+        if (!state.empty()) {
+            static int send_count = 0;
+            if (send_count++ < 3) {
+                std::cout << "GAP DSL: Sending state #" << send_count << " (tick " << tick << ")" << std::endl;
+            }
+            impl_->SendMessage(state);
+        }
         last_state_tick_ = tick;
     }
 }
