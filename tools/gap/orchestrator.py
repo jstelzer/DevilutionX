@@ -62,6 +62,10 @@ class AgentOrchestrator:
         self.last_hp = 100
         self.failed_use_count = 0
 
+        # Hysteresis tracking to prevent ping-ponging
+        self.last_decision_agent = None
+        self.last_decision_time = 0
+
         # Initialize specialist agents
         # Start with dungeon model (most common context)
         self.combat = CombatAgent(model=model, ollama_url=ollama_url)
@@ -168,6 +172,46 @@ class AgentOrchestrator:
 
             self.current_context = new_context
 
+    def _compute_danger(self, state: dict) -> float:
+        """
+        Compute deterministic danger level from game state.
+
+        Returns:
+            0.0-1.0 scalar (0.0 = safe, 1.0 = critical danger)
+        """
+        me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
+        mobs = state.get("mobs", [])
+        belt = state.get("belt", [])
+
+        # Count potions
+        hp_potions = sum(1 for slot in belt if slot in ["hp", "rj"])
+
+        # Check for unique/boss monsters nearby
+        unique_near = any(mob.get("unique", False) for mob in mobs)
+
+        # Check for overwhelming numbers (6+ mobs)
+        overwhelmed = len(mobs) >= 6
+
+        # Danger components (weighted)
+        hp_term = 1.0 - (hp_pct / 100.0)  # Low HP -> high danger
+        mob_term = min(1.0, len(mobs) / 6.0)  # 6+ mobs ~ 1.0
+        unique_term = 0.25 if unique_near else 0.0
+        overwhelm_term = 0.25 if overwhelmed else 0.0
+        no_pots_term = 0.2 if hp_potions == 0 else 0.0
+        low_mana_term = 0.1 if mp_pct < 20 else 0.0
+
+        # Weighted sum
+        danger = (
+            0.35 * hp_term +
+            0.35 * mob_term +
+            unique_term +
+            overwhelm_term +
+            no_pots_term +
+            low_mana_term
+        )
+
+        return max(0.0, min(1.0, danger))
+
     def decide(self, state: dict) -> str:
         """
         Main decision loop. Collects agent recommendations and picks winner.
@@ -187,6 +231,13 @@ class AgentOrchestrator:
         self._update_context_models(state)
 
         me_x, me_y, hp_pct, mp_pct = state["me"]
+
+        # Compute deterministic danger level (0.0 = safe, 1.0 = critical)
+        danger = self._compute_danger(state)
+
+        # Log danger occasionally for tuning
+        if state.get("tick", 0) % 60 == 0:  # Every 2 seconds
+            logger.info(f"⚠️  Danger level: {danger:.2f}")
 
         # Collect agent recommendations
         recommendations: List[Tuple[str, AgentResponse, float]] = []
@@ -239,14 +290,18 @@ class AgentOrchestrator:
             else:
                 priority = 4  # MEDIUM - normal looting
 
-            score = loot_rec.weight * priority
+            # Danger dampener: reduce looting priority when in danger (unless critical HP)
+            danger_mult = 1.0 if hp_pct < 30 else (0.5 if danger > 0.5 else 1.0)
+            score = loot_rec.weight * priority * danger_mult
             recommendations.append(("Loot", loot_rec, score))
 
         # MOVEMENT - fallback, always evaluates
         movement_rec = self.movement.evaluate(state)
         if movement_rec and movement_rec.weight > 0.0:
             # Priority 3 for movement (fallback)
-            score = movement_rec.weight * 3
+            # Danger dampener: reduce exploration when in danger
+            danger_mult = 0.5 if danger > 0.5 else 1.0
+            score = movement_rec.weight * 3 * danger_mult
             recommendations.append(("Movement", movement_rec, score))
 
         # Emergency healing override - BUT coordinate with LootAgent!
@@ -280,12 +335,27 @@ class AgentOrchestrator:
                 logger.info(f"🚨 EMERGENCY but NO POTIONS: HP={hp_pct}% - deferring to agents")
                 # Fall through to normal scoring (LootAgent or retreat will handle)
 
+        # Apply hysteresis: +0.15 bias to last agent if chosen within 1.5s
+        # This prevents ping-ponging between similar-scoring agents
+        current_time = time.time()
+        if self.last_decision_agent and (current_time - self.last_decision_time) < 1.5:
+            # Find the last agent in recommendations and boost its score
+            for i, (agent_name, response, score) in enumerate(recommendations):
+                if agent_name == self.last_decision_agent:
+                    recommendations[i] = (agent_name, response, score + 0.15)
+                    logger.debug(f"⏱️  Hysteresis: +0.15 bias to {agent_name} (continuity)")
+                    break
+
         # Pick highest score
         if not recommendations:
             return "SAY Waiting..."
 
         best = max(recommendations, key=lambda x: x[2])
         agent_name, response, score = best
+
+        # Update hysteresis tracking
+        self.last_decision_agent = agent_name
+        self.last_decision_time = current_time
 
         # Debug logging
         logger.info(f"🎯 Decision: {agent_name} → {response.command} (score: {score:.2f}, weight: {response.weight:.2f})")

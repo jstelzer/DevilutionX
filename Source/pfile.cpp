@@ -39,6 +39,10 @@
 #include "mpq/mpq_reader.hpp"
 #endif
 
+#ifdef ENABLE_GAP
+#include "utils/log.hpp"
+#endif
+
 namespace devilution {
 
 #define PASSWORD_SPAWN_SINGLE "adslhfb1"
@@ -47,6 +51,12 @@ namespace devilution {
 #define PASSWORD_MULTI "szqnlsk1"
 
 bool gbValidSaveFile;
+
+#ifdef ENABLE_GAP
+// Companion save globals (declared in diablo.cpp)
+extern std::string gGapCompanionSave;
+extern int gGapCompanionSlot;
+#endif
 
 namespace {
 
@@ -516,6 +526,22 @@ void pfile_write_hero(SaveWriter &saveWriter, bool writeGameData)
 	}
 }
 
+#ifdef ENABLE_GAP
+// Helper function to write any player to a specific save number
+void pfile_write_player_to_save(uint32_t saveNum, Player &player)
+{
+	SaveWriter saveWriter = GetSaveWriter(saveNum);
+	PlayerPack pkplr;
+
+	PackPlayer(pkplr, player);
+	EncodeHero(saveWriter, &pkplr);
+	if (!gbVanilla) {
+		SaveHotkeys(saveWriter, player);
+		SaveHeroItems(saveWriter, player);
+	}
+}
+#endif
+
 void RemoveAllInvalidItems(Player &player)
 {
 	for (int i = 0; i < NUM_INVLOC; i++)
@@ -808,6 +834,36 @@ void pfile_update(bool forceSave)
 	prevTick = tick;
 	pfile_write_hero();
 	sfile_write_stash();
+
+#ifdef ENABLE_GAP
+	// Also save companion progress if active
+	if (gGapCompanionSlot >= 0 && gGapCompanionSlot < MAX_PLRS &&
+	    !gGapCompanionSave.empty() && Players[gGapCompanionSlot].plractive) {
+
+		// Parse companion save number from filename
+		size_t pos = gGapCompanionSave.rfind("multi_");
+		if (pos == std::string::npos)
+			pos = gGapCompanionSave.rfind("single_");
+
+		if (pos != std::string::npos) {
+			pos += (gGapCompanionSave.substr(pos, 6) == "multi_") ? 6 : 7;
+			size_t endPos = gGapCompanionSave.find('.', pos);
+			if (endPos == std::string::npos) endPos = gGapCompanionSave.length();
+
+			std::string numberStr = gGapCompanionSave.substr(pos, endPos - pos);
+			try {
+				uint32_t companionSaveNum = static_cast<uint32_t>(std::stoul(numberStr));
+
+				// Save companion progress
+				pfile_write_player_to_save(companionSaveNum, Players[gGapCompanionSlot]);
+				LogVerbose("Saved companion progress to save #{} (XP={})",
+					companionSaveNum, Players[gGapCompanionSlot]._pExperience);
+			} catch (...) {
+				// Silently fail if save number parsing fails
+			}
+		}
+	}
+#endif
 }
 
 } // namespace devilution

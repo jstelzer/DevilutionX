@@ -5,6 +5,8 @@
 #include "utils/log.hpp"
 #include "player.h"
 #include "engine/point.hpp"
+#include "inv.h"
+#include <iostream>
 
 // For existing command execution - reuse Phase 1 network fixes
 #include "gap/gap_network.h"
@@ -67,7 +69,9 @@ bool SeatManager::ProcessAllIntents(uint64_t tick) {
 			// Execute intents for THIS seat only
 			for (const auto& intent : seat_intents) {
 				if (intent.timestamp == tick) {
+					std::cerr << "SeatManager: About to ExecuteIntent for player " << i << " type=" << static_cast<int>(intent.type) << std::endl;
 					ExecuteIntent(intent, i, tick);
+					std::cerr << "SeatManager: ExecuteIntent completed for player " << i << std::endl;
 				}
 			}
 		}
@@ -148,9 +152,12 @@ void SeatManager::ExecuteMoveIntent(const Intent& intent, int player_index) {
 	} else {
 		// Companion player - use Phase 1 direct execution
 #ifdef ENABLE_GAP
+		std::cerr << "SeatManager: About to call ExecuteDirectMove for player " << player_index << std::endl;
 		gap::ExecuteDirectMove(player_index, target);
+		std::cerr << "SeatManager: ExecuteDirectMove returned for player " << player_index << std::endl;
 #endif
 	}
+	std::cerr << "SeatManager: ExecuteMoveIntent completed for player " << player_index << std::endl;
 }
 
 void SeatManager::ExecuteAttackIntent(const Intent& intent, int player_index) {
@@ -199,11 +206,41 @@ void SeatManager::ExecuteInteractIntent(const Intent& intent, int player_index) 
 }
 
 void SeatManager::ExecuteItemIntent(const Intent& intent, int player_index) {
-	// STUB: Route to existing item usage system
-	LogVerbose("STUB: ExecuteItemIntent for player {} item {}", 
-		player_index, intent.data.param1);
-	
-	// TODO: Wire to existing item usage functions
+	// Sanity check
+	if (player_index < 0 || player_index >= MAX_PLRS) {
+		return;
+	}
+
+	Player& player = Players[player_index];
+
+	// intent.data.param1 contains the belt slot number (0-7)
+	int belt_slot = intent.data.param1;
+
+	// Validate belt slot
+	if (belt_slot < 0 || belt_slot >= MaxBeltItems) {
+		LogError("ExecuteItemIntent: Invalid belt slot {} for player {}", belt_slot, player_index);
+		return;
+	}
+
+	// Convert belt slot to inventory index
+	// INVITEM_BELT_FIRST = 47, so slot 0 = 47, slot 1 = 48, etc.
+	int inv_index = INVITEM_BELT_FIRST + belt_slot;
+
+	LogVerbose("ExecuteItemIntent: Player {} using belt slot {} (inv index {})",
+		player_index, belt_slot, inv_index);
+
+	// Call the game's UseInvItem function
+	// This handles all logic: consuming item, applying effects, network sync, etc.
+	bool success = UseInvItem(player, inv_index);
+
+	if (success) {
+		// Avoid division by zero if player stats are uninitialized
+		int hp_pct = (player._pMaxHP > 0) ? (player._pHitPoints * 100) / player._pMaxHP : 0;
+		LogVerbose("ExecuteItemIntent: Successfully used belt item, HP={}%", hp_pct);
+	} else {
+		LogWarn("ExecuteItemIntent: UseInvItem returned false for player {} slot {}",
+			player_index, belt_slot);
+	}
 }
 
 void SeatManager::ExecuteCastIntent(const Intent& intent, int player_index) {

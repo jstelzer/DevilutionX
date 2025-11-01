@@ -12,6 +12,7 @@
 #include "../multi.h"
 #include "../engine/direction.hpp"
 #include <iostream>
+#include <cmath>
 
 namespace devilution::gap {
 
@@ -23,6 +24,15 @@ bool ExecuteDirectMove(int player_id, Point target) {
     }
     
     Player& player = Players[player_id];
+
+    // Validate player position data is initialized
+    Point playerPos = player.position.tile;
+    if (!InDungeonBounds(playerPos)) {
+        std::cerr << "GAP: ExecuteDirectMove - Player " << player_id
+                  << " has invalid position (" << playerPos.x << "," << playerPos.y
+                  << ") - player not fully initialized yet" << std::endl;
+        return false;
+    }
 
     // Cannot move if dead
     if (player._pmode == PM_DEATH || player._pHitPoints == 0) {
@@ -43,39 +53,68 @@ bool ExecuteDirectMove(int player_id, Point target) {
         std::cerr << "GAP: ExecuteDirectMove - Target out of bounds" << std::endl;
         return false;
     }
-    
-    if (player.position.tile == target) {
+
+    if (playerPos == target) {
         return false; // Already at target
     }
-    
+
     // Execute movement directly on the companion player
-    std::cerr << "GAP: ExecuteDirectMove - Moving player " << player_id 
-              << " (" << player._pName << ") from (" 
-              << player.position.tile.x << "," << player.position.tile.y 
+    std::cerr << "GAP: ExecuteDirectMove - Moving player " << player_id
+              << " (" << player._pName << ") from ("
+              << playerPos.x << "," << playerPos.y
               << ") to (" << target.x << "," << target.y << ")" << std::endl;
-    
+
+    // Verify AnimInfo is initialized before setting walk action
+    std::cerr << "GAP: ExecuteDirectMove - Checking AnimInfo: numberOfFrames="
+              << static_cast<int>(player.AnimInfo.numberOfFrames)
+              << " _pWFrames=" << static_cast<int>(player._pWFrames) << std::endl;
+
+    if (player.AnimInfo.numberOfFrames == 0 || player._pWFrames == 0) {
+        std::cerr << "GAP: ExecuteDirectMove - AnimInfo not initialized, attempting to reload graphics..." << std::endl;
+        InitPlayerGFX(player);
+
+        // Check if reload succeeded
+        if (player.AnimInfo.numberOfFrames == 0 || player._pWFrames == 0) {
+            std::cerr << "GAP: ExecuteDirectMove - WARNING: Graphics reload failed, numberOfFrames still 0" << std::endl;
+            std::cerr << "GAP: ExecuteDirectMove - Proceeding anyway (town movement may work without full graphics)" << std::endl;
+            // Don't return false - allow movement attempt even without full graphics initialized
+            // In town, movement might work via network commands even if local graphics aren't loaded
+        } else {
+            std::cerr << "GAP: ExecuteDirectMove - Graphics reload succeeded! numberOfFrames="
+                      << static_cast<int>(player.AnimInfo.numberOfFrames) << std::endl;
+        }
+    }
+
     // Use the game's pathfinding system
+    std::cerr << "GAP: ExecuteDirectMove - About to call MakePlrPath" << std::endl;
     MakePlrPath(player, target, true);
+    std::cerr << "GAP: ExecuteDirectMove - MakePlrPath done, setting destAction" << std::endl;
     player.destAction = ACTION_WALK;
+    std::cerr << "GAP: ExecuteDirectMove - destAction set, checking multiplayer" << std::endl;
     
     // For multiplayer, we need to broadcast this action
     if (gbIsMultiplayer) {
+        std::cerr << "GAP: ExecuteDirectMove - In multiplayer block" << std::endl;
         // Create a walk command that appears to come from the companion
         // This is the key fix - we need to ensure other players see the companion move
         // For now, we'll use the existing network command but we need to handle it specially
-        
+
         // We're the host controlling the companion, so we can directly update the companion's state
         // and then sync it to other players
         TCmdLoc cmd;
         cmd.bCmd = CMD_WALKXY;
         cmd.x = target.x;
         cmd.y = target.y;
-        
+
+        std::cerr << "GAP: ExecuteDirectMove - About to ClrPlrPath" << std::endl;
         // Process the command immediately for the companion
         ClrPlrPath(player);
+        std::cerr << "GAP: ExecuteDirectMove - About to second MakePlrPath" << std::endl;
         MakePlrPath(player, target, true);
+        std::cerr << "GAP: ExecuteDirectMove - About to set ACTION_NONE" << std::endl;
         player.destAction = ACTION_NONE;
-        
+
+        std::cerr << "GAP: ExecuteDirectMove - About to multi_send_msg_packet" << std::endl;
         // Send to other players so they see the companion move
         // This requires a special handling in the network layer
         // For now, we'll use the standard approach but mark it as companion command
@@ -84,8 +123,10 @@ bool ExecuteDirectMove(int player_id, Point target) {
             reinterpret_cast<std::byte*>(&cmd),
             sizeof(cmd)
         );
+        std::cerr << "GAP: ExecuteDirectMove - multi_send_msg_packet done" << std::endl;
     }
-    
+
+    std::cerr << "GAP: ExecuteDirectMove - About to return true" << std::endl;
     return true;
 }
 
@@ -96,6 +137,15 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     }
     
     Player& player = Players[player_id];
+
+    // Validate player position data is initialized
+    Point playerPos = player.position.tile;
+    if (!InDungeonBounds(playerPos)) {
+        std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id
+                  << " has invalid position (" << playerPos.x << "," << playerPos.y
+                  << ") - player not fully initialized yet" << std::endl;
+        return false;
+    }
 
     // Cannot attack if dead
     if (player._pmode == PM_DEATH || player._pHitPoints == 0) {
@@ -121,9 +171,8 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
         return false;
     }
     
-    // Check range
+    // Check range (playerPos already validated above)
     Point monsterPos = monster.position.tile;
-    Point playerPos = player.position.tile;
     int dx = std::abs(monsterPos.x - playerPos.x);
     int dy = std::abs(monsterPos.y - playerPos.y);
     
@@ -153,15 +202,40 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     // This lets the game handle animation setup properly via ProcessPlayer()
     // The game will trigger the attack on the next game loop iteration
 
-    // For ranged weapons, we can attack from distance (within vision range)
-    // For melee, we need to be adjacent or path closer
+    // For ranged weapons, maintain optimal shooting distance (4-12 tiles)
+    // For melee, we need to be adjacent
     if (player.UsesRangedWeapon()) {
-        if (dx <= 15 && dy <= 15) {
-            // Within range - attack will execute via destAction
-            // Don't manually set _pmode - let ProcessPlayer() handle it
+        // Use Chebyshev distance (grid distance) - max of dx and dy
+        int maxDist = std::max(dx, dy);
+
+        if (maxDist >= 4 && maxDist <= 12) {
+            // Good shooting range (4-12 tiles) - attack from current position
+            // destAction is already set, path is cleared, just attack
+            std::cerr << "GAP: Ranged attack from good distance (max_dist=" << maxDist << ")" << std::endl;
+        } else if (maxDist > 12) {
+            // Too far - move to ~6 tile range
+            // Calculate a position ~6 tiles from monster (using direction vector)
+            int targetDist = 6;
+            float angle = std::atan2(static_cast<float>(monsterPos.y - playerPos.y),
+                                     static_cast<float>(monsterPos.x - playerPos.x));
+            Point approachPos;
+            approachPos.x = monsterPos.x - static_cast<int>(targetDist * std::cos(angle));
+            approachPos.y = monsterPos.y - static_cast<int>(targetDist * std::sin(angle));
+
+            // Clamp to dungeon bounds
+            if (InDungeonBounds(approachPos)) {
+                std::cerr << "GAP: Ranged too far (dist=" << maxDist << ") - moving to position "
+                          << targetDist << " tiles from monster" << std::endl;
+                MakePlrPath(player, approachPos, false);
+            } else {
+                // Fallback: move closer to monster directly
+                std::cerr << "GAP: Approach position out of bounds, moving toward monster" << std::endl;
+                MakePlrPath(player, monsterPos, false);
+            }
         } else {
-            // Out of range - move closer
-            MakePlrPath(player, monsterPos, false);
+            // Too close (< 4 tiles) - attack anyway for now
+            // Future: implement kiting (move away while attacking)
+            std::cerr << "GAP: Ranged attack at close range (dist=" << maxDist << "), no kiting yet" << std::endl;
         }
     } else {
         // Melee weapon

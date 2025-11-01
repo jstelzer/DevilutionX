@@ -153,7 +153,14 @@ private:
                 Players[requested_slot].position.tile = companionPos;
                 Players[requested_slot].position.future = companionPos;
                 Players[requested_slot].position.old = companionPos;
-                
+
+                // CRITICAL: Initialize graphics and animation data
+                // Without this, AnimInfo is uninitialized and causes FPE in CalculateWalkingOffset
+                std::cout << "GAP: About to call InitPlayerGFX for companion slot " << requested_slot << std::endl;
+                InitPlayerGFX(Players[requested_slot]);
+                std::cout << "GAP: InitPlayerGFX completed, AnimInfo.numberOfFrames="
+                          << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
+
                 // Initialize light radius for companion - CRITICAL for monster visibility!
                 if (Players[requested_slot]._pLightRad <= 0) {
                     Players[requested_slot]._pLightRad = 10; // Default light radius
@@ -336,6 +343,13 @@ void GapCore::OnGameTick(uint32_t tick) {
                     if (Players[requested_slot]._pLightRad <= 0) {
                         Players[requested_slot]._pLightRad = 10;
                     }
+
+                    // CRITICAL: Initialize graphics and animation data
+                    // Without this, AnimInfo is uninitialized and causes FPE in CalculateWalkingOffset
+                    std::cout << "GAP DSL: About to call InitPlayerGFX for companion slot " << requested_slot << std::endl;
+                    InitPlayerGFX(Players[requested_slot]);
+                    std::cout << "GAP DSL: InitPlayerGFX completed, AnimInfo.numberOfFrames="
+                              << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
 
                     std::cout << "GAP DSL: Successfully loaded companion " << Players[requested_slot]._pName
                               << " from save #" << companionSaveNum << " into slot " << requested_slot << std::endl;

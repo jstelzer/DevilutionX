@@ -8,6 +8,16 @@ from .base import BaseAgent, AgentResponse
 
 logger = logging.getLogger(__name__)
 
+# GBNF grammar for combat commands (AT <id> <weight> or NONE <weight>)
+COMBAT_GRAMMAR = r"""
+root   ::= (at | none) "\n"?
+at     ::= "AT " int " " weight
+none   ::= "NONE " weight
+weight ::= "0." digit+ | "1.0" | "1" | "0"
+int    ::= digit+
+digit  ::= [0-9]
+"""
+
 
 class CombatAgent(BaseAgent):
     """Specialist for attack target selection and combat tactics"""
@@ -79,18 +89,20 @@ Weight (0.0-1.0):
 
 Example: AT 27 0.85"""
 
-        response = self.query_llm(prompt)
+        response = self.query_llm(prompt, grammar=COMBAT_GRAMMAR)
 
         # Parse response
         parsed = self.parse_weighted_response(response)
-        if not parsed or not parsed.command.startswith("AT"):
-            # Fallback: attack closest monster
-            closest = min(mobs, key=lambda m: m.get("dist", 999))
-            return AgentResponse(
-                command=f"AT {closest.get('id', 0)}",
-                weight=0.6,
-                reasoning="Combat: Fallback to closest monster"
-            )
+        if not parsed:
+            # LLM timeout or parse failure - skip this decision cycle
+            # Don't use stale fallback data to avoid spam attacking dead monsters
+            logger.warning("Combat: LLM timeout, skipping combat decision to avoid stale targets")
+            return None
+
+        if not parsed.command.startswith("AT"):
+            # Invalid command format - skip decision
+            logger.warning(f"Combat: Invalid command format: {parsed.command}")
+            return None
 
         parsed.reasoning = f"Combat: {parsed.command}"
         return parsed

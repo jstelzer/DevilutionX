@@ -15,7 +15,9 @@
       "Bash(cmake:*)",
       "Bash(make:*)",
       "Bash(/usr/bin/grep:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(coredumpctl list:*)",
+      "Bash(coredumpctl debug:*)"
     ],
     "deny": [],
     "ask": [],

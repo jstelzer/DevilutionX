@@ -26,7 +26,7 @@ class BaseAgent:
         name: str,
         model: str = "qwen2.5:3b",
         ollama_url: str = "http://localhost:11434/api/generate",
-        timeout: float = 2.0  # Generous timeout for model warmup during level transitions
+        timeout: float = 12.0  # Generous timeout for model warmup during level transitions
     ):
         self.name = name
         self.model = model
