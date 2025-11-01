@@ -1,0 +1,159 @@
+"""
+Base classes for specialist agents
+"""
+
+import requests
+import logging
+from typing import Optional, Dict, Any
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentResponse:
+    """Response from an agent evaluation"""
+    command: str       # DSL command: "AT 27", "MV 72 81", "USE 0", etc.
+    weight: float      # 0.0-1.0 confidence
+    reasoning: str = ""  # Optional debug info
+
+
+class BaseAgent:
+    """Base class for all specialist agents"""
+
+    def __init__(
+        self,
+        name: str,
+        model: str = "qwen2.5:3b",
+        ollama_url: str = "http://localhost:11434/api/generate",
+        timeout: float = 2.0  # Generous timeout for model warmup during level transitions
+    ):
+        self.name = name
+        self.model = model
+        self.ollama_url = ollama_url
+        self.timeout = timeout
+        self.dormant = False
+
+    def set_model(self, model: str):
+        """Update model for context-based switching (town vs dungeon)"""
+        if self.model != model:
+            logger.debug(f"{self.name}: Switching model {self.model} → {model}")
+            self.model = model
+
+    def evaluate(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
+        """
+        Evaluate game state and return weighted recommendation.
+
+        Args:
+            state: Game state dictionary
+
+        Returns:
+            AgentResponse or None if agent is dormant/no recommendation
+        """
+        if self.dormant:
+            return None
+
+        if not self.should_activate(state):
+            return None
+
+        return self._evaluate_impl(state)
+
+    def should_activate(self, state: Dict[str, Any]) -> bool:
+        """
+        Check if agent should activate based on state.
+        Override in subclasses for dormancy logic.
+        """
+        return True
+
+    def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
+        """
+        Actual evaluation logic. Override in subclasses.
+        """
+        raise NotImplementedError
+
+    def query_llm(self, prompt: str, grammar: Optional[str] = None) -> str:
+        """
+        Query Ollama LLM with optional grammar constraints.
+
+        Args:
+            prompt: The full prompt to send
+            grammar: Optional GBNF grammar to constrain output
+
+        Returns:
+            LLM response text (stripped)
+        """
+        try:
+            request_payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "num_ctx": 512,
+                    "temperature": 0.2,
+                    "top_p": 0.8,
+                    "repeat_penalty": 1.1,
+                    "num_predict": 20,  # Keep it very short
+                }
+            }
+
+            if grammar:
+                request_payload["grammar"] = grammar
+
+            resp = requests.post(
+                self.ollama_url,
+                json=request_payload,
+                timeout=self.timeout
+            )
+            resp.raise_for_status()
+
+            response_text = resp.json()["response"].strip()
+            logger.debug(f"{self.name}: LLM response: {response_text[:100]}")
+
+            return response_text
+
+        except requests.exceptions.Timeout:
+            logger.warning(f"{self.name}: LLM query timed out")
+            return ""
+        except Exception as e:
+            logger.error(f"{self.name}: LLM query failed: {e}")
+            return ""
+
+    def parse_weighted_response(self, response: str) -> Optional[AgentResponse]:
+        """
+        Parse LLM response in format: "COMMAND weight"
+        Example: "AT 27 0.85" or "MV 72 81 0.70"
+
+        Returns:
+            AgentResponse or None if parsing fails
+        """
+        if not response:
+            return None
+
+        parts = response.split()
+        if len(parts) < 2:
+            return None
+
+        try:
+            # Check if last part is a weight (0.0-1.0)
+            weight = float(parts[-1])
+            if not (0.0 <= weight <= 1.0):
+                # Not a weight, try to extract command without weight
+                command = response
+                weight = 0.5  # Default weight
+            else:
+                # Last part is weight, rest is command
+                command = " ".join(parts[:-1])
+
+            return AgentResponse(
+                command=command,
+                weight=weight,
+                reasoning=f"{self.name} evaluated"
+            )
+
+        except ValueError:
+            # No weight found, use entire response as command
+            return AgentResponse(
+                command=response,
+                weight=0.5,
+                reasoning=f"{self.name} evaluated (no weight)"
+            )

@@ -17,5 +17,6 @@ void NetSendCmdParam1ForPlayer(int actual_player_id, bool bHiPri, _cmd_id bCmd, 
 bool ExecuteDirectMove(int player_id, Point target);
 bool ExecuteDirectAttack(int player_id, int monster_id);
 bool ExecuteDirectInteract(int player_id, Point position);
+bool ExecuteDirectPickup(int player_id, int item_id);
 
 } // namespace devilution::gap

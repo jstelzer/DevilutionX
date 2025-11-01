@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iostream>
 
 #include <fmt/core.h>
 
@@ -618,6 +619,8 @@ bool PlrHitMonst(Player &player, Monster &monster, bool adjacentDamage = false)
 	if (adjacentDamage)
 		dam >>= 2;
 
+	// Apply damage for ANY player (multiplayer-like behavior)
+	// This allows GAP companions to deal damage and gain XP
 	if (&player == MyPlayer) {
 		if (HasAnyOf(player.pDamAcFlags, ItemSpecialEffectHf::Peril)) {
 			dam2 += player._pIGetHit << 6;
@@ -631,8 +634,8 @@ bool PlrHitMonst(Player &player, Monster &monster, bool adjacentDamage = false)
 			dam = monster.hitPoints; /* ensure monster is killed with one hit */
 		}
 #endif
-		ApplyMonsterDamage(DamageType::Physical, monster, dam);
 	}
+	ApplyMonsterDamage(DamageType::Physical, monster, dam);
 
 	int skdam = 0;
 	if (HasAnyOf(player._pIFlags, ItemSpecialEffect::RandomStealLife)) {
@@ -2417,7 +2420,9 @@ void NextPlrLevel(Player &player)
 
 void Player::_addExperience(uint32_t experience, int levelDelta)
 {
-	if (this != MyPlayer || _pHitPoints <= 0)
+	// Allow ANY player to gain experience (multiplayer-like behavior)
+	// This enables companions to level up like real players
+	if (_pHitPoints <= 0)
 		return;
 
 	if (isMaxCharacterLevel()) {
@@ -2437,19 +2442,29 @@ void Player::_addExperience(uint32_t experience, int levelDelta)
 	const uint32_t maxExperience = GetNextExperienceThresholdForLevel(getMaxCharacterLevel());
 
 	// ensure we only add enough experience to reach the max experience cap so we don't overflow
+	uint32_t oldExp = _pExperience;
 	_pExperience += std::min(clampedExp, maxExperience - _pExperience);
 
-	if (*GetOptions().Gameplay.experienceBar) {
+	std::cerr << "GAP: Player::_addExperience - Player " << getId() << " (" << _pName
+	          << ") gained " << (_pExperience - oldExp) << " XP (now " << _pExperience << ")" << std::endl;
+
+	// UI updates only for local player
+	if (this == MyPlayer && *GetOptions().Gameplay.experienceBar) {
 		RedrawEverything();
 	}
 
-	// Increase player level if applicable
+	// Increase player level if applicable (works for ANY player)
 	while (!isMaxCharacterLevel() && _pExperience >= getNextExperienceThreshold()) {
 		// NextPlrLevel increments character level which changes the next experience threshold
+		std::cerr << "GAP: Player::_addExperience - Player " << getId() << " leveled up to "
+		          << (getCharacterLevel() + 1) << "!" << std::endl;
 		NextPlrLevel(*this);
 	}
 
-	NetSendCmdParam1(false, CMD_PLRLEVEL, getCharacterLevel());
+	// Network sync only for local player
+	if (this == MyPlayer) {
+		NetSendCmdParam1(false, CMD_PLRLEVEL, getCharacterLevel());
+	}
 }
 
 void AddPlrMonstExper(int lvl, unsigned exp, char pmask)
@@ -2463,8 +2478,17 @@ void AddPlrMonstExper(int lvl, unsigned exp, char pmask)
 
 	if (totplrs != 0) {
 		const unsigned e = exp / totplrs;
-		if ((pmask & (1 << MyPlayerId)) != 0)
-			MyPlayer->addExperience(e, lvl);
+		std::cerr << "GAP: AddPlrMonstExper - lvl=" << lvl << " exp=" << exp << " pmask=" << static_cast<int>(pmask)
+		          << " totplrs=" << totplrs << " each_gets=" << e << std::endl;
+		// Give XP to ALL players who damaged the monster (not just MyPlayer)
+		// This enables companions to level up like real players
+		for (size_t i = 0; i < Players.size(); i++) {
+			if (((1 << i) & pmask) != 0 && Players[i].plractive) {
+				std::cerr << "GAP: AddPlrMonstExper - Giving " << e << " XP to player " << i
+				          << " (" << Players[i]._pName << ")" << std::endl;
+				Players[i].addExperience(e, lvl);
+			}
+		}
 	}
 }
 

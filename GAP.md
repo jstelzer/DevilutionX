@@ -1,7 +1,15 @@
-# GAP: Game Agent Protocol (v0.2 Draft)
+# GAP: Game Agent Protocol (v0.3 Draft)
 
 **A lightweight protocol for AI agents to play games cooperatively with humans**
 **License:** Spec under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); reference implementations under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+---
+
+## 🎯 Protocol Evolution
+
+**v0.1**: JSON protocol with monolithic LLM agent
+**v0.2**: DSL protocol with single specialized agent
+**v0.3**: Multi-agent council architecture ← **Current**
 
 ---
 
@@ -54,52 +62,264 @@ State: tick=1794 pos=(78,78)  ← never moves
 
 ---
 
+## 🌟 Evolution to Multi-Agent Council (v0.3)
+
+### The Paradigm Shift
+
+**Problem with Monolithic Agents:**
+- Single LLM trying to balance combat, survival, loot, exploration, and cooperation
+- Large context windows (400-600 tokens) causing decision slowness
+- Conflicting priorities causing decision paralysis
+- No specialization → mediocre performance across all domains
+
+**Solution: Specialist Agent Council**
+
+Instead of one LLM doing everything, we have a **council of specialist agents**, each expert in their domain:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Orchestrator                          │
+│           (Receives game state, routes to agents,        │
+│            collects votes, picks optimal action)         │
+└────────────┬────────────────────────────────────────────┘
+             │
+     ┌───────┴────────┬─────────────┬──────────────┐
+     ▼                ▼             ▼              ▼
+┌──────────┐   ┌───────────┐  ┌──────────┐  ┌──────────┐
+│ Combat   │   │ Healing   │  │ Movement │  │  Loot    │
+│ Agent    │   │ Agent     │  │ Agent    │  │  Agent   │
+│ (50 tok) │   │ (30 tok)  │  │ (80 tok) │  │ (40 tok) │
+└──────────┘   └───────────┘  └──────────┘  └──────────┘
+     │                │             │              │
+     └────────────────┴─────────────┴──────────────┘
+                      │
+              Weighted Votes:
+              AT 27: 0.85 (Combat)
+              USE 0: 0.95 (Healing) ← WINS
+              MV 72,81: 0.70 (Movement)
+              PK 71: 0.60 (Loot)
+```
+
+### Generic Agent Types (Game-Agnostic)
+
+#### Core Action Agents
+- **Combat Agent**: Offensive decision-making (attack, special abilities)
+- **Defensive Agent**: Survival decisions (healing, shield, dodge, retreat)
+- **Movement Agent**: Positioning and navigation
+- **Resource Agent**: Loot/item collection
+
+#### Situational Agents (Context-Dependent)
+- **Social Agent**: Town/NPC interactions, trading
+- **Progression Agent**: Character development (stats, skills, upgrades)
+- **Exploration Agent**: Map navigation, quest objectives
+- **Inventory Agent**: Item management, equipment optimization
+
+#### Meta-Agents (Influence Others)
+- **Risk Assessment Agent**: Evaluates danger level, informs all other agents
+- **Strategy Agent**: Long-term planning, quest priorities
+
+### Council Benefits
+
+1. **Prompt Isolation**: 30-80 tokens per agent vs 400-600 monolithic
+2. **Parallel Execution**: Run agents concurrently (we have CPU to spare)
+3. **Clear Priorities**: Orchestrator enforces hierarchy (survival > combat > loot)
+4. **Extensibility**: Add new agents without touching existing ones
+5. **Debuggability**: See each agent's vote and orchestrator's reasoning
+6. **Model Flexibility**: Fast 3B models for simple agents, 8B for complex ones
+
+### Agent Communication Pattern
+
+```python
+class SpecialistAgent:
+    """Base pattern for all agents"""
+
+    def evaluate(self, state: GameState) -> WeightedRecommendation:
+        """
+        Evaluate game state and return weighted recommendation.
+
+        Args:
+            state: Minimal relevant state for this agent
+
+        Returns:
+            WeightedRecommendation(
+                action: str,        # Game-specific command
+                weight: float,      # 0.0-1.0 confidence
+                reasoning: str      # Optional debug info
+            )
+        """
+        pass
+
+class Orchestrator:
+    """Routes state to agents, collects votes, picks winner"""
+
+    def decide(self, full_state: GameState) -> Action:
+        # 1. Meta-agents run first (risk assessment)
+        risk = self.risk_agent.evaluate(full_state)
+
+        # 2. Situational context (in town vs combat vs exploring)
+        context = self.determine_context(full_state)
+
+        # 3. Run relevant agents in parallel
+        recommendations = self.run_agents_parallel(full_state, context)
+
+        # 4. Apply priority hierarchy
+        #    Example: healing > combat > resource > movement > exploration
+        return self.apply_hierarchy(recommendations, risk)
+```
+
+### Dormancy System
+
+Agents can be **active**, **dormant**, or **disabled** based on context:
+
+```python
+# Combat agent dormant in safe town
+if state.in_safe_zone:
+    combat_agent.dormant = True
+
+# Social agent only active in town
+if not state.in_town:
+    social_agent.dormant = True
+
+# Progression agent only active on level-up
+if not state.level_up_available:
+    progression_agent.dormant = True
+```
+
+This prevents wasting LLM calls on irrelevant decisions.
+
+### Priority Hierarchy (Example)
+
+```
+1. CRITICAL (overrides all): Defensive agent (survival)
+2. HIGH: Combat agent (if enemies nearby)
+3. MEDIUM: Resource agent (if safe)
+4. LOW: Movement agent (always available as fallback)
+5. LOWEST: Exploration agent (when very safe)
+```
+
+Orchestrator uses weighted scoring:
+```
+final_score = agent_weight * priority_multiplier * context_modifier
+```
+
+### Multi-Agent vs Monolithic Comparison
+
+| Aspect | Monolithic Agent | Multi-Agent Council |
+|--------|-----------------|---------------------|
+| Context size | 400-600 tokens | 30-80 tokens each |
+| Decision speed | 200-500ms | 50-200ms per agent (parallel) |
+| Specialization | Jack of all trades | Expert in one domain |
+| Priority conflicts | Hard to resolve | Clean hierarchy |
+| Extensibility | Modify giant prompt | Add new agent |
+| Debugging | "Why did it do that?" | See all agent votes |
+| Model requirements | Need smart 8B+ model | Can use fast 3B models |
+| Failure mode | Indecision/freeze | Fallback to movement agent |
+
+---
+
 ## 1. Vision & Scope
 
-GAP enables AI agents to act as co-op partners in games, starting with DevilutionX as the reference implementation. The protocol prioritizes:
+GAP enables AI agents to act as co-op partners in games. The protocol prioritizes:
 
 - **Practical implementation** over theoretical perfection
+- **Multi-agent architecture** for specialized decision-making
 - **Minimal invasiveness** to existing game code
-- **Gradual adoption** through compile-time flags
+- **Game-agnostic design** (proven with DevilutionX, applicable to any game)
 - **Local-first** operation before network support
 
-### 1.1 Non-Goals for v0.2
-- Cross-game compatibility (DevilutionX specific for now)
-- Network multiplayer AI agents (local single-player only)
-- Perfect state representation (minimal viable state)
-- Production readiness (proof-of-concept focus)
+### 1.1 Design Principles
+
+1. **Modularity**: Specialist agents for different game aspects
+2. **Composability**: Agents communicate through weighted recommendations
+3. **Adaptability**: Agents activate/dormant based on game context
+4. **Extensibility**: Add new agents without changing protocol
+5. **Debuggability**: Transparent agent voting and orchestration logic
+
+### 1.2 Non-Goals for v0.3
+- Perfect AI gameplay (good enough cooperation is the goal)
+- Real-time competitive play (co-op focus)
+- Production-grade security (research/hobbyist focus)
+- Cross-network agent hosting (local execution only)
 
 ---
 
 ## 2. Architecture Overview
 
+### 2.1 Multi-Agent Council Architecture
+
 ```
-Game Process                    Agent Process
-+-----------------+            +------------------+
-| DevilutionX     |            | Python/C++ Agent |
-| +-------------+ |            |                  |
-| | Game Loop   | |  IPC/Pipe  |                  |
-| | - Tick: var | <----------> | - Read state     |
-| | - 20-50 Hz  | |            | - Plan actions   |
-| +-------------+ |            | - Send intents   |
-+-----------------+            +------------------+
+┌───────────────────────────────────────────────────────────────┐
+│                         Game Process                           │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │ Game Loop (variable tick rate)                          │  │
+│  │ - Extract state → DSL format                            │  │
+│  │ - Send via IPC                                          │  │
+│  │ - Receive command                                       │  │
+│  │ - Execute action                                        │  │
+│  └──────────────────┬──────────────────────────────────────┘  │
+└─────────────────────┼─────────────────────────────────────────┘
+                      │ DSL State (100-200 bytes)
+                      │ "T=123 F=2 ME=34,18,72,33 M=12@38,16..."
+                      ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    Agent Orchestrator                          │
+│                                                                 │
+│  1. Receive game state                                         │
+│  2. Distribute to relevant agents (parallel)                   │
+│  3. Collect weighted recommendations                           │
+│  4. Apply priority hierarchy                                   │
+│  5. Return winning action                                      │
+│                                                                 │
+└──┬────────┬────────┬────────┬────────┬────────┬────────┬──────┘
+   │        │        │        │        │        │        │
+   ▼        ▼        ▼        ▼        ▼        ▼        ▼
+┌──────┐ ┌───────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
+│Combat│ │Healing│ │ Move │ │ Loot │ │ Town │ │Stats │ │Danger│
+│Agent │ │Agent  │ │Agent │ │Agent │ │Agent │ │Agent │ │Agent │
+│      │ │       │ │      │ │      │ │      │ │      │ │(Meta)│
+│50tok │ │30tok  │ │80tok │ │40tok │ │60tok │ │50tok │ │100tok│
+└──┬───┘ └───┬───┘ └───┬──┘ └───┬──┘ └───┬──┘ └───┬──┘ └───┬──┘
+   │         │         │        │        │        │        │
+   └─────────┴─────────┴────────┴────────┴────────┴────────┘
+                             │
+                   Weighted Recommendations:
+                   {
+                     "AT 27": 0.85,    // Combat
+                     "USE 0": 0.95,    // Healing ← Wins
+                     "MV 72,81": 0.70, // Movement
+                     "PK 71": 0.60     // Loot
+                   }
+                             │
+                             ▼
+┌───────────────────────────────────────────────────────────────┐
+│                         Game Process                           │
+│                     Execute: USE 0                             │
+│                   (Drink health potion)                        │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-### 2.1 Integration Points
+### 2.2 Game Integration Points
 
-GAP hooks into three existing DevilutionX systems:
+GAP integrates at three levels in the game engine:
 
-1. **Game Loop** (`game_loop()` in diablo.cpp:3361)
+1. **Game Loop**
    - Extract state after world update
-   - Apply intents before next tick
+   - Encode to compact DSL format
+   - Send to orchestrator via IPC
+   - Receive command
+   - Execute action before next tick
 
-2. **Input System** (`GameEventHandler()` in diablo.cpp:715)
-   - Inject agent commands alongside SDL events
-   - Respect UI state machine (menus, dialogs)
+2. **State Extraction**
+   - Player position, health, mana
+   - Nearby entities (monsters, items, NPCs)
+   - Context flags (in_town, in_combat, level_up_available)
+   - Inventory/belt state
 
-3. **Network Layer** (future: `multi_process_network_packets()`)
-   - Eventually support multiplayer sync
-   - For now: single-player only
+3. **Command Execution**
+   - Parse DSL command (AT/MV/USE/PK/TALK/STAT)
+   - Validate against game rules
+   - Execute via existing game systems
+   - Respect UI state machine
 
 ---
 

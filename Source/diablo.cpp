@@ -487,7 +487,7 @@ void RightMouseDown(bool isShiftHeld)
 		return;
 	if (TryIconCurs())
 		return;
-	if (pcursinvitem != -1 && UseInvItem(pcursinvitem))
+	if (pcursinvitem != -1 && UseInvItem(*MyPlayer, pcursinvitem))
 		return;
 	if (pcursstashitem != StashStruct::EmptyCell && UseStashItem(pcursstashitem))
 		return;
@@ -1853,7 +1853,7 @@ void InitKeymapActions()
 		    [i] {
 			    const Player &myPlayer = *MyPlayer;
 			    if (!myPlayer.SpdList[i].isEmpty() && myPlayer.SpdList[i]._itype != ItemType::Gold) {
-				    UseInvItem(INVITEM_BELT_FIRST + i);
+				    UseInvItem(*MyPlayer, INVITEM_BELT_FIRST + i);
 			    }
 		    },
 		    nullptr,
@@ -2173,7 +2173,7 @@ void InitPadmapActions()
 		    [i] {
 			    const Player &myPlayer = *MyPlayer;
 			    if (!myPlayer.SpdList[i].isEmpty() && myPlayer.SpdList[i]._itype != ItemType::Gold) {
-				    UseInvItem(INVITEM_BELT_FIRST + i);
+				    UseInvItem(*MyPlayer, INVITEM_BELT_FIRST + i);
 			    }
 		    },
 		    nullptr,

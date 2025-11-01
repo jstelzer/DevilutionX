@@ -23,9 +23,19 @@ bool ExecuteDirectMove(int player_id, Point target) {
     }
     
     Player& player = Players[player_id];
-    
-    if (player._pmode != PM_STAND) {
-        std::cerr << "GAP: ExecuteDirectMove - Player " << player_id << " not in stand mode" << std::endl;
+
+    // Cannot move if dead
+    if (player._pmode == PM_DEATH || player._pHitPoints == 0) {
+        return false; // Silent failure for death state
+    }
+
+    // Allow movement while standing or already walking (update destination mid-movement)
+    // This prevents command spam rejection when movement takes longer than think interval
+    if (player._pmode != PM_STAND &&
+        player._pmode != PM_WALK_NORTHWARDS &&
+        player._pmode != PM_WALK_SOUTHWARDS &&
+        player._pmode != PM_WALK_SIDEWAYS) {
+        std::cerr << "GAP: ExecuteDirectMove - Player " << player_id << " in mode " << player._pmode << " (cannot move)" << std::endl;
         return false;
     }
     
@@ -86,13 +96,16 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     }
     
     Player& player = Players[player_id];
-    
-    // Allow attacking while walking or standing
-    if (player._pmode != PM_STAND && 
-        player._pmode != PM_WALK_NORTHWARDS && 
-        player._pmode != PM_WALK_SOUTHWARDS && 
-        player._pmode != PM_WALK_SIDEWAYS) {
-        std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id << " in mode " << player._pmode << " (not ready to attack)" << std::endl;
+
+    // Cannot attack if dead
+    if (player._pmode == PM_DEATH || player._pHitPoints == 0) {
+        return false; // Silent failure for death state
+    }
+
+    // Allow attacking in most modes - real players can queue attacks
+    // Only block during critical transitions
+    if (player._pmode == PM_QUIT || player._pmode == PM_NEWLVL) {
+        std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id << " in mode " << player._pmode << " (transition)" << std::endl;
         return false;
     }
     
@@ -132,22 +145,33 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     // Clear any existing path so the attack happens immediately
     ClrPlrPath(player);
     
-    // If we're within melee range (adjacent), we can attack immediately
-    if (dx <= 1 && dy <= 1) {
-        // Calculate direction to monster
-        Direction dir = GetDirection(playerPos, monsterPos);
-        player._pdir = dir;
-        
-        // Set attack mode based on weapon type
-        if (player.UsesRangedWeapon()) {
-            player._pmode = PM_RATTACK;
+    // Set player direction to face monster
+    Direction dir = GetDirection(playerPos, monsterPos);
+    player._pdir = dir;
+
+    // Use the game's action system instead of directly setting mode
+    // This lets the game handle animation setup properly via ProcessPlayer()
+    // The game will trigger the attack on the next game loop iteration
+
+    // For ranged weapons, we can attack from distance (within vision range)
+    // For melee, we need to be adjacent or path closer
+    if (player.UsesRangedWeapon()) {
+        if (dx <= 15 && dy <= 15) {
+            // Within range - attack will execute via destAction
+            // Don't manually set _pmode - let ProcessPlayer() handle it
         } else {
-            player._pmode = PM_ATTACK;
+            // Out of range - move closer
+            MakePlrPath(player, monsterPos, false);
         }
-        player.AnimInfo.currentFrame = 0;
-    } else if (dx <= 10 && dy <= 10) {
-        // For ranged attacks or when not adjacent, move closer first
-        MakePlrPath(player, monsterPos, false);
+    } else {
+        // Melee weapon
+        if (dx <= 1 && dy <= 1) {
+            // Adjacent - attack will execute via destAction
+            // Don't manually set _pmode - let ProcessPlayer() handle it
+        } else if (dx <= 10 && dy <= 10) {
+            // Not adjacent - path closer
+            MakePlrPath(player, monsterPos, false);
+        }
     }
     
     // Sync to network if multiplayer
@@ -215,6 +239,75 @@ bool ExecuteDirectInteract(int player_id, Point position) {
         }
     }
     
+    return false;
+}
+
+bool ExecuteDirectPickup(int player_id, int item_id) {
+    if (player_id < 0 || player_id >= MAX_PLRS || !Players[player_id].plractive) {
+        std::cerr << "GAP: ExecuteDirectPickup - Invalid player ID " << player_id << std::endl;
+        return false;
+    }
+
+    Player& player = Players[player_id];
+
+    std::cerr << "GAP: ExecuteDirectPickup - Player " << player_id
+              << " (" << player._pName << ") attempting to pick up item " << item_id << std::endl;
+
+    // Allow pickup in most modes (like real player)
+    if (player._pmode == PM_DEATH || player._pmode == PM_QUIT || player._pmode == PM_NEWLVL) {
+        std::cerr << "GAP: ExecuteDirectPickup - Invalid player mode (" << player._pmode << ")" << std::endl;
+        return false;
+    }
+
+    // Find the item in the active items list
+    for (uint8_t i = 0; i < ActiveItemCount; i++) {
+        if (ActiveItems[i] == item_id) {
+            const auto& item = Items[item_id];
+
+            std::cerr << "GAP: ExecuteDirectPickup - Found item " << item_id
+                      << " (" << item._iIName << ") at (" << item.position.x << "," << item.position.y << ")" << std::endl;
+
+            // Check if item is within reasonable range (adjacent)
+            Point itemPos = item.position;
+            Point playerPos = player.position.tile;
+            int dx = std::abs(itemPos.x - playerPos.x);
+            int dy = std::abs(itemPos.y - playerPos.y);
+
+            std::cerr << "GAP: ExecuteDirectPickup - Player at (" << playerPos.x << "," << playerPos.y
+                      << "), distance dx=" << dx << " dy=" << dy << std::endl;
+
+            if (dx <= 1 && dy <= 1) {
+                std::cerr << "GAP: ExecuteDirectPickup - Item within range, calling AutoGetItem" << std::endl;
+
+                // Direct pickup with auto-placement - avoids cursor pollution
+                // AutoGetItem tries belt first (potions), then inventory, only cursor as fallback
+                AutoGetItem(player, &Items[item_id], item_id);
+
+                // Sync to network if multiplayer
+                if (gbIsMultiplayer) {
+                    // Notify other players about the pickup
+                    TCmdGItem cmd;
+                    cmd.bCmd = CMD_GETITEM;
+                    cmd.bPnum = player_id;  // Important: Use companion's ID, not MyPlayerId
+                    cmd.x = itemPos.x;
+                    cmd.y = itemPos.y;
+                    PrepareItemForNetwork(item, cmd.item);  // Use .item not .def (they're a union)
+
+                    multi_send_msg_packet(
+                        (1 << player_id),  // Send to all except the companion
+                        reinterpret_cast<std::byte*>(&cmd),
+                        sizeof(cmd)
+                    );
+                }
+
+                return true;
+            } else {
+                std::cerr << "GAP: ExecuteDirectPickup - Item too far away (need to be adjacent)" << std::endl;
+            }
+        }
+    }
+
+    std::cerr << "GAP: ExecuteDirectPickup - Item " << item_id << " not found in ActiveItems" << std::endl;
     return false;
 }
 

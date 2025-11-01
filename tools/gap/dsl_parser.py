@@ -18,17 +18,18 @@ def parse_dsl_state(line: str) -> Dict:
     """
     Parse DSL state line into structured dict
 
-    Format: T=tick F=floor ME=x,y,hp%,mp% M=id@x,y,hp%,flags;... L=id@x,y,value;...
+    Format: T=tick F=floor ME=x,y,hp%,mp% M=id@x,y,hp%,flags;... L=id@x,y,value,type,qual;... B=type,type,...
 
     Example:
-        T=12345 F=2 ME=34,18,72,33 M=12@38,16,55,1 L=71@35,19,10
+        T=12345 F=2 ME=34,18,72,33 M=12@38,16,55,1 L=71@35,19,150,sw,m B=hp,mp,em,em,hp,hp,rj,em
         →
         {
             "tick": 12345,
             "floor": 2,
             "me": (34, 18, 72, 33),
             "mobs": [{"id": 12, "x": 38, "y": 16, "hp_pct": 55, "flags": 1, ...}],
-            "loot": [{"id": 71, "x": 35, "y": 19, "value": 10}]
+            "loot": [{"id": 71, "x": 35, "y": 19, "value": 150, "type": "sw", "quality": "m", "dist": 5}],
+            "belt": ["hp", "mp", "em", "em", "hp", "hp", "rj", "em"]
         }
     """
     state = {
@@ -38,6 +39,10 @@ def parse_dsl_state(line: str) -> Dict:
         "player": None,  # Main player position (x, y) if companion
         "mobs": [],
         "loot": [],
+        "belt": [],  # Belt slots: ["hp", "mp", "em", ...]
+        "stats": None,  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}
+        "in_town": False,  # Town flag
+        "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
     }
 
     if not line or not line.strip():
@@ -96,7 +101,9 @@ def parse_dsl_state(line: str) -> Dict:
                     logger.warning(f"Failed to parse monster: {mob_str} - {e}")
                     continue
 
-        # Parse loot: L=id@x,y,value;...
+        # Parse loot: L=id@x,y,value,type,qual;...
+        # Type codes: go=gold, sw=sword, ax=axe, bw=bow, etc.
+        # Quality codes: n=normal, m=magic, u=unique
         if m := re.search(r'L=([^AE\s]+)', line):
             loot_data = m.group(1)
             for loot_str in loot_data.split(';'):
@@ -105,7 +112,13 @@ def parse_dsl_state(line: str) -> Dict:
 
                 try:
                     loot_id, rest = loot_str.split('@')
-                    x, y, value = map(int, rest.split(','))
+                    parts = rest.split(',')
+
+                    x, y, value = map(int, parts[0:3])
+
+                    # Extract type and quality if available (backward compatible)
+                    item_type = parts[3] if len(parts) > 3 else "ms"
+                    item_qual = parts[4] if len(parts) > 4 else "n"
 
                     # Calculate distance
                     me_x, me_y, _, _ = state["me"]
@@ -116,10 +129,82 @@ def parse_dsl_state(line: str) -> Dict:
                         "x": x,
                         "y": y,
                         "value": value,
+                        "type": item_type,
+                        "quality": item_qual,
                         "dist": dist,
                     })
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse loot: {loot_str} - {e}")
+                    continue
+
+        # Parse belt: B=hp,mp,em,em,hp,hp,rj,em (8 slots)
+        # Types: hp=healing, mp=mana, rj=rejuv, sc=scroll, em=empty, ms=misc
+        if m := re.search(r'B=([a-z,]+)', line):
+            belt_data = m.group(1)
+            state["belt"] = belt_data.split(',')
+
+        # Parse stats: S=str,dex,mag,vit,lvl,pts,class,exp
+        # Class: 0=warrior, 1=rogue, 2=sorc, 3=monk, 4=bard, 5=barb
+        if m := re.search(r'S=(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)', line):
+            state["stats"] = {
+                "str": int(m.group(1)),
+                "dex": int(m.group(2)),
+                "mag": int(m.group(3)),
+                "vit": int(m.group(4)),
+                "lvl": int(m.group(5)),
+                "pts": int(m.group(6)),
+                "class": int(m.group(7)),
+                "exp": int(m.group(8)),
+            }
+
+        # Parse town flag: TN=0 or TN=1
+        if m := re.search(r'TN=([01])', line):
+            state["in_town"] = m.group(1) == "1"
+
+        # Parse NPCs: NPC=type@x,y,id;...
+        # Type codes: sm=Smith, hl=Healer, wt=Witch, tv=Tavern, st=Storyteller, etc.
+        if m := re.search(r'NPC=([^E\s]+)', line):
+            npc_data = m.group(1)
+
+            # Map NPC type codes to names
+            npc_names = {
+                "sm": "Griswold",  # Smith (Blacksmith)
+                "hl": "Pepin",     # Healer
+                "dg": "Wounded Townsman",  # Dead Guy
+                "tv": "Ogden",     # Tavern owner
+                "cn": "Cain",      # Elder (Storyteller)
+                "dr": "Farnham",   # Drunk
+                "wt": "Adria",     # Witch
+                "bm": "Gillian",   # Barmaid
+                "pg": "Wirt",      # Peg-legged boy
+                "cw": "Cow",       # Cow
+                "fm": "Lester",    # Farmer
+                "gl": "Celia",     # Girl
+                "cf": "Complete Nut",  # Cowfarm
+            }
+
+            for npc_str in npc_data.split(';'):
+                if not npc_str:
+                    continue
+
+                try:
+                    type_code, rest = npc_str.split('@')
+                    x, y, npc_id = map(int, rest.split(','))
+
+                    # Calculate distance from player
+                    me_x, me_y, _, _ = state["me"]
+                    dist = abs(x - me_x) + abs(y - me_y)
+
+                    state["npcs"].append({
+                        "type": type_code,
+                        "name": npc_names.get(type_code, "NPC"),
+                        "x": x,
+                        "y": y,
+                        "id": npc_id,
+                        "dist": dist,
+                    })
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse NPC: {npc_str} - {e}")
                     continue
 
         # Could add E= (events) parsing here in future

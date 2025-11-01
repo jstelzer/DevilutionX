@@ -19,6 +19,7 @@
 #include "../objects.h"
 #include "../spells.h"
 #include "../inv.h"
+#include "../controls/plrctrls.h"
 #include <iostream>
 #include <sstream>
 
@@ -247,7 +248,14 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
     if (intent.action == "move") {
         return ExecuteMove(intent.param_x, intent.param_y);
     } else if (intent.action == "attack") {
-        return ExecuteAttack(intent.param_x, intent.param_y);
+        // Check if we have a monster ID (DSL format: AT id) or position (JSON format)
+        if (intent.param_id > 0) {
+            // Monster ID attack - pass as (monster_id, -1)
+            return ExecuteAttack(intent.param_id, -1);
+        } else {
+            // Position-based attack - pass as (x, y)
+            return ExecuteAttack(intent.param_x, intent.param_y);
+        }
     } else if (intent.action == "cast") {
         return ExecuteCast(intent.param_slot, intent.param_x, intent.param_y);
     } else if (intent.action == "use_potion") {
@@ -324,11 +332,17 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
     if (player == nullptr) {
         return false;
     }
-    
-    // Allow attacking while walking or standing  
-    if (player->_pmode != PM_STAND && 
-        player->_pmode != PM_WALK_NORTHWARDS && 
-        player->_pmode != PM_WALK_SOUTHWARDS && 
+
+    // Check if player is already attacking - prevent spam
+    if (player->_pmode == PM_ATTACK || player->_pmode == PM_RATTACK) {
+        // Already attacking, don't spam attacks
+        return false;
+    }
+
+    // Allow attacking while walking or standing
+    if (player->_pmode != PM_STAND &&
+        player->_pmode != PM_WALK_NORTHWARDS &&
+        player->_pmode != PM_WALK_SOUTHWARDS &&
         player->_pmode != PM_WALK_SIDEWAYS) {
         std::cerr << "GAP: ExecuteAttack - Player not in attackable mode (mode=" << player->_pmode << ")" << std::endl;
         return false;
@@ -421,51 +435,80 @@ bool GapIntentProcessor::ExecuteCast(int slot, int x, int y) {
 }
 
 bool GapIntentProcessor::ExecutePickup(int item_id) {
-    Player* player = GetControlledPlayer();
-    if (player == nullptr) {
-        return false;
-    }
-    
-    if (player->_pmode != PM_STAND) {
-        return false;
-    }
-    
-    // Find the item in the active items list
-    for (uint8_t i = 0; i < ActiveItemCount; i++) {
-        if (ActiveItems[i] == item_id) {
-            const auto& item = Items[item_id];
-            
-            // Check if item is within reasonable range (adjacent)
-            Point itemPos = item.position;
-            Point playerPos = player->position.tile;
-            int dx = std::abs(itemPos.x - playerPos.x);
-            int dy = std::abs(itemPos.y - playerPos.y);
-            
-            if (dx <= 1 && dy <= 1) {
-                // Use existing pickup mechanism
-                NetSendCmdPItem(true, CMD_REQUESTGITEM, itemPos, item);
-                return true;
-            }
-        }
-    }
-    
-    return false;
+    int player_id = GetControlledPlayerId();
+
+    // Use direct pickup execution for companions (bypasses network routing bug)
+    return gap::ExecuteDirectPickup(player_id, item_id);
 }
 
 bool GapIntentProcessor::ExecuteUsePotion(const std::string& kind, int slot) {
     Player* player = GetControlledPlayer();
     if (player == nullptr) {
+        std::cerr << "GAP: ExecuteUsePotion failed - no controlled player" << std::endl;
         return false;
     }
-    
-    if (player->_pmode != PM_STAND) {
+
+    std::cout << "GAP: ExecuteUsePotion - Player " << player->getId()
+              << " (" << player->_pName << ") attempting to use slot " << slot
+              << ", HP=" << (player->_pHitPoints >> 6) << "/" << (player->_pMaxHP >> 6)
+              << ", mode=" << player->_pmode << std::endl;
+
+    // Allow potion use in most modes (like real player)
+    // Block only during death/quit/newlvl transitions
+    if (player->_pmode == PM_DEATH || player->_pmode == PM_QUIT || player->_pmode == PM_NEWLVL) {
+        std::cerr << "GAP: ExecuteUsePotion failed - invalid player mode (" << player->_pmode << ")" << std::endl;
         return false;
     }
-    
-    // For now, return false - potion use needs deeper integration  
-    // TODO: Implement potion usage from belt/inventory
-    std::cerr << "GAP: Potion usage not yet implemented" << std::endl;
-    return false;
+
+    // Validate belt slot
+    if (slot < 0 || slot >= MaxBeltItems) {
+        std::cerr << "GAP: Invalid belt slot " << slot << " (must be 0-" << (MaxBeltItems-1) << ")" << std::endl;
+        return false;
+    }
+
+    // Check if slot has an item
+    const Item& beltItem = player->SpdList[slot];
+    std::cout << "GAP: Belt slot " << slot << " - isEmpty=" << beltItem.isEmpty()
+              << ", itype=" << static_cast<int>(beltItem._itype)
+              << ", name='" << (beltItem.isEmpty() ? "empty" : beltItem._iIName) << "'" << std::endl;
+
+    if (beltItem.isEmpty()) {
+        std::cerr << "GAP: Belt slot " << slot << " is empty" << std::endl;
+        return false;
+    }
+
+    // Dump full belt state for debugging
+    std::cout << "GAP: Full belt state for player " << player->getId() << ": ";
+    for (int i = 0; i < MaxBeltItems; i++) {
+        const Item& item = player->SpdList[i];
+        if (item.isEmpty()) {
+            std::cout << "[" << i << ":empty] ";
+        } else {
+            std::cout << "[" << i << ":" << item._iIName << "] ";
+        }
+    }
+    std::cout << std::endl;
+
+    // Use the belt item (INVITEM_BELT_FIRST = 47, so slot 0 = inv index 47)
+    int invIndex = INVITEM_BELT_FIRST + slot;
+
+    std::cout << "GAP: Using belt item at slot " << slot
+              << " (inv index " << invIndex << ")"
+              << " - " << beltItem._iIName << std::endl;
+
+    // Call the game's UseInvItem function
+    // This handles all the logic: consuming the item, applying effects, etc.
+    bool success = UseInvItem(*player, invIndex);
+
+    if (success) {
+        std::cout << "GAP: Successfully used belt item at slot " << slot
+                  << ", new HP=" << (player->_pHitPoints >> 6) << "/" << (player->_pMaxHP >> 6)
+                  << std::endl;
+    } else {
+        std::cerr << "GAP: UseInvItem returned FALSE for slot " << slot << std::endl;
+    }
+
+    return success;
 }
 
 bool GapIntentProcessor::ExecuteInteract(int object_id) {
@@ -612,8 +655,9 @@ devilution::Intent GapIntentProcessor::ConvertToSeatIntent(const Intent& gap_int
         return devilution::Intent(devilution::Intent::Type::Attack, tick,
                                  gap_intent.param_x, gap_intent.param_y, gap_intent.param_id);
     } else if (gap_intent.action == "pickup") {
+        // Pickup is Interact with item_id in param1
         return devilution::Intent(devilution::Intent::Type::Interact, tick,
-                                 gap_intent.param_x, gap_intent.param_y);
+                                 gap_intent.param_x, gap_intent.param_y, gap_intent.param_id);
     } else if (gap_intent.action == "use_potion") {
         return devilution::Intent(devilution::Intent::Type::UseItem, tick,
                                  0, 0, gap_intent.param_slot);

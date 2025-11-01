@@ -174,17 +174,28 @@ void SeatManager::ExecuteAttackIntent(const Intent& intent, int player_index) {
 }
 
 void SeatManager::ExecuteInteractIntent(const Intent& intent, int player_index) {
-	// STUB: Route to existing interaction system
-	LogVerbose("STUB: ExecuteInteractIntent for player {} at ({},{})", 
-		player_index, intent.data.x, intent.data.y);
-
 #ifdef ENABLE_GAP
 	if (player_index != MyPlayerId) {
-		// Companion interaction
-		Point target = { intent.data.x, intent.data.y };
-		gap::ExecuteDirectInteract(player_index, target);
+		// Companion interaction - check if this is item pickup (param1 set) or object interaction (position only)
+		if (intent.data.param1 > 0) {
+			// Item pickup - param1 contains item_id
+			LogVerbose("SeatManager: ExecuteInteractIntent - Item pickup {} for player {}",
+				intent.data.param1, player_index);
+			gap::ExecuteDirectPickup(player_index, intent.data.param1);
+		} else {
+			// Object interaction - use position
+			LogVerbose("SeatManager: ExecuteInteractIntent - Object interaction at ({},{}) for player {}",
+				intent.data.x, intent.data.y, player_index);
+			Point target = { intent.data.x, intent.data.y };
+			gap::ExecuteDirectInteract(player_index, target);
+		}
+		return;
 	}
 #endif
+
+	// STUB for human player
+	LogVerbose("STUB: ExecuteInteractIntent for player {} at ({},{})",
+		player_index, intent.data.x, intent.data.y);
 }
 
 void SeatManager::ExecuteItemIntent(const Intent& intent, int player_index) {

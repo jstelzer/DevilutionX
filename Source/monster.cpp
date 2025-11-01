@@ -4922,6 +4922,8 @@ bool Monster::isPossibleToHit() const
 void Monster::tag(const Player &tagger)
 {
 	whoHit |= 1 << tagger.getId();
+	std::cerr << "GAP: Monster::tag - Monster " << getId() << " tagged by player " << tagger.getId()
+	          << " (" << tagger._pName << "), whoHit now=" << static_cast<int>(whoHit) << std::endl;
 }
 
 bool Monster::tryLiftGargoyle()

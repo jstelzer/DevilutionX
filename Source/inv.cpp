@@ -2069,19 +2069,23 @@ Item &GetInventoryItem(Player &player, int location)
 	return player.SpdList[location - INVITEM_BELT_FIRST];
 }
 
-bool UseInvItem(int cii)
+bool UseInvItem(Player &player, int cii)
 {
 	if (IsInspectingPlayer())
 		return false;
 
-	Player &player = *MyPlayer;
-
 	if (player._pInvincible && player._pHitPoints == 0 && &player == MyPlayer)
 		return true;
-	if (pcurs != CURSOR_HAND)
-		return true;
-	if (IsPlayerInStore())
-		return true;
+
+	// UI state checks only apply to the human player (MyPlayer)
+	// AI companions bypass these since they don't use mouse/keyboard/UI
+	if (&player == MyPlayer) {
+		if (pcurs != CURSOR_HAND)
+			return true;
+		if (IsPlayerInStore())
+			return true;
+	}
+
 	if (cii < INVITEM_INV_FIRST)
 		return false;
 
@@ -2092,7 +2096,8 @@ bool UseInvItem(int cii)
 		c = cii - INVITEM_INV_FIRST;
 		item = &player.InvList[c];
 	} else {
-		if (ChatFlag)
+		// ChatFlag check only for MyPlayer (UI state)
+		if (&player == MyPlayer && ChatFlag)
 			return true;
 		c = cii - INVITEM_BELT_FIRST;
 

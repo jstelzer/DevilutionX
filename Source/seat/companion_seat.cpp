@@ -109,44 +109,12 @@ bool CompanionSeat::ShouldApplyRateLimit(uint64_t tick) const {
 }
 
 bool CompanionSeat::ShouldApplySurvivalOverride(uint64_t tick) {
-	if (!survival_reflexes_enabled_) {
-		return false;
-	}
-	
-	// Only check survival every few ticks for performance
-	if (tick - last_health_check_ < 5) {
-		return false;
-	}
-	last_health_check_ = tick;
-	
-	const Player& companion = Players[player_index_];
-	if (!companion.plractive) {
-		return false;
-	}
-	
-	// Emergency healing check (< 25% health)
-	int health_percent = (companion._pHitPoints * 100) / companion._pMaxHP;
-	if (health_percent < 25 && (tick - last_emergency_action_) > 30) {
-		LogWarn("CompanionSeat: Emergency survival override for player {} ({}% health)", 
-			player_index_, health_percent);
-		// TODO: Apply emergency healing logic
-		last_emergency_action_ = tick;
-		return true;
-	}
-	
-	// TODO: Overwhelming enemies check (4+ monsters nearby)
-	// For now, simplified survival reflexes - this will be implemented later
-	// when we have better understanding of the Monster API
-	int nearby_monsters = 0; // Placeholder
-	
-	if (nearby_monsters >= 4 && (tick - last_emergency_action_) > 60) {
-		LogWarn("CompanionSeat: Emergency retreat override for player {} ({} nearby monsters)", 
-			player_index_, nearby_monsters);
-		// TODO: Apply emergency retreat logic
-		last_emergency_action_ = tick;
-		return true;
-	}
-	
+	// DISABLED: Survival reflexes now handled by Python orchestrator
+	// This old safety code was blocking proper healing commands from the agent
+	// The Python orchestrator has sophisticated multi-agent coordination
+	// that handles emergency healing, retreat, and tactical decisions
+
+	// Always return false to not block intents
 	return false;
 }
 

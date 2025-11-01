@@ -21,55 +21,59 @@ CHAT_TEMPLATES = {
         "Hey!",
         "Hi there!",
         "Yo!",
-        "Ready to fight!",
+        "What's up?",
+        "Heya!",
     ],
 
     # Status questions
     r"how are you|you ok|you good": [
-        "All good!",
-        "Ready to go!",
-        "Let's do this!",
-        "I'm with you!",
+        "Still breathing!",
+        "Could use a potion, but I'm good",
+        "Hanging in there!",
+        "Living the dream!",
+        "Better than the zombies, that's for sure",
     ],
 
     # Combat requests
     r"attack|fight|kill|engage": [
         "On it!",
-        "Attacking!",
-        "Got it!",
-        "Let's go!",
+        "With pleasure!",
+        "Let's dance!",
+        "Time to party!",
+        "Say no more!",
     ],
 
     # Movement requests
     r"follow|come|move|here": [
         "Coming!",
+        "Right behind you",
         "On my way!",
-        "Following!",
-        "Right behind you!",
+        "Lead the way!",
     ],
 
     # Affirmatives
     r"thanks|thank you|good|nice|great": [
-        "Sure thing!",
-        "No problem!",
-        "You bet!",
         "Anytime!",
+        "No sweat!",
+        "You got it!",
+        "We make a good team!",
+        "That's what I'm here for!",
     ],
 
     # Questions about readiness
     r"ready|prepared|set": [
-        "Ready!",
-        "Let's go!",
-        "All set!",
         "Born ready!",
+        "Let's do this!",
+        "Ready as I'll ever be",
+        "Bring it on!",
     ],
 
-    # Fallback friendly responses
-    r".*": [  # Catch-all
-        "Got it!",
-        "Okay!",
-        "Sure!",
-        "Understood!",
+    # Fallback friendly responses - now more personality
+    r".*": [  # Catch-all - use LLM instead when enabled
+        "Hmm?",
+        "What's that?",
+        "Yeah?",
+        "I hear ya",
     ],
 }
 
@@ -82,16 +86,18 @@ class ChatHandler:
     Optionally uses cheap LLM for complex messages.
     """
 
-    def __init__(self, send_message_callback, use_llm: bool = False, model: str = "qwen2.5:0.5b"):
+    def __init__(self, send_message_callback, use_llm: bool = True, model: str = "llama3.1:8b", ollama_url: str = "http://localhost:11434/api/generate"):
         self.send_message = send_message_callback
         self.use_llm = use_llm
         self.model = model
+        self.ollama_url = ollama_url
 
         self.chat_queue = queue.Queue()
         self.running = False
         self.thread = None
+        self.game_context = {}  # Store latest game state for context
 
-        logger.info(f"ChatHandler initialized (LLM: {use_llm})")
+        logger.info(f"ChatHandler initialized (LLM: {use_llm}, model: {model})")
 
     def start(self):
         """Start the chat handler thread"""
@@ -105,6 +111,17 @@ class ChatHandler:
         self.running = False
         if self.thread:
             self.thread.join(timeout=1.0)
+
+    def update_context(self, state: dict):
+        """Update game context for LLM responses"""
+        self.game_context = {
+            "hp_pct": state.get("me", [0, 0, 100, 100])[2],
+            "mp_pct": state.get("me", [0, 0, 100, 100])[3],
+            "in_town": state.get("in_town", False),
+            "floor": state.get("floor", 0),
+            "mobs_nearby": len(state.get("mobs", [])),
+            "stats": state.get("stats"),
+        }
 
     def handle_chat(self, sender: str, message: str):
         """Queue a chat message for async handling"""
@@ -156,26 +173,54 @@ class ChatHandler:
         return random.choice(CHAT_TEMPLATES[".*"])
 
     def _get_llm_response(self, message: str) -> Optional[str]:
-        """Use cheap LLM for natural response (optional)"""
+        """Use LLM for natural, context-aware response"""
         try:
             import requests
 
+            # Build context string
+            ctx = self.game_context
+            context_str = ""
+            if ctx:
+                location = "in town" if ctx.get("in_town") else f"in dungeon (floor {ctx.get('floor', 0)})"
+                combat_status = f"{ctx.get('mobs_nearby', 0)} monsters nearby" if ctx.get("mobs_nearby", 0) > 0 else "safe"
+                context_str = f"You're {location}, {combat_status}. HP: {ctx.get('hp_pct', 100)}%."
+
+            # Natural conversation prompt - relaxed personality
+            prompt = f"""You're an adventurer fighting through Diablo's dungeons with your friend. You're brave but not reckless, helpful but not a servant. You have opinions, crack jokes, and aren't afraid to be sarcastic when things get rough. You talk like a real person, not a formal assistant.
+
+Current situation: {context_str}
+
+Your friend says: "{message}"
+
+Reply naturally like you're chatting between fights. Keep it short (1-2 sentences). Be yourself - casual, genuine, maybe a little snarky. No need to be overly helpful or polite."""
+
             resp = requests.post(
-                "http://localhost:11434/api/generate",
+                self.ollama_url,
                 json={
                     "model": self.model,
-                    "prompt": f"You're a terse Diablo companion. Reply in 3 words max to: '{message}'",
+                    "prompt": prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.7,
-                        "num_predict": 10,
+                        "temperature": 0.9,  # More creative/varied
+                        "num_predict": 100,  # Room for personality
+                        "top_p": 0.95,  # More diverse word choices
                     }
                 },
-                timeout=2.0
+                timeout=5.0  # Longer timeout for better model
             )
 
             if resp.ok:
-                return resp.json()["response"].strip()
+                response = resp.json()["response"].strip()
+                # Clean up common artifacts and formal language
+                response = response.replace('"', '').replace("'", "")
+                # Remove overly formal starts
+                for prefix in ["Ah, ", "Well, ", "Indeed, ", "Certainly, ", "Of course, "]:
+                    if response.startswith(prefix):
+                        response = response[len(prefix):]
+                # Capitalize first letter after cleanup
+                if response:
+                    response = response[0].upper() + response[1:]
+                return response[:250]  # Cap at 250 chars for more natural responses
 
         except Exception as e:
             logger.warning(f"LLM chat failed: {e}")
