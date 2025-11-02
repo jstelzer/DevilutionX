@@ -344,3 +344,6 @@ ApplyPlrDamage(DamageType::Physical, player, 0, 0, dam);
 - ~~Fix JSON truncation in LLM responses~~ ✅ Fixed with `num_predict: 200`
 - ~~Investigate GAP companion monster visibility~~ ✅ Resolved - monsters visible to companion
 
+## Python
+
+when working with python, use unix line endings, not windows.

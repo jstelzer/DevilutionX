@@ -1,4 +1,5 @@
 #include "gap_dsl.h"
+#include "gap_stores.h"
 #include "../player.h"
 #include "../monster.h"
 #include "../items.h"
@@ -240,6 +241,75 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         if (!first_npc) {
             dsl << " NPC=" << npcs.str();
         }
+
+        // Store inventories (only if companion near vendor)
+        // Format: ST_{code}=type/qual/price/id,type/qual/price/id,...
+        Point playerPos = player->position.tile;
+
+        // Check if companion is near smith (Griswold)
+        for (size_t i = 0; i < NUM_TOWNERS; i++) {
+            const auto& towner = Towners[i];
+            if (!towner.anim.has_value()) continue;
+
+            // Calculate distance to this NPC
+            int dx = std::abs(towner.position.x - playerPos.x);
+            int dy = std::abs(towner.position.y - playerPos.y);
+            int dist = std::max(dx, dy);  // Chebyshev distance
+
+            // Only show store inventory if within 2 tiles
+            if (dist > 2) continue;
+
+            std::vector<StoreItem> storeItems;
+            const char* store_code = nullptr;
+
+            switch (towner._ttype) {
+            case TOWN_SMITH:
+                storeItems = GetStoreInventory(TOWN_SMITH);
+                store_code = "sm";
+                break;
+            case TOWN_HEALER:
+                storeItems = GetStoreInventory(TOWN_HEALER);
+                store_code = "hl";
+                break;
+            case TOWN_WITCH:
+                storeItems = GetStoreInventory(TOWN_WITCH);
+                store_code = "wt";
+                break;
+            case TOWN_PEGBOY:
+                storeItems = GetStoreInventory(TOWN_PEGBOY);
+                store_code = "pg";
+                break;
+            default:
+                continue;  // Not a vendor
+            }
+
+            if (storeItems.empty()) continue;
+
+            // Encode store inventory
+            std::ostringstream store;
+            bool first_item = true;
+
+            // Limit to first 10 items to keep DSL compact
+            int itemCount = 0;
+            for (const auto& item : storeItems) {
+                if (itemCount++ >= 10) break;
+
+                if (!first_item) store << ",";
+                first_item = false;
+
+                store << item.typeCode << "/"
+                      << item.quality << "/"
+                      << item.price << "/"
+                      << item.itemIndex;
+            }
+
+            if (!first_item) {
+                dsl << " ST_" << store_code << "=" << store.str();
+            }
+        }
+
+        // Add companion's gold
+        dsl << " GOLD=" << player->_pGold;
     }
 
     // Note: Could add E= (events) in the future for things like:

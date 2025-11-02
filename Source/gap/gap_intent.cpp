@@ -2,6 +2,7 @@
 #include "gap_json.h"
 #include "gap_core.h"
 #include "gap_network.h"
+#include "gap_stores.h"
 #ifdef ENABLE_GAP
 #include "gap_chat.h"
 #include "../seat/seat.h"
@@ -217,6 +218,40 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
             intent.param_kind = intent.param_kind.substr(1);
         }
 
+    } else if (cmd == "BUY") {
+        // BUY npc_code item_index
+        // Example: BUY hl 5  (buy item #5 from healer)
+        std::string npc_code;
+        iss >> npc_code >> intent.param_id;
+        intent.action = "buy";
+        intent.param_kind = npc_code;  // "sm", "hl", "wt", "pg"
+
+    } else if (cmd == "SELL") {
+        // SELL inv_slot
+        // Example: SELL 7  (sell inventory slot 7)
+        intent.action = "sell";
+        iss >> intent.param_slot;
+
+    } else if (cmd == "REP") {
+        // REP inv_slot
+        // Example: REP 3  (repair inventory slot 3)
+        intent.action = "repair";
+        iss >> intent.param_slot;
+
+    } else if (cmd == "ID") {
+        // ID inv_slot
+        // Example: ID 2  (identify inventory slot 2)
+        intent.action = "identify";
+        iss >> intent.param_slot;
+
+    } else if (cmd == "ADDSTAT") {
+        // ADDSTAT stat_name
+        // Example: ADDSTAT STR, ADDSTAT DEX, ADDSTAT MAG, ADDSTAT VIT
+        std::string stat_name;
+        iss >> stat_name;
+        intent.action = "addstat";
+        intent.param_kind = stat_name;  // "STR", "DEX", "MAG", "VIT"
+
     } else {
         std::cerr << "GAP DSL: Unknown command: " << cmd << std::endl;
         return;
@@ -270,8 +305,18 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteExplore();
     } else if (intent.action == "chat") {
         return ExecuteChat(intent.param_kind);
+    } else if (intent.action == "buy") {
+        return ExecuteBuy(intent.param_kind, intent.param_id);
+    } else if (intent.action == "sell") {
+        return ExecuteSell(intent.param_slot);
+    } else if (intent.action == "repair") {
+        return ExecuteRepair(intent.param_slot);
+    } else if (intent.action == "identify") {
+        return ExecuteIdentify(intent.param_slot);
+    } else if (intent.action == "addstat") {
+        return ExecuteAddStat(intent.param_kind);
     }
-    
+
     std::cerr << "GAP: Unknown intent action: " << intent.action << std::endl;
     return false;
 }
@@ -621,27 +666,46 @@ void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
     
     while (!intent_queue_.empty()) {
         const Intent& gap_intent = intent_queue_.front();
-        
+
         if (gap_intent.target_tick > 0 && gap_intent.target_tick > current_tick) {
             break; // Wait for target tick
         }
-        
-        // Convert GAP intent to Seat intent
-        devilution::Intent seat_intent = ConvertToSeatIntent(gap_intent, current_tick);
-        
-        // Get the companion seat for the controlled player
-        int controlled_player = GapCore::Instance().GetControlledPlayer();
-        auto* seat = seatManager.GetSeat(controlled_player);
-        
-        if (auto* companion_seat = dynamic_cast<devilution::CompanionSeat*>(seat)) {
-            companion_seat->EnqueueIntent(seat_intent);
-            std::cout << "GAP: Bridged " << gap_intent.action << " intent to CompanionSeat for player " << controlled_player << std::endl;
+
+        // Some actions should be executed directly, not through the Seat system
+        // These include: stats, shopping, identification, etc.
+        bool use_direct_execution = (
+            gap_intent.action == "addstat" ||
+            gap_intent.action == "buy" ||
+            gap_intent.action == "sell" ||
+            gap_intent.action == "repair" ||
+            gap_intent.action == "identify"
+        );
+
+        if (use_direct_execution) {
+            // Execute directly without going through Seat system
+            if (ExecuteIntent(gap_intent)) {
+                std::cout << "GAP: Executed " << gap_intent.action << " intent directly" << std::endl;
+            } else {
+                std::cerr << "GAP: Failed to execute " << gap_intent.action << " intent" << std::endl;
+            }
         } else {
-            std::cerr << "GAP: No CompanionSeat found for player " << controlled_player << ", using direct execution" << std::endl;
-            // Fallback to direct execution
-            ExecuteIntent(gap_intent);
+            // Convert GAP intent to Seat intent for movement/combat actions
+            devilution::Intent seat_intent = ConvertToSeatIntent(gap_intent, current_tick);
+
+            // Get the companion seat for the controlled player
+            int controlled_player = GapCore::Instance().GetControlledPlayer();
+            auto* seat = seatManager.GetSeat(controlled_player);
+
+            if (auto* companion_seat = dynamic_cast<devilution::CompanionSeat*>(seat)) {
+                companion_seat->EnqueueIntent(seat_intent);
+                std::cout << "GAP: Bridged " << gap_intent.action << " intent to CompanionSeat for player " << controlled_player << std::endl;
+            } else {
+                std::cerr << "GAP: No CompanionSeat found for player " << controlled_player << ", using direct execution" << std::endl;
+                // Fallback to direct execution
+                ExecuteIntent(gap_intent);
+            }
         }
-        
+
         intent_queue_.pop();
     }
 }
@@ -677,6 +741,101 @@ devilution::Intent GapIntentProcessor::ConvertToSeatIntent(const Intent& gap_int
                                  gap_intent.param_x, gap_intent.param_y);
     }
 }
+
+bool GapIntentProcessor::ExecuteBuy(const std::string& npcCode, int itemIndex) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Store: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    // Map NPC code to _talker_id
+    _talker_id npcType;
+    if (npcCode == "sm") {
+        npcType = TOWN_SMITH;
+    } else if (npcCode == "hl") {
+        npcType = TOWN_HEALER;
+    } else if (npcCode == "wt") {
+        npcType = TOWN_WITCH;
+    } else if (npcCode == "pg") {
+        npcType = TOWN_PEGBOY;
+    } else {
+        std::cerr << "GAP Store: Unknown NPC code: " << npcCode << std::endl;
+        return false;
+    }
+
+    return CompanionBuyItem(*player, npcType, itemIndex);
+}
+
+bool GapIntentProcessor::ExecuteSell(int invSlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Store: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    return CompanionSellItem(*player, invSlot);
+}
+
+bool GapIntentProcessor::ExecuteRepair(int invSlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Store: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    return CompanionRepairItem(*player, invSlot);
+}
+
+bool GapIntentProcessor::ExecuteIdentify(int invSlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Store: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    return CompanionIdentifyItem(*player, invSlot);
+}
+
+bool GapIntentProcessor::ExecuteAddStat(const std::string& statName) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Stats: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    // Check if player has stat points available
+    if (player->_pStatPts <= 0) {
+        std::cerr << "GAP Stats: No stat points available" << std::endl;
+        return false;
+    }
+
+    // Apply stat increase
+    if (statName == "STR") {
+        ModifyPlrStr(*player, 1);
+        std::cout << "GAP Stats: Added 1 point to STR" << std::endl;
+    } else if (statName == "DEX") {
+        ModifyPlrDex(*player, 1);
+        std::cout << "GAP Stats: Added 1 point to DEX" << std::endl;
+    } else if (statName == "MAG") {
+        ModifyPlrMag(*player, 1);
+        std::cout << "GAP Stats: Added 1 point to MAG" << std::endl;
+    } else if (statName == "VIT") {
+        ModifyPlrVit(*player, 1);
+        std::cout << "GAP Stats: Added 1 point to VIT" << std::endl;
+    } else {
+        std::cerr << "GAP Stats: Unknown stat name: " << statName << std::endl;
+        return false;
+    }
+
+    // Deduct stat point
+    player->_pStatPts--;
+
+    std::cout << "GAP Stats: Stat points remaining: " << player->_pStatPts << std::endl;
+
+    return true;
+}
+
 #endif
 
 } // namespace devilution::gap

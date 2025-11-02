@@ -43,6 +43,8 @@ def parse_dsl_state(line: str) -> Dict:
         "stats": None,  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}
         "in_town": False,  # Town flag
         "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
+        "stores": {},  # Store inventories: {"sm": [...], "hl": [...], ...}
+        "gold": 0,  # Companion's gold
     }
 
     if not line or not line.strip():
@@ -206,6 +208,40 @@ def parse_dsl_state(line: str) -> Dict:
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse NPC: {npc_str} - {e}")
                     continue
+
+        # Parse store inventories: ST_sm=type/qual/price/id,type/qual/price/id,...
+        # Store codes: sm=Smith, hl=Healer, wt=Witch, pg=Wirt
+        for store_code in ["sm", "hl", "wt", "pg"]:
+            pattern = f'ST_{store_code}=([^\\s]+)'
+            if m := re.search(pattern, line):
+                store_data = m.group(1)
+                store_items = []
+
+                for item_str in store_data.split(','):
+                    if not item_str:
+                        continue
+
+                    try:
+                        parts = item_str.split('/')
+                        if len(parts) >= 4:
+                            item_type, quality, price, item_id = parts[0:4]
+
+                            store_items.append({
+                                "type": item_type,
+                                "quality": quality,
+                                "price": int(price),
+                                "id": int(item_id),
+                            })
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Failed to parse store item: {item_str} - {e}")
+                        continue
+
+                if store_items:
+                    state["stores"][store_code] = store_items
+
+        # Parse gold: GOLD=2500
+        if m := re.search(r'GOLD=(\d+)', line):
+            state["gold"] = int(m.group(1))
 
         # Could add E= (events) parsing here in future
 

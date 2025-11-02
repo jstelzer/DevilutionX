@@ -18,6 +18,7 @@ from agents.movement import MovementAgent
 from agents.loot import LootAgent
 from agents.stats import StatsAgent
 from agents.town import TownAgent
+from agents.shopping import ShoppingAgent
 from dsl_parser import parse_dsl_state
 from memory_store import MemoryStore
 from chat_handler import ChatHandler
@@ -73,12 +74,13 @@ class AgentOrchestrator:
         self.loot = LootAgent(model=model, ollama_url=ollama_url)
         self.stats = StatsAgent(model=model, ollama_url=ollama_url)
         self.town = TownAgent(model=model, ollama_url=ollama_url)
+        self.shopping = ShoppingAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
 
         # List of all agents for easy model switching
         self.agents = [
             self.combat, self.healing, self.loot,
-            self.stats, self.town, self.movement
+            self.stats, self.town, self.shopping, self.movement
         ]
 
         # Chat handler (runs in thread, non-blocking)
@@ -90,7 +92,7 @@ class AgentOrchestrator:
         )
 
         logger.info("🎯 Agent Orchestrator initialized")
-        logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Movement")
+        logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Shopping, Movement")
         logger.info(f"  Dungeon model: {self.dungeon_model} (fast combat)")
         logger.info(f"  Town model: {self.town_model} (sophisticated interactions)")
         logger.info(f"  Think interval: {think_interval}s")
@@ -253,8 +255,8 @@ class AgentOrchestrator:
         # STATS - high priority when available (character progression)
         stats_rec = self.stats.evaluate(state)
         if stats_rec and stats_rec.weight > 0.0:
-            # Priority 7 for stats (important for long-term strength)
-            score = stats_rec.weight * 7
+            # Priority 9 for stats (character progression is critical, takes <1 second)
+            score = stats_rec.weight * 9
             recommendations.append(("Stats", stats_rec, score))
 
         # TOWN - handle town activities
@@ -263,6 +265,17 @@ class AgentOrchestrator:
             # Priority 5 for town (shopping, repair)
             score = town_rec.weight * 5
             recommendations.append(("Town", town_rec, score))
+
+        # SHOPPING - buy potions, sell junk (in town only)
+        shopping_rec = self.shopping.evaluate(state)
+        if shopping_rec and shopping_rec.weight > 0.0:
+            # Priority 6 for shopping (buying potions is important)
+            # Boost priority if low on HP potions
+            belt = state.get("belt", [])
+            hp_potions = sum(1 for slot in belt if slot == "hp")
+            priority = 7 if hp_potions < 2 else 6
+            score = shopping_rec.weight * priority
+            recommendations.append(("Shopping", shopping_rec, score))
 
         # COMBAT - high priority if monsters nearby
         combat_rec = self.combat.evaluate(state)
@@ -435,6 +448,10 @@ class AgentOrchestrator:
 
                 state_count += 1
 
+                # Debug: Log raw DSL for first few states to diagnose NPC issue
+                if state_count <= 3 or state.get("in_town"):
+                    logger.info(f"🔍 Raw DSL: {dsl_line[:200]}...")  # First 200 chars
+
                 # Update chat context with latest game state
                 self.chat_handler.update_context(state)
 
@@ -448,7 +465,11 @@ class AgentOrchestrator:
                         lvl = stats['lvl']
                         exp = stats.get('exp', 0)
                         pts = stats.get('pts', 0)
-                        stats_str = f"lvl={lvl} exp={exp} pts={pts}"
+                        str_val = stats.get('str', 0)
+                        dex_val = stats.get('dex', 0)
+                        mag_val = stats.get('mag', 0)
+                        vit_val = stats.get('vit', 0)
+                        stats_str = f"lvl={lvl} exp={exp} pts={pts} STR={str_val} DEX={dex_val} MAG={mag_val} VIT={vit_val}"
                     else:
                         stats_str = "no_stats"
                     town_str = "TOWN" if state.get("in_town") else f"floor={state['floor']}"

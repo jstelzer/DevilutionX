@@ -161,6 +161,12 @@ private:
                 std::cout << "GAP: InitPlayerGFX completed, AnimInfo.numberOfFrames="
                           << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
 
+                // Set to standing animation (required for proper graphics initialization)
+                // This is what multiplayer does when a player joins
+                NewPlrAnim(Players[requested_slot], player_graphic::Stand, Players[requested_slot]._pdir);
+                std::cout << "GAP: NewPlrAnim(Stand) completed, AnimInfo.numberOfFrames="
+                          << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
+
                 // Initialize light radius for companion - CRITICAL for monster visibility!
                 if (Players[requested_slot]._pLightRad <= 0) {
                     Players[requested_slot]._pLightRad = 10; // Default light radius
@@ -349,6 +355,12 @@ void GapCore::OnGameTick(uint32_t tick) {
                     std::cout << "GAP DSL: About to call InitPlayerGFX for companion slot " << requested_slot << std::endl;
                     InitPlayerGFX(Players[requested_slot]);
                     std::cout << "GAP DSL: InitPlayerGFX completed, AnimInfo.numberOfFrames="
+                              << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
+
+                    // Set to standing animation (required for proper graphics initialization)
+                    // This is what multiplayer does when a player joins
+                    NewPlrAnim(Players[requested_slot], player_graphic::Stand, Players[requested_slot]._pdir);
+                    std::cout << "GAP DSL: NewPlrAnim(Stand) completed, AnimInfo.numberOfFrames="
                               << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
 
                     std::cout << "GAP DSL: Successfully loaded companion " << Players[requested_slot]._pName

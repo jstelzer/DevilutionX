@@ -32,13 +32,12 @@ class StatsAgent(BaseAgent):
         if not stats or stats.get("pts", 0) == 0:
             return False
 
-        # Don't allocate stats during combat
+        # Don't allocate stats during combat (dangerous to stand still)
         if len(state.get("mobs", [])) > 0:
             return False
 
-        # Don't allocate in town (let town agent handle town stuff)
-        if state.get("in_town", False):
-            return False
+        # Town is perfectly safe for stat allocation
+        # It only takes ~5 commands, executes instantly
 
         return True
 

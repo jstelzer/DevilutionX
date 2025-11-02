@@ -867,6 +867,7 @@ if(ENABLE_GAP)
     gap/gap_dsl.cpp
     gap/gap_intent.cpp
     gap/gap_json.cpp
+    gap/gap_stores.cpp
     gap/gap_chat.cpp
     gap/gap_network.cpp
     seat/seat_manager.cpp

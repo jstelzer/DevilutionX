@@ -70,19 +70,11 @@ bool ExecuteDirectMove(int player_id, Point target) {
               << " _pWFrames=" << static_cast<int>(player._pWFrames) << std::endl;
 
     if (player.AnimInfo.numberOfFrames == 0 || player._pWFrames == 0) {
-        std::cerr << "GAP: ExecuteDirectMove - AnimInfo not initialized, attempting to reload graphics..." << std::endl;
-        InitPlayerGFX(player);
-
-        // Check if reload succeeded
-        if (player.AnimInfo.numberOfFrames == 0 || player._pWFrames == 0) {
-            std::cerr << "GAP: ExecuteDirectMove - WARNING: Graphics reload failed, numberOfFrames still 0" << std::endl;
-            std::cerr << "GAP: ExecuteDirectMove - Proceeding anyway (town movement may work without full graphics)" << std::endl;
-            // Don't return false - allow movement attempt even without full graphics initialized
-            // In town, movement might work via network commands even if local graphics aren't loaded
-        } else {
-            std::cerr << "GAP: ExecuteDirectMove - Graphics reload succeeded! numberOfFrames="
-                      << static_cast<int>(player.AnimInfo.numberOfFrames) << std::endl;
-        }
+        // AnimInfo not initialized - this causes FPE crashes in animation calculations
+        // This happens when companion spawns in town before graphics are loaded
+        // Block movement until companion enters dungeon (triggers graphics load)
+        std::cerr << "GAP: ExecuteDirectMove - ERROR: AnimInfo not initialized! Blocking movement to prevent FPE crash." << std::endl;
+        return false;
     }
 
     // Use the game's pathfinding system
