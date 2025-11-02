@@ -161,7 +161,12 @@ class ChatHandler:
 
         message_lower = message.lower().strip()
 
-        # Try each pattern in order
+        # If message is long/complex (>5 words or >30 chars), skip templates and use LLM
+        word_count = len(message_lower.split())
+        if word_count > 5 or len(message_lower) > 30:
+            return None  # Complex message - use LLM for better response
+
+        # Try each pattern in order (only for simple, short messages)
         for pattern, responses in CHAT_TEMPLATES.items():
             if re.search(pattern, message_lower):
                 # Don't use catch-all (.*) unless no other match
@@ -169,8 +174,8 @@ class ChatHandler:
                     continue
                 return random.choice(responses)
 
-        # Use catch-all if nothing else matched
-        return random.choice(CHAT_TEMPLATES[".*"])
+        # No template matched - let LLM handle it
+        return None
 
     def _get_llm_response(self, message: str) -> Optional[str]:
         """Use LLM for natural, context-aware response"""
