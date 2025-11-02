@@ -40,6 +40,8 @@ def parse_dsl_state(line: str) -> Dict:
         "mobs": [],
         "loot": [],
         "belt": [],  # Belt slots: ["hp", "mp", "em", ...]
+        "inventory": [],  # Inventory items: [{"type": "hp", "slot": 5, "quality": "normal", "identified": True}, ...]
+        "inv_count": 0,  # Total items in inventory
         "stats": None,  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}
         "in_town": False,  # Town flag
         "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
@@ -140,10 +142,57 @@ def parse_dsl_state(line: str) -> Dict:
                     continue
 
         # Parse belt: B=hp,mp,em,em,hp,hp,rj,em (8 slots)
-        # Types: hp=healing, mp=mana, rj=rejuv, sc=scroll, em=empty, ms=misc
+        # Types: hp=healing, mp=mana, rj=rejuv, em=empty, ms=misc
+        # Scrolls: sh=heal, sp=portal, sr=resurrect, sl=lightning, sf=fireball, si=identify, sc=generic
         if m := re.search(r'B=([a-z,]+)', line):
             belt_data = m.group(1)
             state["belt"] = belt_data.split(',')
+
+        # Parse inventory: INV=type@slot;type@slot;...
+        # Types: hp, mp, rj, sw, ax, bw, etc.
+        # Quality: _m=magic, _u=unique (e.g., sw_m = magic sword)
+        # Identified: ! suffix means unidentified (e.g., sw_m! = unidentified magic sword)
+        if m := re.search(r'INV=([^A-Z\s]+)', line):
+            inv_data = m.group(1)
+            for inv_str in inv_data.split(';'):
+                if not inv_str:
+                    continue
+
+                try:
+                    type_code, slot_str = inv_str.split('@')
+                    slot = int(slot_str)
+
+                    # Parse type code with quality/identified flags
+                    base_type = type_code
+                    quality = "normal"
+                    identified = True
+
+                    # Check for unidentified flag (!)
+                    if '!' in type_code:
+                        identified = False
+                        base_type = type_code.replace('!', '')
+
+                    # Check for quality suffix (_m or _u)
+                    if base_type.endswith('_m'):
+                        quality = "magic"
+                        base_type = base_type[:-2]
+                    elif base_type.endswith('_u'):
+                        quality = "unique"
+                        base_type = base_type[:-2]
+
+                    state["inventory"].append({
+                        "type": base_type,
+                        "slot": slot,
+                        "quality": quality,
+                        "identified": identified,
+                    })
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse inventory item: {inv_str} - {e}")
+                    continue
+
+        # Parse inventory count: INVC=15
+        if m := re.search(r'INVC=(\d+)', line):
+            state["inv_count"] = int(m.group(1))
 
         # Parse stats: S=str,dex,mag,vit,lvl,pts,class,exp
         # Class: 0=warrior, 1=rogue, 2=sorc, 3=monk, 4=bard, 5=barb

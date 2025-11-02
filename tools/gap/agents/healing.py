@@ -55,8 +55,9 @@ class HealingAgent(BaseAgent):
         else:
             return AgentResponse(command="NONE", weight=0.0, reasoning="Healing: HP OK")
 
-        # Check if we have ANY healing potions
-        healing_slots = [(slot, item_type) for slot, item_type in enumerate(belt) if item_type in ["hp", "rj"]]
+        # Check if we have ANY healing items (potions or scrolls)
+        healing_slots = [(slot, item_type) for slot, item_type in enumerate(belt)
+                        if item_type in ["hp", "rj", "sh"]]  # sh = healing scroll
 
         # No healing items available - coordinate with LootAgent
         if not healing_slots:
@@ -86,32 +87,50 @@ class HealingAgent(BaseAgent):
                 reasoning=f"Healing: {reasoning} ({hp_pct}%) but NO POTIONS"
             )
 
-        # Find best potion in belt
-        # Priority: rj (rejuv) > hp (healing) for critical, hp > rj for minor damage
+        # Find best healing item in belt
+        # Priority: rj (rejuv) > hp (healing) > sh (scroll) for critical
+        #           hp > rj > sh for minor damage (save scrolls when possible)
         best_slot = None
         best_type = None
+        best_command = None
 
         for slot, item_type in healing_slots:
-            # Critical HP: prefer rejuv
-            if hp_pct < 20 and item_type == "rj":
-                best_slot = slot
-                best_type = "rejuv"
-                break
-            # Otherwise: prefer healing potion (more common)
-            elif item_type == "hp" and best_type != "rj":
-                best_slot = slot
-                best_type = "heal"
-            # Fallback to rejuv if no hp found
-            elif item_type == "rj" and best_slot is None:
-                best_slot = slot
-                best_type = "rejuv"
+            # Critical HP: prefer rejuv > healing > scroll
+            if hp_pct < 20:
+                if item_type == "rj":
+                    best_slot = slot
+                    best_type = "rejuv"
+                    best_command = "US"
+                    break
+                elif item_type == "hp" and best_type != "rj":
+                    best_slot = slot
+                    best_type = "heal"
+                    best_command = "US"
+                elif item_type == "sh" and best_slot is None:
+                    best_slot = slot
+                    best_type = "heal_scroll"
+                    best_command = "CS"
+            # Normal HP: prefer potions over scrolls (save scrolls for when we're out of potions)
+            else:
+                if item_type == "hp" and best_type not in ["rj", "heal"]:
+                    best_slot = slot
+                    best_type = "heal"
+                    best_command = "US"
+                elif item_type == "rj" and best_type not in ["hp", "heal"]:
+                    best_slot = slot
+                    best_type = "rejuv"
+                    best_command = "US"
+                elif item_type == "sh" and best_slot is None:
+                    best_slot = slot
+                    best_type = "heal_scroll"
+                    best_command = "CS"
 
         # Log belt state for debugging
         belt_status = ",".join(f"{i}:{t}" for i, t in enumerate(belt))
         logger.debug(f"Healing: Belt=[{belt_status}] choosing slot {best_slot} ({best_type})")
 
         return AgentResponse(
-            command=f"US {best_slot}",
+            command=f"{best_command} {best_slot}",
             weight=weight,
             reasoning=f"Healing: {reasoning} ({hp_pct}%) using {best_type} at slot {best_slot}"
         )

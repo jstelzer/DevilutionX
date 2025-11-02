@@ -19,6 +19,9 @@ from agents.loot import LootAgent
 from agents.stats import StatsAgent
 from agents.town import TownAgent
 from agents.shopping import ShoppingAgent
+from agents.inventory import InventoryAgent
+from agents.griswold import GriswoldAgent
+from agents.cain import CainAgent
 from dsl_parser import parse_dsl_state
 from memory_store import MemoryStore
 from chat_handler import ChatHandler
@@ -75,12 +78,16 @@ class AgentOrchestrator:
         self.stats = StatsAgent(model=model, ollama_url=ollama_url)
         self.town = TownAgent(model=model, ollama_url=ollama_url)
         self.shopping = ShoppingAgent(model=model, ollama_url=ollama_url)
+        self.inventory = InventoryAgent(model=model, ollama_url=ollama_url)
+        self.griswold = GriswoldAgent(model=model, ollama_url=ollama_url)
+        self.cain = CainAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
 
         # List of all agents for easy model switching
         self.agents = [
             self.combat, self.healing, self.loot,
-            self.stats, self.town, self.shopping, self.movement
+            self.stats, self.town, self.shopping,
+            self.inventory, self.griswold, self.cain, self.movement
         ]
 
         # Chat handler (runs in thread, non-blocking)
@@ -92,7 +99,7 @@ class AgentOrchestrator:
         )
 
         logger.info("🎯 Agent Orchestrator initialized")
-        logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Shopping, Movement")
+        logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Shopping, Inventory, Griswold, Cain, Movement")
         logger.info(f"  Dungeon model: {self.dungeon_model} (fast combat)")
         logger.info(f"  Town model: {self.town_model} (sophisticated interactions)")
         logger.info(f"  Think interval: {think_interval}s")

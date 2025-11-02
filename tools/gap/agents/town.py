@@ -25,7 +25,7 @@ class TownAgent(BaseAgent):
         Decide town actions:
         1. Navigate to Pepin if health potions needed
         2. Navigate to Adria if mana potions needed (for casters)
-        3. Interact with shop when adjacent
+        3. Defer to Shopping agent when stores are visible
         4. Heal up if damaged
         """
         belt = state.get("belt", [])
@@ -33,6 +33,7 @@ class TownAgent(BaseAgent):
         me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
         player_pos = state.get("player", None)
         npcs = state.get("npcs", [])
+        stores = state.get("stores", {})
 
         # Count healing potions in belt
         hp_potions = sum(1 for slot in belt if slot in ["hp", "rj"])
@@ -40,6 +41,14 @@ class TownAgent(BaseAgent):
 
         # Priority 1: Navigate to Pepin (healer) if health potions low
         if hp_potions < 3:
+            # If stores are visible (we're near vendor), defer to Shopping agent
+            if "hl" in stores and len(stores["hl"]) > 0:
+                return AgentResponse(
+                    command="NONE",
+                    weight=0.0,
+                    reasoning=f"Town: Near healer with store visible - deferring to Shopping agent"
+                )
+
             # Find Pepin in NPC list
             pepin = next((npc for npc in npcs if npc["type"] == "hl"), None)
 
@@ -47,12 +56,13 @@ class TownAgent(BaseAgent):
                 npc_x, npc_y = pepin["x"], pepin["y"]
                 dist = abs(npc_x - me_x) + abs(npc_y - me_y)
 
-                if dist <= 1:
-                    # Adjacent to Pepin - interact to open shop
+                if dist <= 2:
+                    # Near Pepin - wait for Shopping agent to handle purchase
+                    # Store inventory should appear in DSL state
                     return AgentResponse(
-                        command=f"IN {pepin['id']}",
-                        weight=0.8,
-                        reasoning=f"Town: Interacting with Pepin to buy potions ({hp_potions}/8)"
+                        command="NONE",
+                        weight=0.0,
+                        reasoning=f"Town: Near Pepin (dist={dist}) - waiting for stores to populate"
                     )
                 elif dist > 3:
                     # Too far - navigate to Pepin

@@ -41,16 +41,19 @@ class ShoppingAgent(BaseAgent):
         Evaluate shopping needs and recommend action.
 
         Priority:
-        1. Buy health potions if belt has < 3
-        2. Sell junk items if inventory > 80% full (future)
+        1. Buy health potions if belt has < 3 AND inventory doesn't have them
+        2. Sell junk items if inventory > 80% full (deferred to Griswold agent)
         3. Repair damaged equipment (future)
         """
         belt = state.get("belt", [])
+        inventory = state.get("inventory", [])
         stores = state.get("stores", {})
         gold = state.get("gold", 0)
 
-        # Count available health potions in belt
-        hp_potions = sum(1 for slot in belt if slot == "hp")
+        # Count available health potions in belt AND inventory
+        hp_potions_belt = sum(1 for slot in belt if slot == "hp")
+        hp_potions_inv = sum(1 for item in inventory if item["type"] == "hp")
+        hp_potions = hp_potions_belt + hp_potions_inv
 
         # Check if we need to buy health potions
         if hp_potions < 3 and "hl" in stores:
@@ -65,12 +68,14 @@ class ShoppingAgent(BaseAgent):
                 prompt = f"""You are the Shopping specialist. Decide if we should buy potions.
 
 Belt: {belt}
-HP Potions in belt: {hp_potions}
+HP Potions in belt: {hp_potions_belt}
+HP Potions in inventory: {hp_potions_inv}
+Total HP Potions: {hp_potions}
 Healer inventory: {len(healer_items)} items
 HP Potion available: {item['price']} gold
 Our gold: {gold}
 
-We need more health potions (have {hp_potions}, want 3+).
+We need more health potions (have {hp_potions} total, want 4+).
 
 Output ONE line only:
 BUY hl {item['id']} <weight>
@@ -88,8 +93,11 @@ Example: BUY hl 1 0.9"""
                 # Parse response
                 parsed = self.parse_weighted_response(response)
                 if parsed and parsed.command.startswith("BUY"):
-                    parsed.reasoning = f"Shopping: Buy health potion ({item['price']}g)"
+                    parsed.reasoning = f"Shopping: Buy health potion ({item['price']}g, have {gold}g)"
+                    logger.info(f"Shopping: Recommending BUY hl {item['id']} (price={item['price']}, gold={gold}, belt_hp={hp_potions})")
                     return parsed
+                else:
+                    logger.warning(f"Shopping: Failed to parse BUY command from LLM: {response}")
 
         # Check for mana potions (if we're a caster)
         stats = state.get("stats")
@@ -128,6 +136,10 @@ Example: BUY hl 2 0.7"""
                         if parsed and parsed.command.startswith("BUY"):
                             parsed.reasoning = f"Shopping: Buy mana potion ({item['price']}g)"
                             return parsed
+
+        # Log why we're not buying
+        if hp_potions >= 4:
+            logger.debug(f"Shopping: Have {hp_potions} HP potions (belt={hp_potions_belt}, inv={hp_potions_inv}), no need to buy")
 
         # No shopping needs right now
         return None

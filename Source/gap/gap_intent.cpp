@@ -182,25 +182,10 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         iss >> intent.param_id;
 
     } else if (cmd == "CS") {
-        // CS spell t=id  OR  CS spell xy=x,y
-        std::string spell, target_spec;
-        iss >> spell >> target_spec;
-
+        // CS slot - Cast scroll from belt slot (0-7)
+        // Example: CS 2  (use scroll in belt slot 2)
         intent.action = "cast";
-        intent.param_kind = spell;
-
-        if (target_spec.substr(0, 2) == "t=") {
-            // Cast at target monster: t=12
-            intent.param_id = std::stoi(target_spec.substr(2));
-        } else if (target_spec.substr(0, 3) == "xy=") {
-            // Cast at ground: xy=35,18
-            std::string xy = target_spec.substr(3);
-            size_t comma = xy.find(',');
-            if (comma != std::string::npos) {
-                intent.param_x = std::stoi(xy.substr(0, comma));
-                intent.param_y = std::stoi(xy.substr(comma + 1));
-            }
-        }
+        iss >> intent.param_slot;
 
     } else if (cmd == "US") {
         // US slot
@@ -466,17 +451,52 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
 bool GapIntentProcessor::ExecuteCast(int slot, int x, int y) {
     Player* player = GetControlledPlayer();
     if (player == nullptr) {
+        std::cerr << "GAP: ExecuteCast failed - no controlled player" << std::endl;
         return false;
     }
-    
-    if (player->_pmode != PM_STAND) {
+
+    // Allow scroll use in more states than standing (similar to potion use)
+    if (player->_pmode == PM_DEATH || player->_pmode == PM_QUIT || player->_pmode == PM_NEWLVL) {
+        std::cerr << "GAP: ExecuteCast failed - invalid player mode (" << player->_pmode << ")" << std::endl;
         return false;
     }
-    
-    // For now, return false - spell casting needs deeper integration
-    // TODO: Implement spell casting by slot
-    std::cerr << "GAP: Spell casting not yet implemented" << std::endl;
-    return false;
+
+    // Validate belt slot
+    if (slot < 0 || slot >= MaxBeltItems) {
+        std::cerr << "GAP: ExecuteCast failed - invalid belt slot " << slot << std::endl;
+        return false;
+    }
+
+    // Check if slot has a scroll
+    const Item& beltItem = player->SpdList[slot];
+    if (beltItem.isEmpty()) {
+        std::cerr << "GAP: ExecuteCast failed - belt slot " << slot << " is empty" << std::endl;
+        return false;
+    }
+
+    // Verify it's a scroll
+    if (beltItem._iMiscId != IMISC_SCROLL && beltItem._iMiscId != IMISC_SCROLLT) {
+        std::cerr << "GAP: ExecuteCast failed - belt slot " << slot << " is not a scroll" << std::endl;
+        return false;
+    }
+
+    std::cout << "GAP: Using scroll " << beltItem._iIName
+              << " (spell=" << static_cast<int>(beltItem._iSpell) << ")"
+              << " from belt slot " << slot << std::endl;
+
+    // Use the belt item (INVITEM_BELT_FIRST = 47, so slot 0 = inv index 47)
+    int invIndex = INVITEM_BELT_FIRST + slot;
+
+    // UseInvItem handles scroll consumption and spell casting
+    bool success = UseInvItem(*player, invIndex);
+
+    if (success) {
+        std::cout << "GAP: Successfully used scroll from slot " << slot << std::endl;
+    } else {
+        std::cerr << "GAP: UseInvItem returned FALSE for scroll at slot " << slot << std::endl;
+    }
+
+    return success;
 }
 
 bool GapIntentProcessor::ExecutePickup(int item_id) {

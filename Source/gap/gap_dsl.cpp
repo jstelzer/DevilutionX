@@ -5,6 +5,7 @@
 #include "../items.h"
 #include "../diablo.h"
 #include "../towners.h"
+#include "../spelldat.h"  // For SpellID enum
 #include "../levels/gendung.h"  // For IsTileLit()
 #include <sstream>
 #include <cmath>
@@ -161,7 +162,8 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
     }
 
     // Belt: B=type,type,type,... (8 slots)
-    // Types: hp=healing, mp=mana, rj=rejuv, sc=scroll, em=empty
+    // Types: hp=healing, mp=mana, rj=rejuv, em=empty
+    // Scrolls: sh=heal, sp=portal, sr=resurrect, sl=lightning, etc.
     std::ostringstream belt;
     for (int i = 0; i < MaxBeltItems; i++) {
         if (i > 0) belt << ",";
@@ -185,7 +187,16 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
                     break;
                 case IMISC_SCROLL:
                 case IMISC_SCROLLT:
-                    belt << "sc";
+                    // Encode scroll by spell type
+                    switch (belt_item._iSpell) {
+                        case SpellID::Healing:      belt << "sh"; break;  // scroll heal
+                        case SpellID::TownPortal:   belt << "sp"; break;  // scroll portal
+                        case SpellID::Resurrect:    belt << "sr"; break;  // scroll resurrect
+                        case SpellID::Lightning:    belt << "sl"; break;  // scroll lightning
+                        case SpellID::Fireball:     belt << "sf"; break;  // scroll fireball
+                        case SpellID::Identify:     belt << "si"; break;  // scroll identify
+                        default:                    belt << "sc"; break;  // scroll generic
+                    }
                     break;
                 default:
                     belt << "ms";  // misc
@@ -196,6 +207,96 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         }
     }
     dsl << " B=" << belt.str();
+
+    // Inventory: INV=type,type,type,... (40 slots)
+    // Only encode non-empty slots as type@slot_index for compactness
+    // Types: hp=healing, mp=mana, rj=rejuv, sw=sword, ax=axe, etc.
+    // Quality suffix: _m=magic, _u=unique (e.g., sw_m = magic sword)
+    std::ostringstream inventory;
+    bool first_inv_item = true;
+    int inv_count = 0;
+
+    for (int i = 0; i < player->_pNumInv; i++) {
+        const auto& inv_item = player->InvList[i];
+        if (inv_item.isEmpty()) {
+            continue;
+        }
+
+        inv_count++;
+        if (!first_inv_item) inventory << ";";
+        first_inv_item = false;
+
+        // Get item type code
+        std::string type_code;
+        if (inv_item._itype == ItemType::Misc) {
+            // Special handling for potions/scrolls
+            switch (inv_item._iMiscId) {
+                case IMISC_HEAL:
+                case IMISC_FULLHEAL:
+                    type_code = "hp";
+                    break;
+                case IMISC_MANA:
+                case IMISC_FULLMANA:
+                    type_code = "mp";
+                    break;
+                case IMISC_REJUV:
+                case IMISC_FULLREJUV:
+                    type_code = "rj";
+                    break;
+                case IMISC_SCROLL:
+                case IMISC_SCROLLT:
+                    // Encode scroll by spell type
+                    switch (inv_item._iSpell) {
+                        case SpellID::Healing:      type_code = "sh"; break;
+                        case SpellID::TownPortal:   type_code = "sp"; break;
+                        case SpellID::Resurrect:    type_code = "sr"; break;
+                        case SpellID::Identify:     type_code = "si"; break;
+                        default:                    type_code = "sc"; break;
+                    }
+                    break;
+                default:
+                    type_code = "ms";
+                    break;
+            }
+        } else {
+            // Use item type codes (sw, ax, bw, etc.)
+            switch (inv_item._itype) {
+                case ItemType::Sword:       type_code = "sw"; break;
+                case ItemType::Axe:         type_code = "ax"; break;
+                case ItemType::Bow:         type_code = "bw"; break;
+                case ItemType::Mace:        type_code = "mc"; break;
+                case ItemType::Shield:      type_code = "sh"; break;
+                case ItemType::LightArmor:  type_code = "la"; break;
+                case ItemType::MediumArmor: type_code = "ma"; break;
+                case ItemType::HeavyArmor:  type_code = "ha"; break;
+                case ItemType::Helm:        type_code = "hl"; break;
+                case ItemType::Staff:       type_code = "st"; break;
+                case ItemType::Ring:        type_code = "rg"; break;
+                case ItemType::Amulet:      type_code = "am"; break;
+                default:                    type_code = "ms"; break;
+            }
+
+            // Add quality suffix for magic/unique items
+            if (inv_item._iMagical == ITEM_QUALITY_MAGIC) {
+                type_code += "_m";
+            } else if (inv_item._iMagical == ITEM_QUALITY_UNIQUE) {
+                type_code += "_u";
+            }
+
+            // Add identified flag (! = unidentified magic/unique)
+            if (!inv_item._iIdentified && inv_item._iMagical != ITEM_QUALITY_NORMAL) {
+                type_code += "!";
+            }
+        }
+
+        // Format: type@slot_index
+        inventory << type_code << "@" << i;
+    }
+
+    if (!first_inv_item) {
+        dsl << " INV=" << inventory.str();
+        dsl << " INVC=" << inv_count;  // Total item count for quick reference
+    }
 
     // NPCs (only in town): NPC=type@x,y;type@x,y;...
     // Type codes: sm=Smith, hl=Healer, wt=Witch, tv=Tavern, st=Storyteller, etc.
