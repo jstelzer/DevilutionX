@@ -53,7 +53,7 @@ class ChatAgent(BaseAgent):
                 logger.info(f"💬 Continuing response: {response_text}")
                 return AgentResponse(
                     command=f"SAY {response_text}",
-                    weight=0.3,
+                    weight=0.6,  # High priority - finish sending response
                     reasoning="Chat: Multi-part response continuation"
                 )
             except queue.Empty:
@@ -81,7 +81,7 @@ class ChatAgent(BaseAgent):
             logger.warning("Chat: No companion state in DB yet")
             return AgentResponse(
                 command="SAY Give me a moment, just getting my bearings...",
-                weight=0.3,
+                weight=0.6,  # High priority - respond to player
                 reasoning="Chat: No state available yet"
             )
 
@@ -123,7 +123,7 @@ Examples:
 
         return AgentResponse(
             command=f"SAY {response}",
-            weight=0.3,  # Lower than combat/healing, but still important
+            weight=0.6,  # High priority - player deserves immediate response
             reasoning=f"Chat: Answer '{message[:30]}...'"
         )
 
@@ -273,7 +273,7 @@ LOCATION:
             else:
                 return AgentResponse(
                     command="SAY Sorry, I'm all out of healing potions!",
-                    weight=0.3,
+                    weight=0.6,  # High priority - respond to player request
                     reasoning="Chat: Player requested HP potion but we have none"
                 )
 
@@ -297,7 +297,7 @@ LOCATION:
             else:
                 return AgentResponse(
                     command="SAY Sorry, no mana potions on me right now.",
-                    weight=0.3,
+                    weight=0.6,  # High priority - respond to player request
                     reasoning="Chat: Player requested MP potion but we have none"
                 )
 
@@ -319,7 +319,7 @@ LOCATION:
             else:
                 return AgentResponse(
                     command=f"SAY I'm broke! Only got {gold} gold on me.",
-                    weight=0.3,
+                    weight=0.6,  # High priority - respond to player request
                     reasoning="Chat: Player requested gold but we don't have much"
                 )
 

@@ -468,3 +468,4 @@ uwp-project/Assets/ui_art
 hackery
 gap_logs
 tools/gap/log.sh
+tools/gap/gap_memory.db
