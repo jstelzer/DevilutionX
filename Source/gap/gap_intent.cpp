@@ -703,7 +703,7 @@ bool GapIntentProcessor::ExecuteExplore() {
 bool GapIntentProcessor::ExecuteChat(const std::string& message) {
     // Send a chat message from the AI agent
 #ifdef ENABLE_GAP
-    const size_t MAX_CHAT_LENGTH = 100;  // Maximum characters per message
+    const size_t MAX_CHAT_LENGTH = 150;  // Match Python's chat.py splitting (line 201)
     
     if (message.length() <= MAX_CHAT_LENGTH) {
         // Message fits in one line

@@ -20,6 +20,33 @@ class ChatAgent(BaseAgent):
         self.pending_responses = queue.Queue()  # Multi-part responses
         self.last_proactive_message = 0  # Tick of last proactive message
 
+    def query_llm_chat(self, prompt: str) -> str:
+        """
+        Query LLM for chat responses with higher token limit.
+        Chat needs 2-3 sentence responses (~100-150 tokens) vs combat's 20 tokens.
+        """
+        import requests
+
+        try:
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,  # More creative for chat
+                    "top_p": 0.9,
+                    "repeat_penalty": 1.1,
+                    "num_predict": 100,  # Allow 2-3 sentence responses (vs 20 for combat)
+                }
+            }
+
+            resp = requests.post(self.ollama_url, json=payload, timeout=10.0)
+            resp.raise_for_status()
+            return resp.json().get("response", "")
+        except Exception as e:
+            logger.error(f"Chat LLM query failed: {e}")
+            return "..."
+
     def queue_player_message(self, sender: str, message: str):
         """Queue a message from the player for processing"""
         if sender == "player":
@@ -110,8 +137,8 @@ Examples:
 - Q: "What level are you?" A: "Level {companion_state['level']} {class_name}."
 """
 
-        # Query LLM for natural response
-        response = self.query_llm(prompt)
+        # Query LLM for natural response (allow longer chat responses)
+        response = self.query_llm_chat(prompt)
 
         # Clean up response
         response = self._clean_response(response)

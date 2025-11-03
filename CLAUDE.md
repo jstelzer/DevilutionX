@@ -586,14 +586,111 @@ ApplyPlrDamage(DamageType::Physical, player, 0, 0, dam);
 - Are we adding complexity instead of removing restrictions?
 - Is the engine properly recognizing the companion as a valid player entity?
 
+### ✅ Missile Damage System (Nov 3, 2025)
+
+**Problem**: After fixing melee damage (Sept 2025), discovered companions had two more invulnerability bugs:
+1. Companion arrows didn't damage monsters (hit detection worked, damage calculation happened, but `ApplyMonsterDamage` was never called)
+2. Companions were invulnerable to ALL monster missiles (fireballs, arrows, acid, lightning, traps)
+
+**Root Cause**: Same `MyPlayer` restriction pattern in `missiles.cpp`:
+
+```cpp
+// ❌ BAD: Only MyPlayer can deal/take missile damage
+if (&player == MyPlayer)
+    ApplyMonsterDamage(damageType, monster, dam);
+
+if (&player == MyPlayer) {
+    ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
+}
+```
+
+**The Fix**: Applied first-class player principle to two functions in `missiles.cpp`:
+
+1. **MonsterMHit** (line 332-334) - Ranged attacks hitting monsters:
+```cpp
+// Apply damage for ANY player (companions and multiplayer players)
+// Remove MyPlayer restriction to enable first-class player behavior
+ApplyMonsterDamage(damageType, monster, dam);
+```
+
+2. **PlayerMHit** (lines 1138-1150) - Monster missiles hitting players:
+```cpp
+// Apply damage for ANY player (companions and multiplayer players)
+// Remove MyPlayer restriction to enable first-class player behavior
+ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
+```
+
+**Result**:
+- ✅ Companion arrows now kill monsters (ranged damage works)
+- ✅ Companions take damage from fireballs, arrows, acid, lightning, traps (no longer invulnerable)
+- ✅ Companions are truly mortal - can die from any damage source like real players
+
+**Weird Behavior Before Fix**:
+- Companion could be stabbed to death by skeleton (melee ✅)
+- Companion could tank fireballs to the face without damage (missiles ❌)
+- Companion could shoot skeletons all day without killing them (ranged ❌)
+
+**Files Modified**:
+- `Source/missiles.cpp` (lines 332-334, 1138-1150)
+
 ## Technical Debt
 - ~~**PRIORITY: Implement first-class entity control system**~~ ✅ Fixed with universal damage system
 - Replace custom JSON with nlohmann/json
-- Add GAP config file  
+- Add GAP config file
 - Implement state delta compression
 - ~~Fix MCP server movement bug~~ ✅ Fixed with navigation integration
 - ~~Fix JSON truncation in LLM responses~~ ✅ Fixed with `num_predict: 200`
 - ~~Investigate GAP companion monster visibility~~ ✅ Resolved - monsters visible to companion
+
+## Known Restrictions (Pending Design Decision)
+
+The following `MyPlayer` restrictions were found during Nov 3, 2025 audit but **not fixed** pending game design decisions:
+
+### Interactive Objects (`objects.cpp`)
+
+**1. Shrines** (~30 shrine types affected):
+- **Current**: All shrines check `if (&player != MyPlayer) return;` before applying effects
+- **Impact**: Companions cannot activate shrines at all
+- **Examples**: Mysterious, Hidden, Gloomy, Weird, Stone, Religious, Enchanted, Thaumaturgic, etc.
+- **Trade-offs**: Many shrines have downsides (stat swaps, item degradation, curses)
+- **Question**: Should companions be able to use shrines autonomously? Some are risky.
+
+**2. Fountains** (3 types):
+- **Current**: Blood Fountain, Purifying Fountain, Tear Fountain all restrict to `MyPlayer`
+- **Impact**: Companions cannot drink from fountains (HP/Mana restore)
+- **Location**: `objects.cpp` lines 3223, 3239, 3279
+- **Question**: Intentional resource limit or should companions access fountains?
+
+**3. Barrels**:
+- **Current**: `if (!forcebreak && &player != MyPlayer) return;` (line 3459-3460)
+- **Impact**: Companions won't break barrels during exploration unless forced
+- **Question**: Should companions autonomously break barrels for loot/spawns?
+
+### Edge Cases (`items.cpp`)
+
+**4. Death During Equipment Recalc**:
+- **Current**: `if (&player == MyPlayer && (player._pHitPoints >> 6) <= 0)` (line 2637)
+- **Impact**: If companion HP drops to 0 during stat recalculation, might not trigger death properly
+- **Likelihood**: Very rare (requires HP to hit 0 during `CalcPlrItemVals` call)
+- **Question**: Worth fixing for completeness?
+
+**5. Auric Amulet (Gold Limit)**:
+- **Current**: Uses global `MaxGold` variable, only updated for `MyPlayer` (line 2754)
+- **Impact**: Companions don't get increased gold limit from Auric Amulet
+- **Complexity**: Would require per-player gold limit tracking (architectural change)
+- **Question**: Keep as-is (global limit) or redesign?
+
+### Design Considerations
+
+**First-Class Player Principle** says: Remove all restrictions, treat companions like multiplayer players.
+
+**Game Balance Perspective** says: Some restrictions prevent:
+- Companions making risky shrine decisions (could weaken themselves)
+- Double-dipping fountain resources (both players healing from same source)
+- Companions triggering barrel spawns at inopportune times
+- Companions "stealing" player loot from interactive objects
+
+**Recommendation**: Review each restriction individually based on gameplay impact rather than blanket "fix all" approach.
 
 ## Python
 

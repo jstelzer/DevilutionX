@@ -329,8 +329,9 @@ bool MonsterMHit(const Player &player, int monsterId, int mindam, int maxdam, in
 	if (resist)
 		dam >>= 2;
 
-	if (&player == MyPlayer)
-		ApplyMonsterDamage(damageType, monster, dam);
+	// Apply damage for ANY player (companions and multiplayer players)
+	// Remove MyPlayer restriction to enable first-class player behavior
+	ApplyMonsterDamage(damageType, monster, dam);
 
 	if (monster.hitPoints >> 6 <= 0) {
 		M_StartKill(monster, player);
@@ -1134,9 +1135,9 @@ bool PlayerMHit(Player &player, Monster *monster, int dist, int mind, int maxd, 
 
 	if (resper > 0) {
 		dam -= dam * resper / 100;
-		if (&player == MyPlayer) {
-			ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
-		}
+		// Apply damage for ANY player (companions and multiplayer players)
+		// Remove MyPlayer restriction to enable first-class player behavior
+		ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
 
 		if (player._pHitPoints >> 6 > 0) {
 			player.Say(HeroSpeech::ArghClang);
@@ -1144,9 +1145,9 @@ bool PlayerMHit(Player &player, Monster *monster, int dist, int mind, int maxd, 
 		return true;
 	}
 
-	if (&player == MyPlayer) {
-		ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
-	}
+	// Apply damage for ANY player (companions and multiplayer players)
+	// Remove MyPlayer restriction to enable first-class player behavior
+	ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
 
 	if (player._pHitPoints >> 6 > 0) {
 		StartPlrHit(player, dam, false);
