@@ -61,39 +61,174 @@ python3 tools/gap/mcp_server.py --companion-slot 1 --model qwen2.5:3b --password
 
 **Agent Stack** (`tools/gap/`): `dsl_agent.py`, `dsl_parser.py`, `chat_handler.py`, `memory_store.py`
 
-### ✅ Ranged Combat System Complete! (Nov 2, 2025)
+### ✅ Ranged Combat System Complete! (Nov 3, 2025)
 
 **Problem**: Rogue companion with bow was face-tanking enemies instead of using ranged tactics
 
-**Root Causes Fixed**:
-1. ✅ **Position-based attacks** - Extended DSL parser to support `AT x y` (attack position without pathfinding)
-2. ✅ **Companion execution** - Fixed position attacks to use `ExecuteDirectAttack` instead of network commands
-3. ✅ **Distance management** - Python agent now uses movement commands for monsters >10 tiles away
+**Root Cause**: Using `destAction = ACTION_ATTACKMON` triggered the game engine's auto-pathing system, which created movement paths to targets even after calling `ClrPlrPath()`. The engine recreates paths during attack processing.
 
-**Implementation**:
-- **C++ DSL Parser** (`Source/gap/gap_intent.cpp:170-186`) - Dual-format attack parsing (`AT id` vs `AT x y`)
-- **C++ Execution** (`Source/gap/gap_intent.cpp:451-490`) - Position attacks find monster and use direct execution
-- **Python Combat Agent** (`tools/gap/agents/combat.py:181-246`) - Ranged positioning logic with kiting
-- **Character Profile** (`tools/gap/character_profile.py:231-268`) - Combat style detection methods
+**The Critical Solution - Direct Function Calls**:
 
-**Ranged Combat Behavior**:
-- **4-10 tiles**: `AT x y` - Attack from current position (maintain bow range)
-- **<4 tiles**: `MV away` - Kite backwards to safety
-- **>10 tiles**: `MV toward` - Move to 8-tile optimal range, then attack
+Instead of queuing actions via `destAction` (which triggers engine auto-pathing), we **call attack functions directly**:
 
-**Status**: ⚠️ **NEEDS TESTING** - Recompile complete, need to restart Python agent and test in dungeon
+```cpp
+// ❌ OLD WAY - Triggers auto-pathing
+player.destAction = ACTION_ATTACKMON;
+player.destParam1 = monster_id;
+// Result: Engine creates path to target, companion runs to monster
 
-**Next Session**:
-1. Restart Python agent with updated combat.py
-2. Test ranged combat with rogue + bow in dungeon
-3. Verify logs show position attacks executing correctly
-4. Confirm companion maintains distance and kites when needed
+// ✅ NEW WAY - True shift-key behavior
+if (player.UsesRangedWeapon()) {
+    StartRangeAttack(player, dir, monsterPos.x, monsterPos.y, true);
+} else {
+    StartAttack(player, dir, true);
+}
+// Result: Attack animation starts from current position, NO movement
+```
 
-**Next Features** (After Testing):
-1. Spell casting system (`CAST spell_id target`)
-2. Gold tracking and economic decisions
-3. Equipment comparison and upgrades
-4. Multi-enemy threat prioritization
+**Implementation Steps**:
+1. **Export functions from player.cpp** (Source/player.h:968-969):
+   - Moved `StartAttack()` and `StartRangeAttack()` OUT of anonymous namespace
+   - Added public declarations: `void StartAttack(Player&, Direction, bool)` and `void StartRangeAttack(Player&, Direction, WorldTileCoord, WorldTileCoord, bool)`
+
+2. **Call directly from GAP** (Source/gap/gap_network.cpp:202-212):
+   - Replaced `destAction = ACTION_ATTACKMON` with direct function calls
+   - Added range validation: bow ≤15 tiles, melee ≤1 tile
+   - Functions start attack animations **without creating movement paths**
+
+3. **Python agent tactics** (tools/gap/agents/combat.py:181-246):
+   - **4-10 tiles**: `AT x y` - Attack from current position (optimal bow range)
+   - **<4 tiles**: `MV away` - Kite backwards to safety
+   - **>10 tiles**: `MV toward` - Move to 8-tile optimal range first
+
+**Files Changed**:
+- `Source/player.h` - Export StartAttack/StartRangeAttack declarations
+- `Source/player.cpp` - Move functions out of anonymous namespace (lines 169-232)
+- `Source/gap/gap_network.cpp` - Direct function calls + range checks (lines 172-212)
+- `tools/gap/agents/combat.py` - Ranged positioning logic
+
+**Status**: ✅ **WORKING** - Companion now stands and shoots, maintains distance, kites when needed
+
+**Apply This Pattern To**:
+- ✅ Ranged attacks (done)
+- 🔮 **Spell casting** (next) - Same issue will occur, use `StartSpell()` directly
+- 🎯 **Targeted abilities** - Any action that needs position control
+
+**Key Lesson**: `destAction` is for human input processing where auto-pathing is desired. For AI companions that need tactical positioning control, call the underlying action functions directly to get true "shift-key" behavior.
+
+### ✅ Town Agent Fixes (Nov 3, 2025)
+
+**Problem 1: NPC Interaction Loops**
+- Agents tried to move to NPC's exact tile position (e.g., Griswold at 62,63)
+- NPCs block their own tiles, causing infinite movement loops
+- Companion gets close (dist=2-3) but can't reach exact position
+
+**Solution**: Increase interaction range from `dist <= 1` to `dist <= 3` and use `IN {npc_id}` command instead of trying to move to blocked tile.
+
+**Files Fixed**:
+- `tools/gap/agents/town.py` - Pepin and Adria interaction distances (lines 60-106, 119-140)
+- `tools/gap/agents/griswold.py` - Griswold interaction distance (lines 119-153)
+
+**Problem 2: Griswold Selling Logic Unreachable**
+- Agent had early returns for `dist <= 3` (interact) and `dist > 3` (navigate)
+- Selling logic (lines 155-195) was **completely unreachable** - never executed
+- Agent opened shop then walked away, infinite loop
+
+**Root Cause**: Logic structure:
+```python
+if dist <= 3:
+    return interact_command  # Early return!
+if dist > 3:
+    return move_command      # Early return!
+# Lines below NEVER execute
+sell_logic_here()
+```
+
+**Solution**: Check shop status FIRST, only return early if shop NOT open:
+```python
+shop_is_open = "sm" in stores and len(stores.get("sm", [])) > 0
+
+if shop_is_open:
+    # Fall through to selling logic below (no early return)
+    pass
+elif dist <= 3:
+    return interact_command  # Open shop
+else:  # dist > 3
+    return move_command      # Navigate closer
+
+# Selling logic now reachable!
+sell_item_with_llm()
+```
+
+**Problem 3: Inventory Fullness Check Too Strict**
+- Shop opens, enters selling logic
+- Checks inventory: 16/40 = 40% full
+- Logic: `if inv_fullness <= 0.4: return None`
+- Returns None even though shop already open and has sellable items!
+
+**Solution**: If shop is already open, sell items regardless of inventory fullness. Fullness affects WEIGHT (urgency) but not whether to sell:
+```python
+else:
+    # Shop is already open, might as well sell even if inventory not full
+    weight = 0.25  # Low priority
+    urgency = "OPTIONAL"
+```
+
+**Files Changed**:
+- `tools/gap/agents/griswold.py` (lines 119-172)
+
+**Result**: Companion now properly navigates to NPCs, opens shops, and sells junk items without getting stuck in loops.
+
+**Key Lessons for Future Inventory/Shopping Work**:
+1. NPCs block their tiles - use interaction range ≥3, not exact positioning
+2. Check "already open" state BEFORE early returns, or logic becomes unreachable
+3. Separate "should activate" logic (inventory fullness for opening shop) from "execute" logic (sell once shop open)
+
+## Next Features to Implement
+
+### 🔮 Spell Casting (High Priority)
+**Apply direct function call pattern** - Same issue as ranged attacks will occur with `destAction = ACTION_SPELL`. Need to:
+1. Find spell casting function in player.cpp (likely `StartSpell()` or similar)
+2. Export it from anonymous namespace to player.h
+3. Call directly from `gap_network.cpp` for position-controlled casting
+4. Add to DSL: `CAST spell_id target_x target_y` command
+
+**Expected Behavior**: Casters should cast from safe distance without auto-pathing into melee range
+
+### 📦 Lootable Objects in Dungeons (High Priority)
+**Problem**: Currently only tracks ground loot (items dropped by monsters). Missing dungeon interactables:
+- Chests (wooden, trapped, locked)
+- Barrels (can contain items/gold)
+- Tombs/Sarcophagi (skeleton spawn + loot)
+- Shrines (buff effects)
+- Bookstands (lore/spells)
+
+**Implementation Needed**:
+1. **State Extraction** (`Source/gap/gap_state.cpp`):
+   - Add object detection similar to monster/item extraction
+   - Extract: object type, position, interactable state
+   - DSL format: `OBJ=type@x,y;...` (e.g., `OBJ=chest@45,23;barrel@46,25`)
+
+2. **Python Agent** (`tools/gap/agents/`):
+   - Create `exploration.py` or extend existing agents
+   - Priority: Chests > Barrels > Tombs
+   - Pathfinding: Navigate to object, send `IN {object_id}` to interact
+   - Safety: Check for nearby monsters before opening (avoid ambushes)
+
+3. **DSL Commands**: Reuse `IN {object_id}` command (same as NPC interaction)
+
+**Why Important**:
+- Major loot source (chests often have best items)
+- Exploration completeness (companions should open everything)
+- Tactical decisions (skip barrels in combat, open chests when safe)
+
+**Reference**: Object interaction uses same pattern as NPC interaction - use range ≥3, send `IN` command
+
+### 💰 Other Planned Features
+1. Gold tracking and economic decisions
+2. Equipment comparison and upgrades
+3. Multi-enemy threat prioritization
+4. Spell/ability cooldown management
 
 ## GAP Protocol Data Structure (DSL Format)
 
