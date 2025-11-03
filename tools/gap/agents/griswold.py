@@ -115,8 +115,19 @@ class GriswoldAgent(BaseAgent):
         # Calculate urgency based on inventory fullness
         inv_fullness = inv_count / 40.0
 
+        # If within interaction range, interact with Griswold to open shop
+        if dist <= 3:
+            # Close enough - interact with Griswold
+            weight = 0.6 if inv_fullness > 0.6 else 0.45
+            logger.info(f"Griswold: Interacting with Griswold (dist={dist}, sellable={len(potential_sells)})")
+            return AgentResponse(
+                command=f"IN {griswold['id']}",
+                weight=weight,
+                reasoning=f"Griswold: Opening shop to sell {len(potential_sells)} items"
+            )
+
         # If too far, navigate to Griswold first
-        if dist > 1:
+        if dist > 3:
             # Higher urgency if inventory is fuller
             if inv_fullness > 0.8:
                 weight = 0.65

@@ -289,11 +289,15 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteMove(intent.param_x, intent.param_y);
     } else if (intent.action == "attack") {
         // Check if we have a monster ID (DSL format: AT id) or position (JSON format)
+        std::cerr << "GAP: ExecuteIntent attack - param_id=" << intent.param_id
+                  << " param_x=" << intent.param_x << " param_y=" << intent.param_y << std::endl;
         if (intent.param_id > 0) {
             // Monster ID attack - pass as (monster_id, -1)
+            std::cerr << "GAP: Using monster ID attack path" << std::endl;
             return ExecuteAttack(intent.param_id, -1);
         } else {
             // Position-based attack - pass as (x, y)
+            std::cerr << "GAP: Using position-based attack path" << std::endl;
             return ExecuteAttack(intent.param_x, intent.param_y);
         }
     } else if (intent.action == "cast") {
@@ -449,22 +453,56 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
             return true;
         }
     } else {
-        // Attack a position (x, y) - useful for area attacks
+        // Attack a position (x, y) - useful for ranged attacks without pathfinding
         Point target(x, y);
-        
+
         if (!InDungeonBounds(target)) {
             return false;
         }
-        
-        // Use appropriate attack command for position
+
         int controlled_id = GetControlledPlayerId();
-        if (player->UsesRangedWeapon()) {
-            NetSendCmdLocForPlayer(controlled_id, true, CMD_RATTACKXY, target);
+
+        // For companions, we need to find the monster at/near this position and attack by ID
+        // Network position commands don't work reliably for companions
+        if (controlled_id != MyPlayerId) {
+            // Find monster at or near target position (within 2 tiles)
+            // Monsters move between ticks, so we need fuzzy matching
+            int targetMonsterId = -1;
+            int minDistance = 3; // Allow up to 2 tiles away
+
+            for (size_t i = 0; i < ActiveMonsterCount; i++) {
+                const auto& monster = Monsters[ActiveMonsters[i]];
+                if (monster.hitPoints > 0) {
+                    int dx = std::abs(monster.position.tile.x - target.x);
+                    int dy = std::abs(monster.position.tile.y - target.y);
+                    int dist = std::max(dx, dy); // Chebyshev distance
+
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        targetMonsterId = ActiveMonsters[i];
+                    }
+                }
+            }
+
+            if (targetMonsterId >= 0) {
+                const auto& foundMonster = Monsters[targetMonsterId];
+                std::cerr << "GAP: Position attack (" << x << "," << y << ") → Found monster "
+                          << targetMonsterId << " at (" << foundMonster.position.tile.x << ","
+                          << foundMonster.position.tile.y << ") search_dist=" << minDistance << std::endl;
+                return ExecuteDirectAttack(controlled_id, targetMonsterId);
+            } else {
+                std::cerr << "GAP: Position attack failed - no monster near (" << x << "," << y << ")" << std::endl;
+                return false;
+            }
         } else {
-            NetSendCmdLocForPlayer(controlled_id, true, CMD_SATTACKXY, target);
+            // Main player - use network command
+            if (player->UsesRangedWeapon()) {
+                NetSendCmdLocForPlayer(controlled_id, true, CMD_RATTACKXY, target);
+            } else {
+                NetSendCmdLocForPlayer(controlled_id, true, CMD_SATTACKXY, target);
+            }
+            return true;
         }
-        
-        return true;
     }
     
     return false;

@@ -163,82 +163,49 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
         return false;
     }
     
-    // Check range (playerPos already validated above)
+    // Get monster position for direction/distance calculations
     Point monsterPos = monster.position.tile;
     int dx = std::abs(monsterPos.x - playerPos.x);
     int dy = std::abs(monsterPos.y - playerPos.y);
-    
-    // Allow attacking monsters within reasonable range
-    if (dx > 15 || dy > 15) {
-        std::cerr << "GAP: ExecuteDirectAttack - Monster " << monster_id << " out of range" << std::endl;
-        return false;
+    int maxDist = std::max(dx, dy);
+
+    // SHIFT-KEY BEHAVIOR: For ranged weapons, refuse to attack if out of range
+    // This prevents auto-pathing and gives the agent explicit control over positioning
+    // Just like a human player holding shift to avoid accidental movement
+    if (player.UsesRangedWeapon()) {
+        // Typical bow range is 1-15 tiles (game engine limit)
+        if (maxDist > 15) {
+            std::cerr << "GAP: ExecuteDirectAttack - Monster " << monster_id
+                      << " out of bow range (dist=" << maxDist << "), refusing attack (shift-key behavior)" << std::endl;
+            return false; // Agent must reposition first
+        }
+    } else {
+        // Melee range - must be adjacent
+        if (maxDist > 1) {
+            std::cerr << "GAP: ExecuteDirectAttack - Monster " << monster_id
+                      << " out of melee range (dist=" << maxDist << "), refusing attack" << std::endl;
+            return false; // Agent must move closer first
+        }
     }
-    
-    std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id 
-              << " (" << player._pName << ") attacking monster " << monster_id 
-              << " at (" << monsterPos.x << "," << monsterPos.y << ")" << std::endl;
-    
-    // Direct attack execution
-    // Set up the attack action - use ATTACKMON for monsters
-    player.destAction = ACTION_ATTACKMON;
-    player.destParam1 = monster_id;
-    
-    // Clear any existing path so the attack happens immediately
+
+    std::cerr << "GAP: ExecuteDirectAttack - Player " << player_id
+              << " (" << player._pName << ") attacking monster " << monster_id
+              << " at (" << monsterPos.x << "," << monsterPos.y << ") dist=" << maxDist << std::endl;
+
+    // Clear any existing path - we're attacking from current position (shift-key behavior)
     ClrPlrPath(player);
-    
+
     // Set player direction to face monster
     Direction dir = GetDirection(playerPos, monsterPos);
     player._pdir = dir;
 
-    // Use the game's action system instead of directly setting mode
-    // This lets the game handle animation setup properly via ProcessPlayer()
-    // The game will trigger the attack on the next game loop iteration
+    // Set up the attack action
+    // With the range check above, we only reach here if in range
+    // ClrPlrPath() prevents movement, giving us shift-key behavior
+    player.destAction = ACTION_ATTACKMON;
+    player.destParam1 = monster_id;
 
-    // For ranged weapons, maintain optimal shooting distance (4-12 tiles)
-    // For melee, we need to be adjacent
-    if (player.UsesRangedWeapon()) {
-        // Use Chebyshev distance (grid distance) - max of dx and dy
-        int maxDist = std::max(dx, dy);
-
-        if (maxDist >= 4 && maxDist <= 12) {
-            // Good shooting range (4-12 tiles) - attack from current position
-            // destAction is already set, path is cleared, just attack
-            std::cerr << "GAP: Ranged attack from good distance (max_dist=" << maxDist << ")" << std::endl;
-        } else if (maxDist > 12) {
-            // Too far - move to ~6 tile range
-            // Calculate a position ~6 tiles from monster (using direction vector)
-            int targetDist = 6;
-            float angle = std::atan2(static_cast<float>(monsterPos.y - playerPos.y),
-                                     static_cast<float>(monsterPos.x - playerPos.x));
-            Point approachPos;
-            approachPos.x = monsterPos.x - static_cast<int>(targetDist * std::cos(angle));
-            approachPos.y = monsterPos.y - static_cast<int>(targetDist * std::sin(angle));
-
-            // Clamp to dungeon bounds
-            if (InDungeonBounds(approachPos)) {
-                std::cerr << "GAP: Ranged too far (dist=" << maxDist << ") - moving to position "
-                          << targetDist << " tiles from monster" << std::endl;
-                MakePlrPath(player, approachPos, false);
-            } else {
-                // Fallback: move closer to monster directly
-                std::cerr << "GAP: Approach position out of bounds, moving toward monster" << std::endl;
-                MakePlrPath(player, monsterPos, false);
-            }
-        } else {
-            // Too close (< 4 tiles) - attack anyway for now
-            // Future: implement kiting (move away while attacking)
-            std::cerr << "GAP: Ranged attack at close range (dist=" << maxDist << "), no kiting yet" << std::endl;
-        }
-    } else {
-        // Melee weapon
-        if (dx <= 1 && dy <= 1) {
-            // Adjacent - attack will execute via destAction
-            // Don't manually set _pmode - let ProcessPlayer() handle it
-        } else if (dx <= 10 && dy <= 10) {
-            // Not adjacent - path closer
-            MakePlrPath(player, monsterPos, false);
-        }
-    }
+    std::cerr << "GAP: Attack queued (in range, no movement)" << std::endl;
     
     // Sync to network if multiplayer
     if (gbIsMultiplayer) {
@@ -255,6 +222,47 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     }
     
     return true;
+}
+
+bool ExecutePositionAttack(int player_id, int target_x, int target_y) {
+    // Find monster at or near the target position and attack it
+    Point target(target_x, target_y);
+
+    if (!InDungeonBounds(target)) {
+        std::cerr << "GAP: ExecutePositionAttack - Target position out of bounds" << std::endl;
+        return false;
+    }
+
+    // Find monster at or near target position (within 2 tiles)
+    int targetMonsterId = -1;
+    int minDistance = 3; // Allow up to 2 tiles away
+
+    for (size_t i = 0; i < ActiveMonsterCount; i++) {
+        const auto& monster = Monsters[ActiveMonsters[i]];
+        if (monster.hitPoints > 0) {
+            int dx = std::abs(monster.position.tile.x - target.x);
+            int dy = std::abs(monster.position.tile.y - target.y);
+            int dist = std::max(dx, dy); // Chebyshev distance
+
+            if (dist < minDistance) {
+                minDistance = dist;
+                targetMonsterId = ActiveMonsters[i];
+            }
+        }
+    }
+
+    if (targetMonsterId >= 0) {
+        const auto& foundMonster = Monsters[targetMonsterId];
+        std::cerr << "GAP: ExecutePositionAttack (" << target_x << "," << target_y
+                  << ") → Found monster " << targetMonsterId << " at ("
+                  << foundMonster.position.tile.x << "," << foundMonster.position.tile.y
+                  << ") search_dist=" << minDistance << std::endl;
+        return ExecuteDirectAttack(player_id, targetMonsterId);
+    } else {
+        std::cerr << "GAP: ExecutePositionAttack failed - no monster near ("
+                  << target_x << "," << target_y << ")" << std::endl;
+        return false;
+    }
 }
 
 bool ExecuteDirectInteract(int player_id, Point position) {

@@ -61,37 +61,39 @@ python3 tools/gap/mcp_server.py --companion-slot 1 --model qwen2.5:3b --password
 
 **Agent Stack** (`tools/gap/`): `dsl_agent.py`, `dsl_parser.py`, `chat_handler.py`, `memory_store.py`
 
-### 🚨 CURRENT BLOCKER: Entity Control Routing
+### ✅ Ranged Combat System Complete! (Nov 2, 2025)
 
-**Status**: Commands validated and sent successfully, but execute on wrong player entity
+**Problem**: Rogue companion with bow was face-tanking enemies instead of using ranged tactics
 
-**Evidence**:
-```bash
-# Agent sends valid commands:
-📤 Command: AT 164 (took 0.15s)
-📤 Sent: AT 164...
+**Root Causes Fixed**:
+1. ✅ **Position-based attacks** - Extended DSL parser to support `AT x y` (attack position without pathfinding)
+2. ✅ **Companion execution** - Fixed position attacks to use `ExecuteDirectAttack` instead of network commands
+3. ✅ **Distance management** - Python agent now uses movement commands for monsters >10 tiles away
 
-# Companion never moves:
-State: tick=1674 pos=(78,78)
-State: tick=1794 pos=(78,78)  # Still frozen 120 ticks later
-```
+**Implementation**:
+- **C++ DSL Parser** (`Source/gap/gap_intent.cpp:170-186`) - Dual-format attack parsing (`AT id` vs `AT x y`)
+- **C++ Execution** (`Source/gap/gap_intent.cpp:451-490`) - Position attacks find monster and use direct execution
+- **Python Combat Agent** (`tools/gap/agents/combat.py:181-246`) - Ranged positioning logic with kiting
+- **Character Profile** (`tools/gap/character_profile.py:231-268`) - Combat style detection methods
 
-**Problem**: GAP commands route to main player instead of companion slot 1
-- DSL parsing ✅ Commands validated
-- Socket communication ✅ Messages sent
-- **Command routing ❌ Executes on wrong player**
+**Ranged Combat Behavior**:
+- **4-10 tiles**: `AT x y` - Attack from current position (maintain bow range)
+- **<4 tiles**: `MV away` - Kite backwards to safety
+- **>10 tiles**: `MV toward` - Move to 8-tile optimal range, then attack
 
-**Next Steps**:
-1. Debug `Source/gap/gap_execute.cpp` - trace command execution path
-2. Verify `GetControlledPlayer()` returns slot 1 (companion)
-3. Check if `NetSendCmdLoc()` uses controlled player or hardcoded `MyPlayerId`
-4. Fix routing to send commands to companion entity, not main player
+**Status**: ⚠️ **NEEDS TESTING** - Recompile complete, need to restart Python agent and test in dungeon
 
-**Once Fixed - Next Features**:
-1. Items & inventory (pickup prioritization, equipment eval)
-2. Gold tracking (shop decisions, value assessment)
-3. Spell casting (mana management, spell selection)
-4. Advanced combat (kiting, positioning, threat assessment)
+**Next Session**:
+1. Restart Python agent with updated combat.py
+2. Test ranged combat with rogue + bow in dungeon
+3. Verify logs show position attacks executing correctly
+4. Confirm companion maintains distance and kites when needed
+
+**Next Features** (After Testing):
+1. Spell casting system (`CAST spell_id target`)
+2. Gold tracking and economic decisions
+3. Equipment comparison and upgrades
+4. Multi-enemy threat prioritization
 
 ## GAP Protocol Data Structure (DSL Format)
 

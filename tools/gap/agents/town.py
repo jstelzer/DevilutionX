@@ -57,21 +57,14 @@ class TownAgent(BaseAgent):
                 # Use Chebyshev distance (same as C++ store visibility check)
                 dist = max(abs(npc_x - me_x), abs(npc_y - me_y))
 
-                if dist <= 1:
-                    # Adjacent to Pepin - interact to open shop
+                if dist <= 3:
+                    # Close enough - interact to open shop
                     return AgentResponse(
                         command=f"IN {pepin['id']}",
                         weight=0.75,
                         reasoning=f"Town: Interacting with Pepin for potions ({hp_potions}/8)"
                     )
-                elif dist <= 2:
-                    # Close but not adjacent - move closer
-                    return AgentResponse(
-                        command=f"MV {npc_x} {npc_y}",
-                        weight=0.65,
-                        reasoning=f"Town: Moving adjacent to Pepin ({hp_potions}/8, dist={dist})"
-                    )
-                elif dist > 2:
+                elif dist > 3:
                     # Too far - navigate to Pepin
                     return AgentResponse(
                         command=f"MV {npc_x} {npc_y}",
@@ -97,8 +90,8 @@ class TownAgent(BaseAgent):
                     # Use Chebyshev distance (same as C++ store visibility check)
                     dist = max(abs(npc_x - me_x), abs(npc_y - me_y))
 
-                    if dist <= 1:
-                        # Adjacent to Adria - interact to open shop
+                    if dist <= 3:
+                        # Close enough - interact to open shop
                         return AgentResponse(
                             command=f"IN {adria['id']}",
                             weight=0.75,
@@ -112,14 +105,49 @@ class TownAgent(BaseAgent):
                             reasoning=f"Town: Going to Adria for mana ({mp_potions}/8, dist={dist})"
                         )
 
-        # Priority 3: Heal up if damaged - move to fountain
-        # Fountain is usually near town center, for now just stay put
+        # Priority 3: Heal up if damaged - visit Pepin
+        # Even at 90% HP, worth topping off with Pepin (free healing!)
         if hp_pct < 100:
-            return AgentResponse(
-                command="SAY Healing at fountain",
-                weight=0.2,
-                reasoning=f"Town: Need healing ({hp_pct}%)"
-            )
+            # Find Pepin (the healer)
+            npcs = state.get("npcs", [])
+            pepin = next((npc for npc in npcs if npc["type"] == "hl"), None)
+
+            if pepin:
+                npc_x, npc_y = pepin["x"], pepin["y"]
+                dist = max(abs(npc_x - me_x), abs(npc_y - me_y))
+
+                if dist <= 3:
+                    # Close enough - interact for healing
+                    weight = 0.5 if hp_pct < 70 else 0.4
+                    return AgentResponse(
+                        command=f"IN {pepin['id']}",
+                        weight=weight,
+                        reasoning=f"Town: Talking to Pepin for healing (HP={hp_pct}%)"
+                    )
+                elif hp_pct < 70:
+                    # Low HP and far away - prioritize getting to Pepin
+                    return AgentResponse(
+                        command=f"MV {npc_x} {npc_y}",
+                        weight=0.5,
+                        reasoning=f"Town: Going to Pepin for healing (HP={hp_pct}%, dist={dist})"
+                    )
+                elif dist <= 5:
+                    # Close by and slightly hurt - might as well head over
+                    return AgentResponse(
+                        command=f"MV {npc_x} {npc_y}",
+                        weight=0.15,  # Low priority if HP is okay
+                        reasoning=f"Town: Moving to Pepin for quick top-off (HP={hp_pct}%)"
+                    )
+            elif hp_pct < 70:
+                # Low HP but Pepin not visible - use a potion
+                belt = state.get("belt", [])
+                for i, item in enumerate(belt):
+                    if item and item.get("type") == "hp":
+                        return AgentResponse(
+                            command=f"US {i}",
+                            weight=0.3,
+                            reasoning=f"Town: Using potion (HP={hp_pct}%, Pepin not found)"
+                        )
 
         # Default: Low weight so movement takes over for player following
         return AgentResponse(

@@ -161,6 +161,13 @@ private:
                 std::cout << "GAP: InitPlayerGFX completed, AnimInfo.numberOfFrames="
                           << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
 
+                // CRITICAL: Set animation frame counts (_pWFrames, _pNFrames, etc.)
+                // This must be called after InitPlayerGFX and before NewPlrAnim
+                std::cout << "GAP: About to call SetPlrAnims for companion slot " << requested_slot << std::endl;
+                SetPlrAnims(Players[requested_slot]);
+                std::cout << "GAP: SetPlrAnims completed, _pWFrames="
+                          << static_cast<int>(Players[requested_slot]._pWFrames) << std::endl;
+
                 // Set to standing animation (required for proper graphics initialization)
                 // This is what multiplayer does when a player joins
                 NewPlrAnim(Players[requested_slot], player_graphic::Stand, Players[requested_slot]._pdir);
@@ -356,6 +363,13 @@ void GapCore::OnGameTick(uint32_t tick) {
                     InitPlayerGFX(Players[requested_slot]);
                     std::cout << "GAP DSL: InitPlayerGFX completed, AnimInfo.numberOfFrames="
                               << static_cast<int>(Players[requested_slot].AnimInfo.numberOfFrames) << std::endl;
+
+                    // CRITICAL: Set animation frame counts (_pWFrames, _pNFrames, etc.)
+                    // This must be called after InitPlayerGFX and before NewPlrAnim
+                    std::cout << "GAP DSL: About to call SetPlrAnims for companion slot " << requested_slot << std::endl;
+                    SetPlrAnims(Players[requested_slot]);
+                    std::cout << "GAP DSL: SetPlrAnims completed, _pWFrames="
+                              << static_cast<int>(Players[requested_slot]._pWFrames) << std::endl;
 
                     // Set to standing animation (required for proper graphics initialization)
                     // This is what multiplayer does when a player joins

@@ -168,13 +168,18 @@ void SeatManager::ExecuteAttackIntent(const Intent& intent, int player_index) {
 		// Human player - use existing input processing
 		LogVerbose("STUB: ExecuteAttackIntent for human player {}", player_index);
 	} else {
-		// Companion player - use Phase 1 direct execution  
+		// Companion player - use Phase 1 direct execution
 		if (intent.data.param1 > 0) {
 			// Attack monster by ID
+			std::cerr << "SeatManager: Attacking monster ID " << intent.data.param1 << std::endl;
 			gap::ExecuteDirectAttack(player_index, intent.data.param1);
+		} else if (intent.data.x > 0 || intent.data.y > 0) {
+			// Attack position - need to find monster at position and attack by ID
+			std::cerr << "SeatManager: Position-based attack at (" << intent.data.x << "," << intent.data.y << ")" << std::endl;
+			// Call the position-based attack from gap_network
+			gap::ExecutePositionAttack(player_index, intent.data.x, intent.data.y);
 		} else {
-			// Attack position - use same function with monster_id = 0 for position-based attacks
-			gap::ExecuteDirectAttack(player_index, 0);
+			std::cerr << "SeatManager: Invalid attack intent - no target" << std::endl;
 		}
 	}
 #endif

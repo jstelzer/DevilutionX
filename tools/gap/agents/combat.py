@@ -3,6 +3,7 @@ Combat Agent - Offensive decision-making specialist
 """
 
 import logging
+import math
 from typing import Dict, Any, Optional
 from .base import BaseAgent, AgentResponse
 
@@ -203,8 +204,8 @@ Example: AT {mobs[0].get('id', 27)} 0.85"""
                         parsed.reasoning = f"Combat: Ranged attack at ({mob_x},{mob_y}) dist={mob_dist} [MAINTAINING DISTANCE]"
                         logger.info(f"⚔️ RANGED: Attacking monster {monster_id} at distance {mob_dist} without moving")
                     elif mob_dist < 4:
-                        # Too close - need to retreat!
-                        # Calculate retreat position (away from monster, towards player)
+                        # Too close - kite backwards WHILE attacking
+                        # Calculate retreat position (away from monster)
                         retreat_x = me_x + (me_x - mob_x)  # Move away from monster
                         retreat_y = me_y + (me_y - mob_y)
 
@@ -212,15 +213,37 @@ Example: AT {mobs[0].get('id', 27)} 0.85"""
                         retreat_x = max(0, min(112, retreat_x))
                         retreat_y = max(0, min(112, retreat_y))
 
-                        parsed.command = f"MV {retreat_x} {retreat_y}"
-                        parsed.reasoning = f"Combat: KITING - too close ({mob_dist} tiles), retreating to ({retreat_x},{retreat_y})"
-                        logger.warning(f"🏃 KITING: Monster {monster_id} too close ({mob_dist} tiles), retreating!")
-                        return parsed
+                        # ATTACK from position while kiting (don't just run!)
+                        parsed.command = f"AT {mob_x} {mob_y}"
+                        parsed.reasoning = f"Combat: KITE-ATTACK - shooting while retreating from ({mob_x},{mob_y}) dist={mob_dist}"
+                        logger.warning(f"🏹 KITE-ATTACK: Monster {monster_id} too close ({mob_dist} tiles), attacking while repositioning!")
+                        # Note: Movement handled by game engine after attack
                     else:
-                        # Too far (>10 tiles) - use ID-based attack to close distance
-                        # (but not INTO melee - game should stop at bow range)
-                        parsed.reasoning = f"Combat: Ranged attack on monster {monster_id} (closing to range, dist={mob_dist})"
-                        logger.info(f"⚔️ RANGED: Closing distance to monster {monster_id} (currently {mob_dist} tiles)")
+                        # Too far (>10 tiles) - move closer to ~8 tile range
+                        # Calculate position 8 tiles from monster (using direction vector)
+                        # Direction from monster to companion
+                        dx_vec = me_x - mob_x
+                        dy_vec = me_y - mob_y
+                        dist = math.sqrt(dx_vec * dx_vec + dy_vec * dy_vec)
+
+                        if dist > 0:
+                            # Normalize direction and place us 8 tiles from monster
+                            target_dist = 8
+                            approach_x = mob_x + int((dx_vec / dist) * target_dist)
+                            approach_y = mob_y + int((dy_vec / dist) * target_dist)
+
+                            # Clamp to bounds
+                            approach_x = max(0, min(112, approach_x))
+                            approach_y = max(0, min(112, approach_y))
+
+                            parsed.command = f"MV {approach_x} {approach_y}"
+                            parsed.reasoning = f"Combat: Moving to bow range (currently {mob_dist} tiles, target 8 tiles from monster)"
+                            logger.info(f"⚔️ RANGED: Closing distance to monster {monster_id} (currently {mob_dist} tiles) - moving to ({approach_x},{approach_y})")
+                        else:
+                            # Fallback: move toward monster directly
+                            parsed.command = f"MV {mob_x} {mob_y}"
+                            parsed.reasoning = f"Combat: Moving toward monster {monster_id} (dist={mob_dist})"
+                            logger.info(f"⚔️ RANGED: Moving toward monster {monster_id}")
 
             except (ValueError, IndexError) as e:
                 logger.error(f"Combat: Failed to parse monster ID from ranged attack: {e}")
