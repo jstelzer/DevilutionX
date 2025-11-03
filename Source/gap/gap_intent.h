@@ -50,6 +50,7 @@ private:
     bool ExecuteMove(int x, int y);
     bool ExecuteAttack(int x, int y);
     bool ExecuteCast(int slot, int x, int y);
+    bool ExecuteCastSpell(int spell_id, int x, int y);
     bool ExecutePickup(int item_id);
     bool ExecuteUsePotion(const std::string& kind, int slot = -1);
     bool ExecuteInteract(int object_id);

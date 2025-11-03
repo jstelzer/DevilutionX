@@ -23,12 +23,16 @@ GAP (Game Agent Protocol) enables LLM control of Diablo characters via IPC/JSON 
 
 ### Key Achievements:
 - ✅ **GAP Protocol**: Unix socket IPC with JSON messaging
-- ✅ **State Extraction**: Player, monsters, items, vision system  
-- ✅ **Combat System**: Attack, movement, tactical behaviors
+- ✅ **State Extraction**: Player, monsters, items, vision system
+- ✅ **Combat System**: Melee, ranged, and spell casting with tactical positioning
+- ✅ **Ranged Combat**: Direct function calls for true kiting behavior (no auto-pathing)
+- ✅ **Spell Casting**: Full magic system - any class can cast with sufficient Magic stat
 - ✅ **LLM Integration**: Ollama bridge via MCP server
 - ✅ **Level Transitions**: Automatic companion following through stairs/portals
 - ✅ **Chat System**: Bidirectional conversation with AI companion
 - ✅ **Multiplayer Mode**: Companion loads from save files
+- ✅ **Mutual Support**: Item sharing, gold drops, request handling
+- ✅ **Character Profiles**: Self-aware agents with class identity and role preferences
 
 ### Current Usage:
 ```bash
@@ -40,6 +44,17 @@ python3 tools/gap/mcp_server.py --companion-slot 1 --model qwen2.5:3b --password
 ```
 
 **Recommended Models**: qwen2.5:3b (fast), llama3.2:latest (balanced), llama3.1:8b (powerful)
+
+### Recent Changes (Nov 3, 2025):
+- ✅ **Spell Casting System**: Complete C++ and Python implementation
+- ✅ **Profile Integration**: SpellAgent uses CharacterProfile for class-aware logging
+- 🧪 **Testing Needed**: Spell casting with Magic ≥20 character (Sorcerer or high-level Warrior/Rogue)
+
+### Known Working:
+- Rogue companion with bow: Kites perfectly, maintains 4-10 tile range
+- Town NPCs: Pepin, Adria, Griswold (healing, shopping, selling)
+- Chat: Bidirectional conversation, item requests, DROP command
+- Missile damage: Companions deal and take ranged/spell damage correctly
 
 ## Active Development Focus
 
@@ -241,14 +256,66 @@ else:
 
 ## Next Features to Implement
 
-### 🔮 Spell Casting (High Priority)
-**Apply direct function call pattern** - Same issue as ranged attacks will occur with `destAction = ACTION_SPELL`. Need to:
-1. Find spell casting function in player.cpp (likely `StartSpell()` or similar)
-2. Export it from anonymous namespace to player.h
-3. Call directly from `gap_network.cpp` for position-controlled casting
-4. Add to DSL: `CAST spell_id target_x target_y` command
+### ✅ Spell Casting System Complete! (Nov 3, 2025)
 
-**Expected Behavior**: Casters should cast from safe distance without auto-pathing into melee range
+**Problem**: Sorcerer companions needed ranged magic attack capabilities similar to ranged physical attacks.
+
+**Solution**: Implemented complete spell casting system following the direct function call pattern.
+
+**Implementation Steps**:
+1. **Export StartSpell** (`Source/player.cpp:1483-1525`, `Source/player.h:970`):
+   - Moved `StartSpell()` out of anonymous namespace
+   - Added public declaration for GAP usage
+   - Function validates spell, checks mana, starts animation without auto-pathing
+
+2. **DSL Command** (`Source/gap/gap_intent.cpp:204-209`):
+   - Added `CAST spell_id x y` command parsing
+   - Format: `CAST 2 45 23` (cast Firebolt at position 45,23)
+
+3. **ExecuteCastSpell** (`Source/gap/gap_intent.cpp:589-639`, `gap_intent.h:53`):
+   - Validates player can cast (alive, not in animation)
+   - Checks spell is memorized (`_pMemSpells` bitmask)
+   - Validates mana available for spell
+   - Calls `StartSpell()` directly for position control
+   - Returns false with logging if validation fails
+
+4. **SpellAgent** (`tools/gap/agents/spell.py`):
+   - Priority 9 (just below healing at 10)
+   - **Stat-based activation**: Magic stat ≥20 (any class can cast - warriors can learn Town Portal, Healing, etc.)
+   - **Profile integration**: Uses `self.profile` for class-aware logging (e.g., "Warrior Spell: Firebolt" vs "Spell: Lightning")
+   - Checks mana ≥20% before casting
+   - Cooldown: 20 ticks between casts (prevents spam)
+   - **Spell Selection Logic**:
+     - **Fireball** (mana ≥40%, 3+ grouped enemies) - AoE damage, weight 0.9
+     - **Lightning** (mana ≥30%, distance ≤12) - Fast projectile, weight 0.8
+     - **Firebolt** (mana ≥20%) - Cheap, long range, weight 0.7
+   - Range validation: Ensures target within spell range before casting
+   - Weight boosts: +0.1 for 4+ hostiles, +0.05 for low HP targets
+   - **Design philosophy**: Like Diablo 1, any class can learn spells if they have the magic stat (Option B)
+
+5. **Orchestrator Integration** (`tools/gap/orchestrator.py:361-368`):
+   - Added spell_rec evaluation in decision loop
+   - Priority 9 multiplier (higher than combat 8/6)
+   - Placed after combat evaluation (lines after 359)
+
+**Files Modified**:
+- `Source/player.cpp` - Export StartSpell (lines 1483-1525)
+- `Source/player.h` - StartSpell declaration (line 970)
+- `Source/gap/gap_intent.h/cpp` - CAST command + ExecuteCastSpell (lines 204-209, 589-639)
+- `tools/gap/agents/spell.py` - Complete spell agent (new file, 214 lines)
+- `tools/gap/orchestrator.py` - SpellAgent integration (lines 16, 85, 100, 361-368)
+
+**Testing Status**:
+- ✅ Code complete and compiles
+- ✅ Profile-aware (uses CharacterProfile for class-context logging)
+- ⏳ Awaiting testing with any character with Magic ≥20 (Sorcerers, or high-level Warriors/Rogues with magic investment)
+- Current test saves: multi_0.sv (unknown class), multi_1.sv (Rogue, Magic <20)
+
+**Expected Behavior**:
+- Any character with Magic ≥20 casts spells from safe distance without auto-pathing
+- Conserves mana intelligently (won't cast below 20%)
+- Uses AoE (Fireball) for groups, single-target (Lightning/Firebolt) for isolated enemies
+- Logs show class context for non-casters: "Warrior Spell: Firebolt" vs "Spell: Lightning" for Sorcerers
 
 ### 📦 Lootable Objects in Dungeons (High Priority)
 **Problem**: Currently only tracks ground loot (items dropped by monsters). Missing dungeon interactables:

@@ -967,6 +967,7 @@ void StartStand(Player &player, Direction dir);
 void StartPlrBlock(Player &player, Direction dir);
 void StartAttack(Player &player, Direction d, bool includesFirstFrame);
 void StartRangeAttack(Player &player, Direction d, WorldTileCoord cx, WorldTileCoord cy, bool includesFirstFrame);
+void StartSpell(Player &player, Direction d, WorldTileCoord cx, WorldTileCoord cy);
 void FixPlrWalkTags(const Player &player);
 void StartPlrHit(Player &player, int dam, bool forcehit);
 void StartPlayerKill(Player &player, DeathReason deathReason);

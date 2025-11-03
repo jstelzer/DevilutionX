@@ -13,6 +13,7 @@ import argparse
 from typing import Optional, List, Tuple
 from agents.base import AgentResponse
 from agents.combat import CombatAgent
+from agents.spell import SpellAgent
 from agents.healing import HealingAgent
 from agents.movement import MovementAgent
 from agents.loot import LootAgent
@@ -81,6 +82,7 @@ class AgentOrchestrator:
         # Initialize specialist agents
         # Start with dungeon model (most common context)
         self.combat = CombatAgent(model=model, ollama_url=ollama_url)
+        self.spell = SpellAgent(model=model, ollama_url=ollama_url)
         self.healing = HealingAgent(model=model, ollama_url=ollama_url)
         self.loot = LootAgent(model=model, ollama_url=ollama_url)
         self.stats = StatsAgent(model=model, ollama_url=ollama_url)
@@ -95,7 +97,7 @@ class AgentOrchestrator:
 
         # List of all agents for easy model switching
         self.agents = [
-            self.combat, self.healing, self.loot,
+            self.combat, self.spell, self.healing, self.loot,
             self.stats, self.town, self.shopping,
             self.inventory, self.griswold, self.cain, self.adria, self.movement,
             self.chat
@@ -240,15 +242,16 @@ class AgentOrchestrator:
         1. CHAT (11) - Immediate response to player questions
         2. HEALING (10/8) - HP < 25% critical, else normal
         3. STATS (9) - Character progression when points available
-        4. CAIN (8) - Identify items before selling/using
-        5. INVENTORY (7) - Emergency belt refills, proactive management
-        6. ADRIA (7) - Witch shop for casters (mana potions, staves, books)
-        7. SHOPPING (6-7) - Buy HP potions, gear upgrades
-        8. GRISWOLD (6) - Sell junk items, free inventory space
-        9. TOWN (5) - Navigate to NPCs, general town activities
-        10. COMBAT (8/6) - Attack monsters when HP healthy
-        11. LOOT (4-9) - Pick up items (priority varies by urgency)
-        12. MOVEMENT (3) - Exploration and following player
+        4. SPELL (9) - Ranged magic attacks for casters
+        5. CAIN (8) - Identify items before selling/using
+        6. COMBAT (8/6) - Attack monsters when HP healthy
+        7. INVENTORY (7) - Emergency belt refills, proactive management
+        8. ADRIA (7) - Witch shop for casters (mana potions, staves, books)
+        9. SHOPPING (6-7) - Buy HP potions, gear upgrades
+        10. GRISWOLD (6) - Sell junk items, free inventory space
+        11. TOWN (5) - Navigate to NPCs, general town activities
+        12. LOOT (4-9) - Pick up items (priority varies by urgency)
+        13. MOVEMENT (3) - Exploration and following player
 
         Returns:
             DSL command string
@@ -355,6 +358,15 @@ class AgentOrchestrator:
             priority = 8 if hp_pct > 50 else 6
             score = combat_rec.weight * priority
             recommendations.append(("Combat", combat_rec, score))
+
+        # SPELL CASTING - ranged magic attacks for casters
+        spell_rec = self.spell.evaluate(state)
+        if spell_rec and spell_rec.weight > 0.0:
+            # Priority 9 for spell casting (high priority, safer than melee)
+            # Boost priority when mana is high and monsters are grouped
+            priority = 9
+            score = spell_rec.weight * priority
+            recommendations.append(("Spell", spell_rec, score))
 
         # LOOT - CRITICAL priority when HP low and potions on ground
         loot_rec = self.loot.evaluate(state)

@@ -245,49 +245,6 @@ player_graphic GetPlayerGraphicForSpell(SpellID spellId)
 	}
 }
 
-void StartSpell(Player &player, Direction d, WorldTileCoord cx, WorldTileCoord cy)
-{
-	if (player._pInvincible && player._pHitPoints == 0 && &player == MyPlayer) {
-		SyncPlrKill(player, DeathReason::Unknown);
-		return;
-	}
-
-	// Checks conditions for spell again, because initial check was done when spell was queued and the parameters could be changed meanwhile
-	bool isValid = false;
-	switch (player.queuedSpell.spellType) {
-	case SpellType::Skill:
-	case SpellType::Spell:
-		isValid = CheckSpell(player, player.queuedSpell.spellId, player.queuedSpell.spellType, true) == SpellCheckResult::Success;
-		break;
-	case SpellType::Scroll:
-		isValid = CanUseScroll(player, player.queuedSpell.spellId);
-		break;
-	case SpellType::Charges:
-		isValid = CanUseStaff(player, player.queuedSpell.spellId);
-		break;
-	default:
-		break;
-	}
-	if (!isValid)
-		return;
-
-	auto animationFlags = AnimationDistributionFlags::ProcessAnimationPending;
-	if (player._pmode == PM_SPELL)
-		animationFlags = static_cast<AnimationDistributionFlags>(animationFlags | AnimationDistributionFlags::RepeatedAction);
-	NewPlrAnim(player, GetPlayerGraphicForSpell(player.queuedSpell.spellId), d, animationFlags, 0, player._pSFNum);
-
-	PlaySfxLoc(GetSpellData(player.queuedSpell.spellId).sSFX, player.position.tile);
-
-	player._pmode = PM_SPELL;
-
-	FixPlayerLocation(player, d);
-	SetPlayerOld(player);
-
-	player.position.temp = WorldTilePosition { cx, cy };
-	player.queuedSpell.spellLevel = player.GetSpellLevel(player.queuedSpell.spellId);
-	player.executedSpell = player.queuedSpell;
-}
-
 void RespawnDeadItem(Item &&itm, Point target)
 {
 	if (ActiveItemCount >= MAXITEMS)
@@ -1522,6 +1479,50 @@ uint16_t GetPlayerSpriteWidth(HeroClass cls, player_graphic graphic, PlayerWeapo
 }
 
 } // namespace
+
+// Export StartSpell for GAP (Game Agent Protocol) usage
+void StartSpell(Player &player, Direction d, WorldTileCoord cx, WorldTileCoord cy)
+{
+	if (player._pInvincible && player._pHitPoints == 0 && &player == MyPlayer) {
+		SyncPlrKill(player, DeathReason::Unknown);
+		return;
+	}
+
+	// Checks conditions for spell again, because initial check was done when spell was queued and the parameters could be changed meanwhile
+	bool isValid = false;
+	switch (player.queuedSpell.spellType) {
+	case SpellType::Skill:
+	case SpellType::Spell:
+		isValid = CheckSpell(player, player.queuedSpell.spellId, player.queuedSpell.spellType, true) == SpellCheckResult::Success;
+		break;
+	case SpellType::Scroll:
+		isValid = CanUseScroll(player, player.queuedSpell.spellId);
+		break;
+	case SpellType::Charges:
+		isValid = CanUseStaff(player, player.queuedSpell.spellId);
+		break;
+	default:
+		break;
+	}
+	if (!isValid)
+		return;
+
+	auto animationFlags = AnimationDistributionFlags::ProcessAnimationPending;
+	if (player._pmode == PM_SPELL)
+		animationFlags = static_cast<AnimationDistributionFlags>(animationFlags | AnimationDistributionFlags::RepeatedAction);
+	NewPlrAnim(player, GetPlayerGraphicForSpell(player.queuedSpell.spellId), d, animationFlags, 0, player._pSFNum);
+
+	PlaySfxLoc(GetSpellData(player.queuedSpell.spellId).sSFX, player.position.tile);
+
+	player._pmode = PM_SPELL;
+
+	FixPlayerLocation(player, d);
+	SetPlayerOld(player);
+
+	player.position.temp = WorldTilePosition { cx, cy };
+	player.queuedSpell.spellLevel = player.GetSpellLevel(player.queuedSpell.spellId);
+	player.executedSpell = player.queuedSpell;
+}
 
 void Player::CalcScrolls()
 {

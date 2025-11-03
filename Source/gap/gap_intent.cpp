@@ -201,6 +201,13 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         intent.action = "cast";
         iss >> intent.param_slot;
 
+    } else if (cmd == "CAST") {
+        // CAST spell_id x y - Cast memorized spell at target location
+        // Example: CAST 2 45 30  (cast Firebolt at 45,30)
+        // Example: CAST 3 50 25  (cast Fireball at 50,25)
+        intent.action = "cast_spell";
+        iss >> intent.param_id >> intent.param_x >> intent.param_y;
+
     } else if (cmd == "US") {
         // US slot
         intent.action = "use_potion";
@@ -316,6 +323,8 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         }
     } else if (intent.action == "cast") {
         return ExecuteCast(intent.param_slot, intent.param_x, intent.param_y);
+    } else if (intent.action == "cast_spell") {
+        return ExecuteCastSpell(intent.param_id, intent.param_x, intent.param_y);
     } else if (intent.action == "use_potion") {
         return ExecuteUsePotion(intent.param_kind, intent.param_slot);
     } else if (intent.action == "pickup") {
@@ -577,6 +586,58 @@ bool GapIntentProcessor::ExecuteCast(int slot, int x, int y) {
     return success;
 }
 
+bool GapIntentProcessor::ExecuteCastSpell(int spell_id, int x, int y) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP: ExecuteCastSpell failed - no controlled player" << std::endl;
+        return false;
+    }
+
+    // Validate player state
+    if (player->_pmode == PM_DEATH || player->_pmode == PM_QUIT || player->_pmode == PM_NEWLVL) {
+        std::cerr << "GAP: ExecuteCastSpell failed - invalid player mode (" << player->_pmode << ")" << std::endl;
+        return false;
+    }
+
+    // Convert spell_id to SpellID enum
+    SpellID spellID = static_cast<SpellID>(spell_id);
+
+    // Validate spell ID
+    if (!IsValidSpell(spellID)) {
+        std::cerr << "GAP: ExecuteCastSpell failed - invalid spell ID " << spell_id << std::endl;
+        return false;
+    }
+
+    // Check if player knows this spell
+    if (!(player->_pMemSpells & GetSpellBitmask(spellID))) {
+        std::cerr << "GAP: ExecuteCastSpell failed - player doesn't know spell " << spell_id << std::endl;
+        return false;
+    }
+
+    // Check mana requirement
+    if (player->_pMana < GetManaAmount(*player, spellID) << 6) {
+        std::cerr << "GAP: ExecuteCastSpell failed - not enough mana for spell " << spell_id << std::endl;
+        return false;
+    }
+
+    std::cout << "GAP: ExecuteCastSpell - spell_id=" << spell_id
+              << " target=(" << x << "," << y << ")" << std::endl;
+
+    // Set up the queued spell (required by StartSpell)
+    player->queuedSpell.spellId = spellID;
+    player->queuedSpell.spellType = SpellType::Spell;
+    player->queuedSpell.spellFrom = 0;  // From memory
+
+    // Calculate direction to target
+    Direction dir = GetDirection(player->position.tile, WorldTilePosition(x, y));
+
+    // Call StartSpell directly (bypasses auto-pathing like we do for ranged attacks)
+    StartSpell(*player, dir, x, y);
+
+    std::cout << "GAP: Successfully cast spell " << spell_id << " at (" << x << "," << y << ")" << std::endl;
+    return true;
+}
+
 bool GapIntentProcessor::ExecutePickup(int item_id) {
     int player_id = GetControlledPlayerId();
 
@@ -829,6 +890,10 @@ devilution::Intent GapIntentProcessor::ConvertToSeatIntent(const Intent& gap_int
     } else if (gap_intent.action == "cast") {
         return devilution::Intent(devilution::Intent::Type::Cast, tick,
                                  gap_intent.param_x, gap_intent.param_y, gap_intent.param_slot);
+    } else if (gap_intent.action == "cast_spell") {
+        // Cast memorized spell - use param_id for spell ID
+        return devilution::Intent(devilution::Intent::Type::Cast, tick,
+                                 gap_intent.param_x, gap_intent.param_y, gap_intent.param_id);
     } else if (gap_intent.action == "interact") {
         return devilution::Intent(devilution::Intent::Type::Interact, tick,
                                  gap_intent.param_x, gap_intent.param_y);
