@@ -257,6 +257,20 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         intent.action = "belt_refill";
         iss >> intent.param_inv_slot >> intent.param_slot;
 
+    } else if (cmd == "DROP") {
+        // DROP inv_slot OR DROP GOLD amount
+        // Example: DROP 5  (drop item from inventory slot 5)
+        // Example: DROP GOLD 1000  (drop 1000 gold)
+        std::string param1;
+        iss >> param1;
+        if (param1 == "GOLD") {
+            intent.action = "drop_gold";
+            iss >> intent.param_x;  // Use param_x to store gold amount
+        } else {
+            intent.action = "drop_item";
+            intent.param_inv_slot = std::stoi(param1);
+        }
+
     } else {
         std::cerr << "GAP DSL: Unknown command: " << cmd << std::endl;
         return;
@@ -326,6 +340,10 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteAddStat(intent.param_kind);
     } else if (intent.action == "belt_refill") {
         return ExecuteBeltRefill(intent.param_inv_slot, intent.param_slot);
+    } else if (intent.action == "drop_item") {
+        return ExecuteDropItem(intent.param_inv_slot);
+    } else if (intent.action == "drop_gold") {
+        return ExecuteDropGold(intent.param_x);
     }
 
     std::cerr << "GAP: Unknown intent action: " << intent.action << std::endl;
@@ -752,14 +770,16 @@ void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
         }
 
         // Some actions should be executed directly, not through the Seat system
-        // These include: stats, shopping, identification, inventory management, etc.
+        // These include: stats, shopping, identification, inventory management, dropping items, etc.
         bool use_direct_execution = (
             gap_intent.action == "addstat" ||
             gap_intent.action == "buy" ||
             gap_intent.action == "sell" ||
             gap_intent.action == "repair" ||
             gap_intent.action == "identify" ||
-            gap_intent.action == "belt_refill"
+            gap_intent.action == "belt_refill" ||
+            gap_intent.action == "drop_item" ||
+            gap_intent.action == "drop_gold"
         );
 
         if (use_direct_execution) {
@@ -969,6 +989,99 @@ bool GapIntentProcessor::ExecuteBeltRefill(int invSlot, int beltSlot) {
 
     std::cout << "GAP Belt: Moved item from inv slot " << invSlot
               << " to belt slot " << beltSlot << std::endl;
+
+    return true;
+}
+
+bool GapIntentProcessor::ExecuteDropItem(int invSlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Drop: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    // Validate inventory slot
+    if (invSlot < 0 || invSlot >= player->_pNumInv) {
+        std::cerr << "GAP Drop: Invalid inventory slot: " << invSlot << std::endl;
+        return false;
+    }
+
+    // Check if inventory slot has an item
+    const Item& invItem = player->InvList[invSlot];
+    if (invItem.isEmpty()) {
+        std::cerr << "GAP Drop: Inventory slot " << invSlot << " is empty" << std::endl;
+        return false;
+    }
+
+    // Find adjacent position to drop the item
+    std::optional<Point> dropPosition = FindAdjacentPositionForItem(
+        player->position.tile,
+        player->_pdir
+    );
+
+    if (!dropPosition) {
+        std::cerr << "GAP Drop: No adjacent position available to drop item" << std::endl;
+        return false;
+    }
+
+    // Drop the item
+    std::cout << "GAP Drop: Dropping " << invItem._iIName
+              << " from slot " << invSlot
+              << " at (" << dropPosition->x << "," << dropPosition->y << ")" << std::endl;
+
+    // Send network command to drop item
+    // CMD_PUTITEM is used to place items from cursor onto ground
+    NetSendCmdPItem(true, CMD_PUTITEM, *dropPosition, invItem);
+
+    // Remove item from inventory
+    player->RemoveInvItem(invSlot, true);  // Recalculate scrolls
+
+    return true;
+}
+
+bool GapIntentProcessor::ExecuteDropGold(int amount) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Drop Gold: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    // Validate gold amount
+    if (amount <= 0) {
+        std::cerr << "GAP Drop Gold: Invalid amount: " << amount << std::endl;
+        return false;
+    }
+
+    // Check if player has enough gold
+    if (player->_pGold < amount) {
+        std::cerr << "GAP Drop Gold: Not enough gold (has " << player->_pGold
+                  << ", wants to drop " << amount << ")" << std::endl;
+        return false;
+    }
+
+    // Find adjacent position to drop the gold
+    std::optional<Point> dropPosition = FindAdjacentPositionForItem(
+        player->position.tile,
+        player->_pdir
+    );
+
+    if (!dropPosition) {
+        std::cerr << "GAP Drop Gold: No adjacent position available" << std::endl;
+        return false;
+    }
+
+    // Create a gold item
+    Item goldItem;
+    MakeGoldStack(goldItem, amount);
+
+    std::cout << "GAP Drop Gold: Dropping " << amount << " gold at ("
+              << dropPosition->x << "," << dropPosition->y << ")" << std::endl;
+
+    // Drop the gold
+    NetSendCmdPItem(true, CMD_PUTITEM, *dropPosition, goldItem);
+
+    // Deduct gold from player
+    player->_pGold -= amount;
 
     return true;
 }

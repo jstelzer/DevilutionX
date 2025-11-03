@@ -74,6 +74,10 @@ class AgentOrchestrator:
         self.last_decision_agent = None
         self.last_decision_time = 0
 
+        # Track recently dropped items (for mutual support)
+        self.recently_dropped_position = None
+        self.recently_dropped_tick = 0
+
         # Initialize specialist agents
         # Start with dungeon model (most common context)
         self.combat = CombatAgent(model=model, ollama_url=ollama_url)
@@ -433,6 +437,16 @@ class AgentOrchestrator:
         best = max(recommendations, key=lambda x: x[2])
         agent_name, response, score = best
 
+        # Track DROP commands to avoid picking them back up
+        if response.command.startswith("DROP ") and not response.command.startswith("DROP GOLD"):
+            # Dropped an item - mark companion's current position
+            me_x, me_y, _, _ = state["me"]
+            self.recently_dropped_position = (me_x, me_y)
+            self.recently_dropped_tick = state.get("tick", 0)
+            # Notify LootAgent to ignore items at this position
+            self.loot.recently_dropped[(me_x, me_y)] = self.recently_dropped_tick
+            logger.info(f"🎁 Dropped item at ({me_x},{me_y}) - LootAgent will ignore for 10 seconds")
+
         # Update hysteresis tracking
         self.last_decision_agent = agent_name
         self.last_decision_time = current_time
@@ -504,10 +518,8 @@ class AgentOrchestrator:
                     if len(parts) == 2:
                         sender, message = parts
                         logger.info(f"💬 {sender}: {message}")
-                        # Queue to ChatAgent for intelligent responses
+                        # Queue to ChatAgent for intelligent responses with full context
                         self.chat.queue_player_message(sender, message)
-                        # Keep old handler as fallback for now
-                        self.chat_handler.handle_chat(sender, message)
                     continue
 
                 # Parse state

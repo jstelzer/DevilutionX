@@ -17,6 +17,7 @@ class ChatAgent(BaseAgent):
         super().__init__(name="Chat", **kwargs)
         self.memory = memory  # MemoryStore instance
         self.message_queue = queue.Queue()  # Player messages
+        self.pending_responses = queue.Queue()  # Multi-part responses
         self.last_proactive_message = 0  # Tick of last proactive message
 
     def queue_player_message(self, sender: str, message: str):
@@ -41,9 +42,23 @@ class ChatAgent(BaseAgent):
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
         Handle communication:
+        - Pending: Send queued multi-part responses first
         - Reactive: Answer player questions using SQLite state
         - Proactive: Express needs based on game state
         """
+        # Priority 0: Send pending multi-part responses
+        if not self.pending_responses.empty():
+            try:
+                response_text = self.pending_responses.get_nowait()
+                logger.info(f"💬 Continuing response: {response_text}")
+                return AgentResponse(
+                    command=f"SAY {response_text}",
+                    weight=0.3,
+                    reasoning="Chat: Multi-part response continuation"
+                )
+            except queue.Empty:
+                pass
+
         # Priority 1: Reactive chat (player asked a question)
         if not self.message_queue.empty():
             return self._handle_player_message(state)
@@ -73,6 +88,11 @@ class ChatAgent(BaseAgent):
         # Get character profile for class info
         class_names = ["Warrior", "Rogue", "Sorcerer", "Monk", "Bard", "Barbarian"]
         class_name = class_names[companion_state['class']] if companion_state['class'] < 6 else "Adventurer"
+
+        # Check for item requests first (higher priority than chat)
+        item_request = self._detect_item_request(message, companion_state, state)
+        if item_request:
+            return item_request
 
         # Build comprehensive context from SQLite
         context = self._build_context(companion_state, class_name, state)
@@ -161,7 +181,7 @@ LOCATION:
         return context
 
     def _clean_response(self, response: str) -> str:
-        """Clean up LLM response artifacts"""
+        """Clean up LLM response artifacts and split long messages"""
         # Remove quotes
         response = response.replace('"', '').replace("'", "")
 
@@ -175,11 +195,136 @@ LOCATION:
         if response:
             response = response[0].upper() + response[1:]
 
-        # Cap length
-        if len(response) > 200:
-            response = response[:197] + "..."
+        response = response.strip()
 
-        return response.strip()
+        # Split long messages into chunks at sentence boundaries
+        if len(response) > 150:
+            chunks = self._split_message(response)
+            if len(chunks) > 1:
+                # Queue additional chunks for subsequent sends
+                for chunk in chunks[1:]:
+                    self.pending_responses.put(chunk)
+                logger.info(f"💬 Split into {len(chunks)} parts")
+                return chunks[0]
+
+        return response
+
+    def _split_message(self, text: str, max_length: int = 150) -> list:
+        """Split text into chunks at sentence boundaries"""
+        chunks = []
+        current = ""
+
+        # Split on sentence boundaries
+        import re
+        sentences = re.split(r'([.!?]+\s+)', text)
+
+        for i in range(0, len(sentences), 2):
+            sentence = sentences[i]
+            punctuation = sentences[i + 1] if i + 1 < len(sentences) else ""
+            full_sentence = sentence + punctuation
+
+            # If adding this sentence exceeds max length, start new chunk
+            if current and len(current + full_sentence) > max_length:
+                chunks.append(current.strip())
+                current = full_sentence
+            else:
+                current += full_sentence
+
+        # Add final chunk
+        if current.strip():
+            chunks.append(current.strip())
+
+        return chunks if chunks else [text]
+
+    def _detect_item_request(self, message: str, companion_state: Dict[str, Any], game_state: Dict[str, Any]) -> Optional[AgentResponse]:
+        """Detect if player is requesting an item and handle it"""
+        message_lower = message.lower()
+
+        # Detect potion requests
+        potion_keywords = ['potion', 'pot', 'heal', 'healing', 'health', 'hp']
+        request_keywords = ['give', 'drop', 'share', 'spare', 'can i get', 'can i have', 'need', 'want']
+
+        # Check if message contains both request and potion keywords
+        has_request = any(keyword in message_lower for keyword in request_keywords)
+        wants_hp_potion = any(keyword in message_lower for keyword in potion_keywords)
+        wants_mana_potion = 'mana' in message_lower or 'mp' in message_lower or 'magic' in message_lower
+
+        # Check for gold requests
+        wants_gold = 'gold' in message_lower or 'gp' in message_lower or 'coin' in message_lower
+
+        if has_request and wants_hp_potion:
+            # Find HP potion in inventory
+            inventory = game_state.get("inventory", [])
+            hp_potion = next((item for item in inventory if item["type"] in ["hp", "rj"]), None)
+
+            if hp_potion:
+                slot = hp_potion["slot"]
+                potion_name = "healing potion" if hp_potion["type"] == "hp" else "rejuvenation potion"
+                logger.info(f"💊 Dropping {potion_name} from slot {slot}")
+
+                # Queue the chat response for next tick
+                self.pending_responses.put(f"Sure! Dropping a {potion_name} for you now.")
+
+                return AgentResponse(
+                    command=f"DROP {slot}",
+                    weight=0.8,  # High priority - player needs help
+                    reasoning=f"Chat: Dropping HP potion from slot {slot}"
+                )
+            else:
+                return AgentResponse(
+                    command="SAY Sorry, I'm all out of healing potions!",
+                    weight=0.3,
+                    reasoning="Chat: Player requested HP potion but we have none"
+                )
+
+        elif has_request and wants_mana_potion:
+            # Find mana potion in inventory
+            inventory = game_state.get("inventory", [])
+            mp_potion = next((item for item in inventory if item["type"] == "mp"), None)
+
+            if mp_potion:
+                slot = mp_potion["slot"]
+                logger.info(f"🔮 Dropping mana potion from slot {slot}")
+
+                # Queue the chat response for next tick
+                self.pending_responses.put("Sure! Dropping a mana potion for you.")
+
+                return AgentResponse(
+                    command=f"DROP {slot}",
+                    weight=0.8,
+                    reasoning=f"Chat: Dropping MP potion from slot {slot}"
+                )
+            else:
+                return AgentResponse(
+                    command="SAY Sorry, no mana potions on me right now.",
+                    weight=0.3,
+                    reasoning="Chat: Player requested MP potion but we have none"
+                )
+
+        elif has_request and wants_gold:
+            gold = companion_state.get('gold', 0)
+            if gold >= 100:
+                # Drop a small amount of gold
+                drop_amount = min(1000, gold // 2)  # Drop up to 1000 or half our gold
+                logger.info(f"💰 Player requested gold, dropping {drop_amount} (we have {gold})")
+
+                # Queue the chat response for next tick
+                self.pending_responses.put(f"Here's {drop_amount} gold - spend it wisely!")
+
+                return AgentResponse(
+                    command=f"DROP GOLD {drop_amount}",
+                    weight=0.6,
+                    reasoning=f"Chat: Dropping {drop_amount} gold for player"
+                )
+            else:
+                return AgentResponse(
+                    command=f"SAY I'm broke! Only got {gold} gold on me.",
+                    weight=0.3,
+                    reasoning="Chat: Player requested gold but we don't have much"
+                )
+
+        # No item request detected
+        return None
 
     # ============================================================================
     # PROACTIVE MESSAGING (Phase 3)

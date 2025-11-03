@@ -16,6 +16,7 @@ class LootAgent(BaseAgent):
         super().__init__(name="Loot", **kwargs)
         self.failed_pickups = {}  # item_id -> attempt_count
         self.last_loot_state = []  # Track items from last tick
+        self.recently_dropped = {}  # item_position -> tick_when_dropped (avoid picking up what we just dropped)
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Only activate if items nearby and not in combat"""
@@ -70,11 +71,26 @@ class LootAgent(BaseAgent):
         best_item = None
         best_score = 0.0
 
+        current_tick = state.get("tick", 0)
+
+        # Clean up old dropped items (older than 10 seconds = 200 ticks)
+        self.recently_dropped = {
+            pos: tick for pos, tick in self.recently_dropped.items()
+            if current_tick - tick < 200
+        }
+
         for item in loot:
             item_id = item.get('id', -1)
+            item_pos = (item.get('x', 0), item.get('y', 0))
 
             # Skip blacklisted items (failed 3+ times)
             if self.failed_pickups.get(item_id, 0) >= 3:
+                continue
+
+            # Skip items we just dropped (within last 10 seconds)
+            if item_pos in self.recently_dropped:
+                ticks_since_drop = current_tick - self.recently_dropped[item_pos]
+                logger.debug(f"Loot: Skipping recently dropped item at {item_pos} (dropped {ticks_since_drop} ticks ago)")
                 continue
 
             score = self._score_item(item, empty_belt_slots, hp_pct)

@@ -62,6 +62,8 @@ private:
     bool ExecuteIdentify(int invSlot);
     bool ExecuteAddStat(const std::string& statName);
     bool ExecuteBeltRefill(int invSlot, int beltSlot);
+    bool ExecuteDropItem(int invSlot);
+    bool ExecuteDropGold(int amount);
 };
 
 } // namespace devilution::gap
