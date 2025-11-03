@@ -199,13 +199,17 @@ bool ExecuteDirectAttack(int player_id, int monster_id) {
     Direction dir = GetDirection(playerPos, monsterPos);
     player._pdir = dir;
 
-    // Set up the attack action
-    // With the range check above, we only reach here if in range
-    // ClrPlrPath() prevents movement, giving us shift-key behavior
-    player.destAction = ACTION_ATTACKMON;
-    player.destParam1 = monster_id;
+    // Call attack functions directly - this is true shift-key behavior!
+    // These functions start the attack animation WITHOUT creating a path
+    if (player.UsesRangedWeapon()) {
+        StartRangeAttack(player, dir, monsterPos.x, monsterPos.y, true);
+        std::cerr << "GAP: Called StartRangeAttack (stand-and-shoot)" << std::endl;
+    } else {
+        StartAttack(player, dir, true);
+        std::cerr << "GAP: Called StartAttack (melee)" << std::endl;
+    }
 
-    std::cerr << "GAP: Attack queued (in range, no movement)" << std::endl;
+    std::cerr << "GAP: Attack started directly (no destAction, no movement)" << std::endl;
     
     // Sync to network if multiplayer
     if (gbIsMultiplayer) {

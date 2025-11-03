@@ -166,6 +166,9 @@ void ClearStateVariables(Player &player)
 	player.queuedSpell.spellLevel = 0;
 }
 
+} // namespace
+
+// Export these functions for GAP (Game Agent Protocol) usage
 void StartAttack(Player &player, Direction d, bool includesFirstFrame)
 {
 	if (player._pInvincible && player._pHitPoints == 0 && &player == MyPlayer) {
@@ -227,6 +230,8 @@ void StartRangeAttack(Player &player, Direction d, WorldTileCoord cx, WorldTileC
 	SetPlayerOld(player);
 	player.position.temp = WorldTilePosition { cx, cy };
 }
+
+namespace {
 
 player_graphic GetPlayerGraphicForSpell(SpellID spellId)
 {

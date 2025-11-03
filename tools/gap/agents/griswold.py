@@ -76,6 +76,7 @@ class GriswoldAgent(BaseAgent):
         gold = state.get("gold", 0)
         me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
         npcs = state.get("npcs", [])
+        stores = state.get("stores", {})
 
         # Find sellable items (must match should_activate logic!)
         sellable_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
@@ -115,20 +116,25 @@ class GriswoldAgent(BaseAgent):
         # Calculate urgency based on inventory fullness
         inv_fullness = inv_count / 40.0
 
-        # If within interaction range, interact with Griswold to open shop
-        if dist <= 3:
-            # Close enough - interact with Griswold
+        # Check if Griswold's shop is currently open
+        shop_is_open = "sm" in stores and len(stores.get("sm", [])) > 0
+
+        # If shop is OPEN, sell items
+        if shop_is_open:
+            # Shop is open - proceed to selling logic below
+            logger.info(f"Griswold: Shop is open, proceeding to sell items")
+        # If shop is NOT open, navigate and interact to open it
+        elif dist <= 3:
+            # Close enough - interact with Griswold to open shop
             weight = 0.6 if inv_fullness > 0.6 else 0.45
-            logger.info(f"Griswold: Interacting with Griswold (dist={dist}, sellable={len(potential_sells)})")
+            logger.info(f"Griswold: Interacting with Griswold to open shop (dist={dist}, sellable={len(potential_sells)})")
             return AgentResponse(
                 command=f"IN {griswold['id']}",
                 weight=weight,
                 reasoning=f"Griswold: Opening shop to sell {len(potential_sells)} items"
             )
-
-        # If too far, navigate to Griswold first
-        if dist > 3:
-            # Higher urgency if inventory is fuller
+        else:  # dist > 3
+            # Too far - navigate to Griswold first
             if inv_fullness > 0.8:
                 weight = 0.65
                 reasoning = f"Griswold: Going to Griswold (URGENT - inventory {inv_fullness*100:.0f}% full)"
@@ -146,11 +152,11 @@ class GriswoldAgent(BaseAgent):
                 reasoning=reasoning
             )
 
-        # Adjacent to Griswold - sell items!
+        # SELLING LOGIC: Shop is open, sell items!
         # (Already filtered above to only include junk)
         sellable_items = potential_sells
 
-        # Higher weight if inventory is fuller
+        # Calculate weight/urgency based on inventory fullness
         if inv_fullness > 0.8:
             weight = 0.7  # Urgent - inventory almost full
             urgency = "URGENT"
@@ -161,8 +167,9 @@ class GriswoldAgent(BaseAgent):
             weight = 0.3  # Optional
             urgency = "OPTIONAL"
         else:
-            # Don't bother selling if inventory not filling up
-            return None
+            # Shop is already open, might as well sell even if inventory not full
+            weight = 0.25  # Low priority
+            urgency = "OPTIONAL"
 
         # Sell the first sellable item
         item = sellable_items[0]

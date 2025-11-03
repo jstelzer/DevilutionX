@@ -274,20 +274,20 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     
     // Reduced logging - only log position changes and player status
     static Point lastPlayerPos = {-1, -1};
-    static int lastActiveCount = -1;
-    
+    [[maybe_unused]] static int lastActiveCount = -1;  // Reserved for future logging
+
     if (playerPos.x != lastPlayerPos.x || playerPos.y != lastPlayerPos.y) {
         // Player moved - update last position (removed excessive logging)
         lastPlayerPos = playerPos;
     }
-    
+
     // Log active players when count changes
     int activePlayerCount = 0;
     int max_players = std::min(static_cast<int>(Players.size()), MAX_PLRS);
     for (int i = 0; i < max_players; i++) {
         if (Players[i].plractive) activePlayerCount++;
     }
-    
+
     lastActiveCount = activePlayerCount;
     
     std::stringstream monsters_json;
