@@ -116,6 +116,61 @@ if (player.UsesRangedWeapon()) {
 
 **Key Lesson**: `destAction` is for human input processing where auto-pathing is desired. For AI companions that need tactical positioning control, call the underlying action functions directly to get true "shift-key" behavior.
 
+### ✅ Mutual Support System (Nov 3, 2025)
+
+**Problem**: Players couldn't request items from companions, no cooperative gameplay.
+
+**Solution**: Built complete item sharing system with natural language requests.
+
+**Features Implemented**:
+1. **DROP Command** (C++ - `Source/gap/gap_intent.cpp`):
+   - `DROP <inv_slot>` - Drop item from inventory slot
+   - `DROP GOLD <amount>` - Drop gold pile
+   - Uses `FindAdjacentPositionForItem()` and `CMD_PUTITEM` network message
+   - Added to direct execution list (works in town + dungeon)
+
+2. **Chat Item Detection** (Python - `tools/gap/agents/chat.py`):
+   - Detects requests: "give me a potion", "drop gold", "share a health pot"
+   - Searches live inventory for requested item type
+   - Generates `DROP` command with correct slot
+   - Natural responses: "Sure! Dropping a healing potion for you now."
+
+3. **Anti-Pickup Loop** (Python - `tools/gap/agents/loot.py` + `orchestrator.py`):
+   - LootAgent tracks `recently_dropped` positions
+   - Orchestrator notifies LootAgent when DROP command issued
+   - Items ignored for 10 seconds (200 ticks) at drop position
+   - Prevents companion from immediately picking items back up
+
+**Usage Examples**:
+```
+You: "Can you give me a potion?"
+Companion: *drops healing potion* "Sure! Dropping a healing potion for you now."
+
+You: "Drop some gold"
+Companion: *drops 500 gold* "Here's 500 gold - spend it wisely!"
+
+You: "Need mana"
+Companion: "Sorry, no mana potions on me right now."
+```
+
+**Files Modified**:
+- `Source/gap/gap_intent.h/cpp` - DROP command parsing & execution
+- `tools/gap/agents/chat.py` - Item request detection & inventory lookup
+- `tools/gap/agents/loot.py` - Recently dropped blacklist
+- `tools/gap/orchestrator.py` - Fixed duplicate chat responses, DROP tracking
+
+**Technical Details**:
+- Inventory lookup uses DSL state: `game_state.get("inventory")` with slot mapping
+- Gold requires ≥100 to drop (drops up to 1000 or 50%)
+- Position-based blacklist (handles multiple items at same location)
+- Multi-message flow: DROP command on tick N, chat response on tick N+1
+
+**Chat System Improvements**:
+- Fixed duplicate replies (removed ChatHandler call in orchestrator.py:510)
+- Messages >150 chars split at sentence boundaries
+- Multi-part responses queue via `pending_responses` and send over consecutive ticks
+- Natural conversation pacing instead of truncation or spam
+
 ### ✅ Town Agent Fixes (Nov 3, 2025)
 
 **Problem 1: NPC Interaction Loops**
