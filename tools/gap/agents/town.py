@@ -46,7 +46,7 @@ class TownAgent(BaseAgent):
                 return AgentResponse(
                     command="NONE",
                     weight=0.0,
-                    reasoning=f"Town: Near healer with store visible - deferring to Shopping agent"
+                    reasoning=f"Town: Healer shop open - deferring to Shopping agent"
                 )
 
             # Find Pepin in NPC list
@@ -54,29 +54,29 @@ class TownAgent(BaseAgent):
 
             if pepin:
                 npc_x, npc_y = pepin["x"], pepin["y"]
-                dist = abs(npc_x - me_x) + abs(npc_y - me_y)
+                # Use Chebyshev distance (same as C++ store visibility check)
+                dist = max(abs(npc_x - me_x), abs(npc_y - me_y))
 
-                if dist <= 2:
-                    # Near Pepin - wait for Shopping agent to handle purchase
-                    # Store inventory should appear in DSL state
+                if dist <= 1:
+                    # Adjacent to Pepin - interact to open shop
                     return AgentResponse(
-                        command="NONE",
-                        weight=0.0,
-                        reasoning=f"Town: Near Pepin (dist={dist}) - waiting for stores to populate"
+                        command=f"IN {pepin['id']}",
+                        weight=0.75,
+                        reasoning=f"Town: Interacting with Pepin for potions ({hp_potions}/8)"
                     )
-                elif dist > 3:
+                elif dist <= 2:
+                    # Close but not adjacent - move closer
+                    return AgentResponse(
+                        command=f"MV {npc_x} {npc_y}",
+                        weight=0.65,
+                        reasoning=f"Town: Moving adjacent to Pepin ({hp_potions}/8, dist={dist})"
+                    )
+                elif dist > 2:
                     # Too far - navigate to Pepin
                     return AgentResponse(
                         command=f"MV {npc_x} {npc_y}",
                         weight=0.7,
                         reasoning=f"Town: Going to Pepin for potions ({hp_potions}/8, dist={dist})"
-                    )
-                else:
-                    # Getting close - move adjacent
-                    return AgentResponse(
-                        command=f"MV {npc_x} {npc_y}",
-                        weight=0.6,
-                        reasoning=f"Town: Approaching Pepin ({hp_potions}/8, dist={dist})"
                     )
             else:
                 # Pepin not found - mention need
@@ -94,7 +94,8 @@ class TownAgent(BaseAgent):
 
                 if adria:
                     npc_x, npc_y = adria["x"], adria["y"]
-                    dist = abs(npc_x - me_x) + abs(npc_y - me_y)
+                    # Use Chebyshev distance (same as C++ store visibility check)
+                    dist = max(abs(npc_x - me_x), abs(npc_y - me_y))
 
                     if dist <= 1:
                         # Adjacent to Adria - interact to open shop

@@ -22,9 +22,12 @@ from agents.shopping import ShoppingAgent
 from agents.inventory import InventoryAgent
 from agents.griswold import GriswoldAgent
 from agents.cain import CainAgent
+from agents.adria import AdriaAgent
+from agents.chat import ChatAgent
 from dsl_parser import parse_dsl_state
-from memory_store import MemoryStore
+from memory_store import MemoryStore, prepare_companion_state_for_db
 from chat_handler import ChatHandler
+from character_profile import CharacterProfile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,6 +63,7 @@ class AgentOrchestrator:
         self.last_think_time = 0
         self.last_state = None
         self.current_context = None  # Track town vs dungeon for model switching
+        self.profile = None  # Character profile (initialized on handshake)
 
         # Failure tracking to prevent infinite USE loops
         self.last_command = None
@@ -81,13 +85,16 @@ class AgentOrchestrator:
         self.inventory = InventoryAgent(model=model, ollama_url=ollama_url)
         self.griswold = GriswoldAgent(model=model, ollama_url=ollama_url)
         self.cain = CainAgent(model=model, ollama_url=ollama_url)
+        self.adria = AdriaAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
+        self.chat = ChatAgent(memory=self.memory, model=chat_model, ollama_url=ollama_url)
 
         # List of all agents for easy model switching
         self.agents = [
             self.combat, self.healing, self.loot,
             self.stats, self.town, self.shopping,
-            self.inventory, self.griswold, self.cain, self.movement
+            self.inventory, self.griswold, self.cain, self.adria, self.movement,
+            self.chat
         ]
 
         # Chat handler (runs in thread, non-blocking)
@@ -99,7 +106,7 @@ class AgentOrchestrator:
         )
 
         logger.info("🎯 Agent Orchestrator initialized")
-        logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Shopping, Inventory, Griswold, Cain, Movement")
+        logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Shopping, Inventory, Griswold, Cain, Adria, Movement, Chat")
         logger.info(f"  Dungeon model: {self.dungeon_model} (fast combat)")
         logger.info(f"  Town model: {self.town_model} (sophisticated interactions)")
         logger.info(f"  Think interval: {think_interval}s")
@@ -225,13 +232,19 @@ class AgentOrchestrator:
         """
         Main decision loop. Collects agent recommendations and picks winner.
 
-        Priority hierarchy:
-        1. HEALING (if HP < 25% or urgent)
-        2. STATS (if stat points available, safe context)
-        3. TOWN (if in town)
-        4. COMBAT (if monsters nearby and HP > 35%)
-        5. LOOT (if valuable items and not in combat)
-        6. MOVEMENT (always available as fallback)
+        Priority hierarchy (multiplier × weight):
+        1. CHAT (11) - Immediate response to player questions
+        2. HEALING (10/8) - HP < 25% critical, else normal
+        3. STATS (9) - Character progression when points available
+        4. CAIN (8) - Identify items before selling/using
+        5. INVENTORY (7) - Emergency belt refills, proactive management
+        6. ADRIA (7) - Witch shop for casters (mana potions, staves, books)
+        7. SHOPPING (6-7) - Buy HP potions, gear upgrades
+        8. GRISWOLD (6) - Sell junk items, free inventory space
+        9. TOWN (5) - Navigate to NPCs, general town activities
+        10. COMBAT (8/6) - Attack monsters when HP healthy
+        11. LOOT (4-9) - Pick up items (priority varies by urgency)
+        12. MOVEMENT (3) - Exploration and following player
 
         Returns:
             DSL command string
@@ -251,6 +264,13 @@ class AgentOrchestrator:
         # Collect agent recommendations
         recommendations: List[Tuple[str, AgentResponse, float]] = []
 
+        # CHAT - highest priority when player asks a question (immediate response)
+        chat_rec = self.chat.evaluate(state)
+        if chat_rec and chat_rec.weight > 0.0:
+            # Priority 11 for chat (player messages deserve immediate attention)
+            score = chat_rec.weight * 11
+            recommendations.append(("Chat", chat_rec, score))
+
         # HEALING - highest priority if urgent
         healing_rec = self.healing.evaluate(state)
         if healing_rec and healing_rec.weight > 0.0:
@@ -268,13 +288,53 @@ class AgentOrchestrator:
 
         # TOWN - handle town activities
         town_rec = self.town.evaluate(state)
+        if state.get("in_town") and (not town_rec or town_rec.weight == 0.0):
+            logger.info(f"🏘️ Town agent: {town_rec.reasoning if town_rec else 'None'} (weight={town_rec.weight if town_rec else 'N/A'})")
         if town_rec and town_rec.weight > 0.0:
             # Priority 5 for town (shopping, repair)
             score = town_rec.weight * 5
             recommendations.append(("Town", town_rec, score))
 
-        # SHOPPING - buy potions, sell junk (in town only)
+        # CAIN - identify unidentified items (in town only)
+        cain_rec = self.cain.evaluate(state)
+        if state.get("in_town") and (not cain_rec or cain_rec.weight == 0.0):
+            logger.info(f"🔍 Cain agent: {cain_rec.reasoning if cain_rec else 'None'} (weight={cain_rec.weight if cain_rec else 'N/A'})")
+        if cain_rec and cain_rec.weight > 0.0:
+            # Priority 8 for identification (need to know what items are before selling/using)
+            score = cain_rec.weight * 8
+            recommendations.append(("Cain", cain_rec, score))
+
+        # GRISWOLD - sell junk items (in town only)
+        griswold_rec = self.griswold.evaluate(state)
+        if state.get("in_town") and (not griswold_rec or griswold_rec.weight == 0.0):
+            logger.info(f"💰 Griswold agent: {griswold_rec.reasoning if griswold_rec else 'None'} (weight={griswold_rec.weight if griswold_rec else 'N/A'})")
+        if griswold_rec and griswold_rec.weight > 0.0:
+            # Priority 6 for selling (clear inventory, get gold)
+            score = griswold_rec.weight * 6
+            recommendations.append(("Griswold", griswold_rec, score))
+
+        # INVENTORY - refill belt from inventory
+        inventory_rec = self.inventory.evaluate(state)
+        if state.get("in_town") and (not inventory_rec or inventory_rec.weight == 0.0):
+            logger.info(f"📦 Inventory agent: {inventory_rec.reasoning if inventory_rec else 'None'} (weight={inventory_rec.weight if inventory_rec else 'N/A'})")
+        if inventory_rec and inventory_rec.weight > 0.0:
+            # Priority 7 for inventory (emergency belt refills can be critical)
+            score = inventory_rec.weight * 7
+            recommendations.append(("Inventory", inventory_rec, score))
+
+        # ADRIA - witch shop for casters (mana potions, staves, books)
+        adria_rec = self.adria.evaluate(state)
+        if state.get("in_town") and (not adria_rec or adria_rec.weight == 0.0):
+            logger.info(f"🔮 Adria agent: {adria_rec.reasoning if adria_rec else 'None'} (weight={adria_rec.weight if adria_rec else 'N/A'})")
+        if adria_rec and adria_rec.weight > 0.0:
+            # Priority 7 for Adria (casters need mana potions!)
+            score = adria_rec.weight * 7
+            recommendations.append(("Adria", adria_rec, score))
+
+        # SHOPPING - buy potions, gear upgrades (in town only)
         shopping_rec = self.shopping.evaluate(state)
+        if state.get("in_town") and (not shopping_rec or shopping_rec.weight == 0.0):
+            logger.info(f"🛒 Shopping agent: {shopping_rec.reasoning if shopping_rec else 'None'} (weight={shopping_rec.weight if shopping_rec else 'N/A'})")
         if shopping_rec and shopping_rec.weight > 0.0:
             # Priority 6 for shopping (buying potions is important)
             # Boost priority if low on HP potions
@@ -398,7 +458,7 @@ class AgentOrchestrator:
             resp = requests.post(
                 self.ollama_url,
                 json={
-                    "model": self.model,
+                    "model": self.dungeon_model,  # Use dungeon model for warmup
                     "prompt": "Hi",
                     "stream": False,
                     "options": {"num_predict": 1}
@@ -444,6 +504,9 @@ class AgentOrchestrator:
                     if len(parts) == 2:
                         sender, message = parts
                         logger.info(f"💬 {sender}: {message}")
+                        # Queue to ChatAgent for intelligent responses
+                        self.chat.queue_player_message(sender, message)
+                        # Keep old handler as fallback for now
                         self.chat_handler.handle_chat(sender, message)
                     continue
 
@@ -455,9 +518,36 @@ class AgentOrchestrator:
 
                 state_count += 1
 
-                # Debug: Log raw DSL for first few states to diagnose NPC issue
+                # Initialize character profile on first valid state
+                if self.profile is None and state.get("stats"):
+                    logger.info("🔍 Initializing character profile from first state...")
+                    self.profile = CharacterProfile(state)
+                    # Share profile with all agents
+                    for agent in self.agents:
+                        agent.profile = self.profile
+                    # Share profile with chat handler
+                    self.chat_handler.profile = self.profile
+                elif self.profile:
+                    # Update profile on state changes (level ups, etc.)
+                    if self.profile.update_stats(state):
+                        logger.info(f"📊 Character profile updated: {self.profile}")
+
+                # Debug: Log raw DSL with length and NPC detection
                 if state_count <= 3 or state.get("in_town"):
-                    logger.info(f"🔍 Raw DSL: {dsl_line[:200]}...")  # First 200 chars
+                    dsl_len = len(dsl_line)
+                    has_npc = "NPC=" in dsl_line
+                    has_store = "ST_" in dsl_line
+                    logger.info(f"🔍 Raw DSL: {dsl_line[:200]}... (len={dsl_len}, NPC={has_npc}, STORE={has_store})")
+
+                    # Show end of DSL if it's long (to see NPC/store data)
+                    if dsl_len > 300:
+                        logger.info(f"🔍 DSL end: ...{dsl_line[-200:]}")
+
+                    # Log parsed state NPCs and stores
+                    if has_npc or has_store:
+                        npcs = state.get("npcs", [])
+                        stores = state.get("stores", {})
+                        logger.info(f"🔍 Parsed: NPCs={len(npcs)}, Stores={list(stores.keys())}")
 
                 # Update chat context with latest game state
                 self.chat_handler.update_context(state)
@@ -487,6 +577,11 @@ class AgentOrchestrator:
 
                 # Update memory (for future agents)
                 self.last_state = state
+
+                # Update companion state in SQLite for chat queries (every 10 ticks to reduce DB writes)
+                if state["tick"] % 10 == 0:
+                    companion_state = prepare_companion_state_for_db(state)
+                    self.memory.update_companion_state(companion_state, state["tick"])
 
                 # Decide if we should think
                 if not self.should_think():

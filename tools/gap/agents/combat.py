@@ -37,24 +37,46 @@ class CombatAgent(BaseAgent):
         """
         Evaluate monsters and recommend best attack target.
 
-        Prioritizes:
-        - Low HP monsters (finish them off)
-        - Close monsters (immediate threats)
-        - Unique/boss monsters (high threat)
+        Class-aware tactics:
+        - RANGED (Rogue with bow): Kite, prioritize ranged enemies, keep distance
+        - MELEE (Warrior): Rush in, tank, prioritize close threats
+        - CASTER (Sorcerer): Keep distance, prioritize dangerous targets
         """
         mobs = state.get("mobs", [])
         if not mobs:
             return AgentResponse(command="NONE", weight=0.0)
 
         me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
+        stats = state.get("stats", {})
+        equipped = state.get("equipped", {})
 
-        # Build prompt for LLM
+        # Determine combat style from character profile
+        combat_style = "melee"  # Default
+        playstyle_context = ""
+
+        if self.profile:
+            combat_style = self.profile.get_combat_style()
+            playstyle_context = self.profile.get_combat_context()
+        else:
+            # Fallback: check equipped weapon
+            weapon = equipped.get("hand_left", {})
+            if weapon and weapon.get("type") == "bw":
+                combat_style = "ranged"
+                playstyle_context = "RANGED FIGHTER - Use bow, keep distance, kite enemies"
+            elif stats.get("class") == 2:  # Sorcerer
+                combat_style = "caster"
+                playstyle_context = "CASTER - Keep distance, prioritize dangerous targets"
+
+        # Build prompt for LLM with class-specific tactics
         mob_list = []
-        for mob in mobs[:5]:  # Top 5 closest
+        ranged_count = 0
+        melee_count = 0
+
+        for mob in mobs[:8]:  # Top 8 for better context
             mob_id = mob.get("id", 0)
             mob_x = mob.get("x", 0)
             mob_y = mob.get("y", 0)
-            mob_hp = mob.get("hp_pct", 100)  # Parser uses "hp_pct" not "hp"
+            mob_hp = mob.get("hp_pct", 100)
             mob_dist = mob.get("dist", 999)
             mob_flags = mob.get("flags", 0)
 
@@ -63,16 +85,68 @@ class CombatAgent(BaseAgent):
             is_unique = (mob_flags & 2) > 0
             is_ranged = (mob_flags & 4) > 0
 
-            threat_marker = "BOSS" if is_unique else ("RANGED" if is_ranged else "")
+            if is_ranged:
+                ranged_count += 1
+            else:
+                melee_count += 1
+
+            threat_marker = "BOSS" if is_unique else ("ARCHER" if is_ranged else "MELEE")
 
             mob_list.append(
                 f"{mob_id}@{mob_x},{mob_y} HP={mob_hp}% Dist={mob_dist} {threat_marker}"
             )
 
-        prompt = f"""You are the Combat specialist. Rate the BEST attack target.
+        # Build class-specific tactical guidance
+        if combat_style == "ranged":
+            tactics = f"""
+YOUR COMBAT ROLE: {playstyle_context}
+
+RANGED TACTICS (BOW USER):
+- PRIORITIZE ARCHERS FIRST (let player handle melee)
+- Keep distance 6+ tiles from melee enemies (kite!)
+- Attack from max range
+- If surrounded, target closest threat then retreat
+
+PRIORITY:
+1. ARCHERS at medium range (4-8 tiles) - Your specialty!
+2. Low HP enemies (finish them off)
+3. Enemies charging at you (self-defense)
+
+Current situation: {ranged_count} archers, {melee_count} melee"""
+
+        elif combat_style == "caster":
+            tactics = f"""
+YOUR COMBAT ROLE: {playstyle_context}
+
+CASTER TACTICS (MAGE):
+- Keep distance 5+ tiles
+- Prioritize dangerous/boss enemies
+- Manage mana (MP={mp_pct}%)
+
+PRIORITY:
+1. BOSS/unique monsters (most dangerous)
+2. ARCHERS (range threats)
+3. Close enemies (defensive)"""
+
+        else:  # melee
+            tactics = f"""
+YOUR COMBAT ROLE: {playstyle_context}
+
+MELEE TACTICS (WARRIOR):
+- Rush close enemies
+- Tank damage (HP={hp_pct}%)
+- Prioritize immediate threats
+
+PRIORITY:
+1. Low HP enemies (finish them)
+2. Closest threats (dist < 3)
+3. Boss/unique monsters"""
+
+        prompt = f"""You are the Combat specialist. Select the BEST attack target.
 
 Your HP: {hp_pct}%
 Your Position: ({me_x},{me_y})
+{tactics}
 
 Monsters nearby:
 {chr(10).join(mob_list)}
@@ -81,13 +155,13 @@ Output ONE line only:
 AT <id> <weight>
 
 Weight (0.0-1.0):
-- 1.0 = Low HP (<30%), immediate threat, close (<5 tiles)
-- 0.8 = Boss/unique, moderate threat
-- 0.6 = Healthy enemy, close
-- 0.4 = Distant enemy
+- 1.0 = Perfect target (matches your role + high priority)
+- 0.8 = Good target (matches tactics)
+- 0.6 = Acceptable target
+- 0.4 = Suboptimal but acceptable
 - 0.0 = No viable target
 
-Example: AT 27 0.85"""
+Example: AT {mobs[0].get('id', 27)} 0.85"""
 
         response = self.query_llm(prompt, grammar=COMBAT_GRAMMAR)
 
@@ -103,6 +177,54 @@ Example: AT 27 0.85"""
             # Invalid command format - skip decision
             logger.warning(f"Combat: Invalid command format: {parsed.command}")
             return None
+
+        # RANGED ATTACK POSITIONING:
+        # For ranged characters, convert "AT <id>" to position-based attack
+        # to prevent pathfinding INTO melee range
+        if combat_style == "ranged":
+            # Extract monster ID from "AT <id>"
+            try:
+                monster_id = int(parsed.command.split()[1])
+
+                # Find the monster in our mob list
+                target_mob = next((m for m in mobs if m.get("id") == monster_id), None)
+
+                if target_mob:
+                    # Get monster position
+                    mob_x = target_mob.get("x", 0)
+                    mob_y = target_mob.get("y", 0)
+                    mob_dist = target_mob.get("dist", 999)
+
+                    # Check if we're already at good range (4-10 tiles)
+                    if mob_dist >= 4 and mob_dist <= 10:
+                        # Perfect range - attack from current position
+                        # Use position-based attack (AT x y) to avoid moving
+                        parsed.command = f"AT {mob_x} {mob_y}"
+                        parsed.reasoning = f"Combat: Ranged attack at ({mob_x},{mob_y}) dist={mob_dist} [MAINTAINING DISTANCE]"
+                        logger.info(f"⚔️ RANGED: Attacking monster {monster_id} at distance {mob_dist} without moving")
+                    elif mob_dist < 4:
+                        # Too close - need to retreat!
+                        # Calculate retreat position (away from monster, towards player)
+                        retreat_x = me_x + (me_x - mob_x)  # Move away from monster
+                        retreat_y = me_y + (me_y - mob_y)
+
+                        # Clamp to reasonable bounds (basic safety)
+                        retreat_x = max(0, min(112, retreat_x))
+                        retreat_y = max(0, min(112, retreat_y))
+
+                        parsed.command = f"MV {retreat_x} {retreat_y}"
+                        parsed.reasoning = f"Combat: KITING - too close ({mob_dist} tiles), retreating to ({retreat_x},{retreat_y})"
+                        logger.warning(f"🏃 KITING: Monster {monster_id} too close ({mob_dist} tiles), retreating!")
+                        return parsed
+                    else:
+                        # Too far (>10 tiles) - use ID-based attack to close distance
+                        # (but not INTO melee - game should stop at bow range)
+                        parsed.reasoning = f"Combat: Ranged attack on monster {monster_id} (closing to range, dist={mob_dist})"
+                        logger.info(f"⚔️ RANGED: Closing distance to monster {monster_id} (currently {mob_dist} tiles)")
+
+            except (ValueError, IndexError) as e:
+                logger.error(f"Combat: Failed to parse monster ID from ranged attack: {e}")
+                # Fall through to regular melee attack
 
         parsed.reasoning = f"Combat: {parsed.command}"
         return parsed

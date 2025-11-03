@@ -98,6 +98,10 @@ class LootAgent(BaseAgent):
         item_id = best_item.get('id', 0)
         item_desc = f"{best_item.get('quality', 'n')}/{best_item.get('type', 'ms')}"
 
+        # Mark as attempted so we can detect failure next tick (for both MV and PK)
+        if item_id not in self.failed_pickups:
+            self.failed_pickups[item_id] = 0
+
         # If item is far away, move toward it first
         if item_dist > 1:
             return AgentResponse(
@@ -107,9 +111,6 @@ class LootAgent(BaseAgent):
             )
 
         # Item is adjacent - pick it up
-        # Mark as attempted so we can detect failure next tick
-        if item_id not in self.failed_pickups:
-            self.failed_pickups[item_id] = 0
 
         return AgentResponse(
             command=f"PK {item_id}",

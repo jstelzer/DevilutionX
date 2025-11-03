@@ -298,6 +298,65 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         dsl << " INVC=" << inv_count;  // Total item count for quick reference
     }
 
+    // Equipped gear: EQ=slot:type,slot:type,...
+    // Slots: hd=head, rl=ring_left, rr=ring_right, am=amulet, hl=hand_left, hr=hand_right, ch=chest
+    // Example: EQ=hd:hl_m,hl:sw_u,hr:sh,ch:la_m
+    std::ostringstream equipped;
+    bool first_equipped = true;
+
+    // Helper lambda to get item type code (reusing inventory logic)
+    auto getItemTypeCode = [](const Item& item) -> std::string {
+        if (item.isEmpty()) return "";
+
+        std::string type_code;
+        if (item._itype == ItemType::Misc) {
+            type_code = "ms";
+        } else {
+            switch (item._itype) {
+                case ItemType::Sword:       type_code = "sw"; break;
+                case ItemType::Axe:         type_code = "ax"; break;
+                case ItemType::Bow:         type_code = "bw"; break;
+                case ItemType::Mace:        type_code = "mc"; break;
+                case ItemType::Shield:      type_code = "sh"; break;
+                case ItemType::LightArmor:  type_code = "la"; break;
+                case ItemType::MediumArmor: type_code = "ma"; break;
+                case ItemType::HeavyArmor:  type_code = "ha"; break;
+                case ItemType::Helm:        type_code = "hl"; break;
+                case ItemType::Staff:       type_code = "st"; break;
+                case ItemType::Ring:        type_code = "rg"; break;
+                case ItemType::Amulet:      type_code = "am"; break;
+                default:                    type_code = "ms"; break;
+            }
+
+            // Add quality suffix
+            if (item._iMagical == ITEM_QUALITY_MAGIC) {
+                type_code += "_m";
+            } else if (item._iMagical == ITEM_QUALITY_UNIQUE) {
+                type_code += "_u";
+            }
+        }
+        return type_code;
+    };
+
+    // Encode each equipped slot
+    const char* slot_codes[] = {"hd", "rl", "rr", "am", "hl", "hr", "ch"};
+    for (int slot = 0; slot < NUM_INVLOC; slot++) {
+        const Item& eq_item = player->InvBody[slot];
+        if (eq_item.isEmpty()) continue;
+
+        std::string type_code = getItemTypeCode(eq_item);
+        if (type_code.empty()) continue;
+
+        if (!first_equipped) equipped << ",";
+        first_equipped = false;
+
+        equipped << slot_codes[slot] << ":" << type_code;
+    }
+
+    if (!first_equipped) {
+        dsl << " EQ=" << equipped.str();
+    }
+
     // NPCs (only in town): NPC=type@x,y;type@x,y;...
     // Type codes: sm=Smith, hl=Healer, wt=Witch, tv=Tavern, st=Storyteller, etc.
     if (leveltype == DTYPE_TOWN) {

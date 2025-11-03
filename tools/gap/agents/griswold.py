@@ -29,28 +29,35 @@ class GriswoldAgent(BaseAgent):
         """
         Activate if:
         1. In town
-        2. Near Griswold (smith)
-        3. Have items worth selling (normal quality weapons/armor)
+        2. Have items worth selling (identified junk)
         """
         if not state.get("in_town", False):
             return False
 
-        # Check if Griswold is nearby
-        npcs = state.get("npcs", [])
-        griswold = next((npc for npc in npcs if npc["type"] == "sm"), None)
-
-        if not griswold or griswold["dist"] > 3:
-            return False
-
-        # Check if we have sellable items
+        # Check if we have sellable items (must be identified first!)
         inventory = state.get("inventory", [])
         sellable_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
 
-        # Only sell normal quality items (not magic/unique)
-        sellable_items = [
-            item for item in inventory
-            if item["type"] in sellable_types and item["quality"] == "normal"
-        ]
+        # Only sell identified items (avoid selling good unidentified gear)
+        # Use character profile if available to filter out items we want to keep
+        sellable_items = []
+        for item in inventory:
+            if item["type"] not in sellable_types:
+                continue
+            if not item["identified"]:
+                continue  # Don't sell unidentified items!
+
+            # Use profile to check if we should keep this item
+            if self.profile:
+                eval_result = self.profile.should_keep_item(item["type"], item["quality"])
+                if eval_result["keep"]:
+                    continue  # Profile says keep it
+            else:
+                # No profile - only sell normal quality
+                if item["quality"] != "normal":
+                    continue
+
+            sellable_items.append(item)
 
         return len(sellable_items) > 0
 
@@ -59,26 +66,78 @@ class GriswoldAgent(BaseAgent):
         Decide which items to sell.
 
         Strategy:
-        1. Sell normal (non-magic) weapons/armor
-        2. Keep magic/unique items for identification or use
-        3. Prioritize selling when inventory > 50% full
+        1. Navigate to Griswold if not nearby
+        2. Sell identified junk (items profile says we don't want)
+        3. Keep magic/unique items appropriate for our class
+        4. Prioritize selling when inventory > 40% full
         """
         inventory = state.get("inventory", [])
         inv_count = state.get("inv_count", 0)
         gold = state.get("gold", 0)
+        me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
+        npcs = state.get("npcs", [])
 
-        # Find sellable items (normal quality equipment)
+        # Find sellable items (must match should_activate logic!)
         sellable_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
-        sellable_items = [
-            item for item in inventory
-            if item["type"] in sellable_types and item["quality"] == "normal"
-        ]
+        potential_sells = []
+        for item in inventory:
+            if item["type"] not in sellable_types:
+                continue
+            if not item["identified"]:
+                continue  # Don't sell unidentified!
 
-        if not sellable_items:
+            # Use profile to check if we should keep this item
+            if self.profile:
+                eval_result = self.profile.should_keep_item(item["type"], item["quality"])
+                if eval_result["keep"]:
+                    continue  # Profile says keep it
+            else:
+                # No profile - only sell normal quality
+                if item["quality"] != "normal":
+                    continue
+
+            potential_sells.append(item)
+
+        if not potential_sells:
             return None
 
+        # Find Griswold
+        griswold = next((npc for npc in npcs if npc["type"] == "sm"), None)
+
+        if not griswold:
+            logger.warning("Griswold: Have sellable items but Griswold not found in NPC list")
+            return None
+
+        # Calculate distance to Griswold (use Chebyshev distance)
+        gris_x, gris_y = griswold["x"], griswold["y"]
+        dist = max(abs(gris_x - me_x), abs(gris_y - me_y))
+
         # Calculate urgency based on inventory fullness
-        inv_fullness = inv_count / 40.0  # 40 = max inventory slots
+        inv_fullness = inv_count / 40.0
+
+        # If too far, navigate to Griswold first
+        if dist > 1:
+            # Higher urgency if inventory is fuller
+            if inv_fullness > 0.8:
+                weight = 0.65
+                reasoning = f"Griswold: Going to Griswold (URGENT - inventory {inv_fullness*100:.0f}% full)"
+            elif inv_fullness > 0.6:
+                weight = 0.5
+                reasoning = f"Griswold: Going to Griswold (inventory {inv_fullness*100:.0f}% full)"
+            else:
+                weight = 0.4
+                reasoning = f"Griswold: Going to Griswold ({len(potential_sells)} items to sell)"
+
+            logger.info(f"Griswold: Navigating to Griswold at ({gris_x},{gris_y}), dist={dist}, sellable={len(potential_sells)}")
+            return AgentResponse(
+                command=f"MV {gris_x} {gris_y}",
+                weight=weight,
+                reasoning=reasoning
+            )
+
+        # Adjacent to Griswold - sell items!
+        # (Already filtered above to only include junk)
+        sellable_items = potential_sells
 
         # Higher weight if inventory is fuller
         if inv_fullness > 0.8:

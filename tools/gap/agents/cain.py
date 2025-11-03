@@ -29,17 +29,9 @@ class CainAgent(BaseAgent):
         """
         Activate if:
         1. In town
-        2. Near Cain
-        3. Have unidentified items
+        2. Have unidentified items
         """
         if not state.get("in_town", False):
-            return False
-
-        # Check if Cain is nearby
-        npcs = state.get("npcs", [])
-        cain = next((npc for npc in npcs if npc["type"] == "cn"), None)
-
-        if not cain or cain["dist"] > 3:
             return False
 
         # Check if we have unidentified items
@@ -53,19 +45,56 @@ class CainAgent(BaseAgent):
         Decide which items to identify.
 
         Strategy:
-        1. Identify all unidentified magic/unique items
-        2. Prioritize weapons and armor (more valuable than jewelry)
-        3. Higher priority when inventory is filling up (need to know what to keep/sell)
+        1. Navigate to Cain if not nearby
+        2. Identify all unidentified magic/unique items
+        3. Prioritize weapons and armor (more valuable than jewelry)
+        4. Higher priority when inventory is filling up (need to know what to keep/sell)
         """
         inventory = state.get("inventory", [])
         inv_count = state.get("inv_count", 0)
         gold = state.get("gold", 0)
+        me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
+        npcs = state.get("npcs", [])
 
         # Find unidentified items
         unidentified = [item for item in inventory if not item["identified"]]
 
         if not unidentified:
             return None
+
+        # Find Cain
+        cain = next((npc for npc in npcs if npc["type"] == "cn"), None)
+
+        if not cain:
+            logger.warning("Cain: Have unidentified items but Cain not found in NPC list")
+            return None
+
+        # Calculate distance to Cain (use Chebyshev distance like C++)
+        cain_x, cain_y = cain["x"], cain["y"]
+        dist = max(abs(cain_x - me_x), abs(cain_y - me_y))
+
+        # If too far, navigate to Cain first
+        if dist > 1:
+            # Higher urgency if many unidentified items
+            unid_count = len(unidentified)
+            if unid_count >= 5 or inv_count / 40.0 > 0.7:
+                weight = 0.75
+                reasoning = f"Cain: Going to Cain (URGENT - {unid_count} unidentified items)"
+            elif unid_count >= 3:
+                weight = 0.6
+                reasoning = f"Cain: Going to Cain ({unid_count} unidentified items)"
+            else:
+                weight = 0.5
+                reasoning = f"Cain: Going to Cain ({unid_count} unidentified items)"
+
+            logger.info(f"Cain: Navigating to Cain at ({cain_x},{cain_y}), dist={dist}, unid_count={unid_count}")
+            return AgentResponse(
+                command=f"MV {cain_x} {cain_y}",
+                weight=weight,
+                reasoning=reasoning
+            )
+
+        # Adjacent to Cain - identify items!
 
         # Prioritize weapon/armor over jewelry
         priority_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]

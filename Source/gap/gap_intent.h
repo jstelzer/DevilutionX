@@ -20,10 +20,11 @@ struct Intent {
     int param_x;
     int param_y;
     uint32_t target_tick;
-    
+
     // Additional parameters for new intent types
     int param_id;           // For pickup item ID, object ID, monster ID
     int param_slot;         // For spell slot, belt slot
+    int param_inv_slot;     // For inventory slot (belt refill)
     std::string param_kind; // For potion kind ("hp", "mp")
 };
 
@@ -60,6 +61,7 @@ private:
     bool ExecuteRepair(int invSlot);
     bool ExecuteIdentify(int invSlot);
     bool ExecuteAddStat(const std::string& statName);
+    bool ExecuteBeltRefill(int invSlot, int beltSlot);
 };
 
 } // namespace devilution::gap

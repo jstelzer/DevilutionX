@@ -96,6 +96,7 @@ class ChatHandler:
         self.running = False
         self.thread = None
         self.game_context = {}  # Store latest game state for context
+        self.profile = None  # CharacterProfile (injected by orchestrator)
 
         logger.info(f"ChatHandler initialized (LLM: {use_llm}, model: {model})")
 
@@ -182,22 +183,33 @@ class ChatHandler:
         try:
             import requests
 
-            # Build context string
+            # Build context string with character profile
             ctx = self.game_context
             context_str = ""
+
+            # Character identity
+            if self.profile:
+                context_str = f"You're a level {self.profile.level} {self.profile.class_name}. "
+                context_str += f"{self.profile.role_description}. "
+
+            # Current situation
             if ctx:
                 location = "in town" if ctx.get("in_town") else f"in dungeon (floor {ctx.get('floor', 0)})"
                 combat_status = f"{ctx.get('mobs_nearby', 0)} monsters nearby" if ctx.get("mobs_nearby", 0) > 0 else "safe"
-                context_str = f"You're {location}, {combat_status}. HP: {ctx.get('hp_pct', 100)}%."
+                context_str += f"You're {location}, {combat_status}. HP: {ctx.get('hp_pct', 100)}%."
 
-            # Natural conversation prompt - relaxed personality
+                # Add inventory awareness if profile available
+                if self.profile:
+                    context_str += f" Carrying {self.profile.inventory_count}/40 items. Belt: {self.profile.belt_summary}."
+
+            # Natural conversation prompt - relaxed personality with class awareness
             prompt = f"""You're an adventurer fighting through Diablo's dungeons with your friend. You're brave but not reckless, helpful but not a servant. You have opinions, crack jokes, and aren't afraid to be sarcastic when things get rough. You talk like a real person, not a formal assistant.
 
-Current situation: {context_str}
+{context_str}
 
 Your friend says: "{message}"
 
-Reply naturally like you're chatting between fights. Keep it short (1-2 sentences). Be yourself - casual, genuine, maybe a little snarky. No need to be overly helpful or polite."""
+Reply naturally like you're chatting between fights. Keep it short (1-2 sentences). Be yourself - casual, genuine, maybe a little snarky. Mention your class or equipment if relevant to the conversation. No need to be overly helpful or polite."""
 
             resp = requests.post(
                 self.ollama_url,

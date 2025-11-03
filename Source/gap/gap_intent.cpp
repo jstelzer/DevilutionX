@@ -21,6 +21,7 @@
 #include "../spells.h"
 #include "../inv.h"
 #include "../controls/plrctrls.h"
+#include "../engine/backbuffer_state.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -158,6 +159,7 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
     intent.param_y = 0;
     intent.param_id = 0;
     intent.param_slot = -1;
+    intent.param_inv_slot = -1;
     intent.target_tick = 0;
 
     if (cmd == "MV") {
@@ -166,10 +168,22 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         iss >> intent.param_x >> intent.param_y;
 
     } else if (cmd == "AT") {
-        // AT id
+        // AT id OR AT x y
         intent.action = "attack";
-        iss >> intent.param_id;
-        // Will need to convert monster ID to position in ExecuteAttack
+
+        // Try to read first parameter
+        if (iss >> intent.param_x) {
+            // Check if there's a second parameter (position attack)
+            if (iss >> intent.param_y) {
+                // Two parameters: AT x y (position-based attack for ranged)
+                intent.param_id = 0;  // No monster ID
+            } else {
+                // One parameter: AT id (monster ID attack)
+                intent.param_id = intent.param_x;
+                intent.param_x = 0;
+                intent.param_y = -1;  // Marker for "convert ID to position"
+            }
+        }
 
     } else if (cmd == "PK") {
         // PK id
@@ -237,6 +251,12 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         intent.action = "addstat";
         intent.param_kind = stat_name;  // "STR", "DEX", "MAG", "VIT"
 
+    } else if (cmd == "BELT") {
+        // BELT inv_slot belt_slot
+        // Example: BELT 12 3  (move item from inventory slot 12 to belt slot 3)
+        intent.action = "belt_refill";
+        iss >> intent.param_inv_slot >> intent.param_slot;
+
     } else {
         std::cerr << "GAP DSL: Unknown command: " << cmd << std::endl;
         return;
@@ -300,6 +320,8 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteIdentify(intent.param_slot);
     } else if (intent.action == "addstat") {
         return ExecuteAddStat(intent.param_kind);
+    } else if (intent.action == "belt_refill") {
+        return ExecuteBeltRefill(intent.param_inv_slot, intent.param_slot);
     }
 
     std::cerr << "GAP: Unknown intent action: " << intent.action << std::endl;
@@ -692,13 +714,14 @@ void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
         }
 
         // Some actions should be executed directly, not through the Seat system
-        // These include: stats, shopping, identification, etc.
+        // These include: stats, shopping, identification, inventory management, etc.
         bool use_direct_execution = (
             gap_intent.action == "addstat" ||
             gap_intent.action == "buy" ||
             gap_intent.action == "sell" ||
             gap_intent.action == "repair" ||
-            gap_intent.action == "identify"
+            gap_intent.action == "identify" ||
+            gap_intent.action == "belt_refill"
         );
 
         if (use_direct_execution) {
@@ -852,6 +875,62 @@ bool GapIntentProcessor::ExecuteAddStat(const std::string& statName) {
     player->_pStatPts--;
 
     std::cout << "GAP Stats: Stat points remaining: " << player->_pStatPts << std::endl;
+
+    return true;
+}
+
+bool GapIntentProcessor::ExecuteBeltRefill(int invSlot, int beltSlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Belt: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    // Validate inventory slot
+    if (invSlot < 0 || invSlot >= player->_pNumInv) {
+        std::cerr << "GAP Belt: Invalid inventory slot: " << invSlot << std::endl;
+        return false;
+    }
+
+    // Validate belt slot
+    if (beltSlot < 0 || beltSlot >= MaxBeltItems) {
+        std::cerr << "GAP Belt: Invalid belt slot: " << beltSlot << std::endl;
+        return false;
+    }
+
+    // Check if inventory slot has a consumable item
+    const Item& invItem = player->InvList[invSlot];
+    if (invItem.isEmpty()) {
+        std::cerr << "GAP Belt: Inventory slot " << invSlot << " is empty" << std::endl;
+        return false;
+    }
+
+    // Check if item can be placed on belt (1x1 consumables only)
+    if (!CanBePlacedOnBelt(*player, invItem)) {
+        std::cerr << "GAP Belt: Item in slot " << invSlot << " cannot be placed on belt" << std::endl;
+        return false;
+    }
+
+    // Check if belt slot is empty
+    if (!player->SpdList[beltSlot].isEmpty()) {
+        std::cerr << "GAP Belt: Belt slot " << beltSlot << " is not empty" << std::endl;
+        return false;
+    }
+
+    // Move item from inventory to belt
+    player->SpdList[beltSlot] = invItem;
+    player->RemoveInvItem(invSlot, false);  // Don't calc scrolls yet
+    player->CalcScrolls();  // Recalculate scrolls after belt update
+    RedrawComponent(PanelDrawComponent::Belt);
+
+    // Network sync
+    int controlled_id = GetControlledPlayerId();
+    if (controlled_id == MyPlayerId) {
+        NetSendCmdChBeltItem(false, beltSlot);
+    }
+
+    std::cout << "GAP Belt: Moved item from inv slot " << invSlot
+              << " to belt slot " << beltSlot << std::endl;
 
     return true;
 }

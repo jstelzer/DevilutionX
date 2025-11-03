@@ -72,11 +72,60 @@ class MemoryStore:
                 updated_at INTEGER
             );
 
+            -- Companion state (for chat queries)
+            CREATE TABLE IF NOT EXISTS companion_state(
+                id INTEGER PRIMARY KEY CHECK (id = 1),  -- Only one row
+                tick INTEGER,
+
+                -- Equipment (readable names for chat)
+                weapon_left TEXT,
+                weapon_right TEXT,
+                armor TEXT,
+                helm TEXT,
+
+                -- Inventory counts
+                hp_potions INTEGER DEFAULT 0,
+                mp_potions INTEGER DEFAULT 0,
+                scrolls INTEGER DEFAULT 0,
+                gold INTEGER DEFAULT 0,
+                inventory_count INTEGER DEFAULT 0,
+
+                -- Stats
+                level INTEGER DEFAULT 1,
+                experience INTEGER DEFAULT 0,
+                stat_points INTEGER DEFAULT 0,
+                class INTEGER DEFAULT 0,
+
+                -- Location
+                floor INTEGER DEFAULT 0,
+                in_town INTEGER DEFAULT 0,
+                position_x INTEGER DEFAULT 0,
+                position_y INTEGER DEFAULT 0,
+
+                -- Session stats
+                kills_this_floor INTEGER DEFAULT 0,
+                items_picked_up INTEGER DEFAULT 0,
+                gold_spent INTEGER DEFAULT 0,
+
+                updated_at INTEGER
+            );
+
+            -- Chat history
+            CREATE TABLE IF NOT EXISTS chat_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tick INTEGER,
+                sender TEXT,           -- "player" or "companion"
+                message TEXT,
+                response TEXT,         -- Companion's response (if sender=player)
+                created_at INTEGER
+            );
+
             -- Indices for fast lookups
             CREATE INDEX IF NOT EXISTS idx_areas_floor ON areas(floor);
             CREATE INDEX IF NOT EXISTS idx_areas_coords ON areas(floor, x, y);
             CREATE INDEX IF NOT EXISTS idx_encounters_tick ON encounters(tick);
             CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
+            CREATE INDEX IF NOT EXISTS idx_chat_history_tick ON chat_history(tick);
         """)
         self.db.commit()
 
@@ -238,6 +287,112 @@ class MemoryStore:
         )
         self.db.commit()
 
+    # ========== Companion State (For Chat) ==========
+
+    def update_companion_state(self, state: Dict[str, Any], tick: int):
+        """Update companion state for chat queries"""
+        self.db.execute("""
+            INSERT OR REPLACE INTO companion_state (
+                id, tick, weapon_left, weapon_right, armor, helm,
+                hp_potions, mp_potions, scrolls, gold, inventory_count,
+                level, experience, stat_points, class,
+                floor, in_town, position_x, position_y,
+                kills_this_floor, items_picked_up, gold_spent, updated_at
+            ) VALUES (
+                1, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?
+            )
+        """, (
+            tick,
+            state.get('weapon_left'),
+            state.get('weapon_right'),
+            state.get('armor'),
+            state.get('helm'),
+            state.get('hp_potions', 0),
+            state.get('mp_potions', 0),
+            state.get('scrolls', 0),
+            state.get('gold', 0),
+            state.get('inventory_count', 0),
+            state.get('level', 1),
+            state.get('experience', 0),
+            state.get('stat_points', 0),
+            state.get('class', 0),
+            state.get('floor', 0),
+            state.get('in_town', 0),
+            state.get('position_x', 0),
+            state.get('position_y', 0),
+            state.get('kills_this_floor', 0),
+            state.get('items_picked_up', 0),
+            state.get('gold_spent', 0),
+            int(time.time())
+        ))
+        self.db.commit()
+
+    def get_companion_state(self) -> Optional[Dict[str, Any]]:
+        """Get current companion state for chat context"""
+        row = self.db.execute("""
+            SELECT weapon_left, weapon_right, armor, helm,
+                   hp_potions, mp_potions, scrolls, gold, inventory_count,
+                   level, experience, stat_points, class,
+                   floor, in_town, position_x, position_y,
+                   kills_this_floor, items_picked_up, gold_spent
+            FROM companion_state WHERE id = 1
+        """).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            'weapon_left': row[0],
+            'weapon_right': row[1],
+            'armor': row[2],
+            'helm': row[3],
+            'hp_potions': row[4],
+            'mp_potions': row[5],
+            'scrolls': row[6],
+            'gold': row[7],
+            'inventory_count': row[8],
+            'level': row[9],
+            'experience': row[10],
+            'stat_points': row[11],
+            'class': row[12],
+            'floor': row[13],
+            'in_town': row[14],
+            'position_x': row[15],
+            'position_y': row[16],
+            'kills_this_floor': row[17],
+            'items_picked_up': row[18],
+            'gold_spent': row[19],
+        }
+
+    # ========== Chat History ==========
+
+    def add_chat_message(self, tick: int, sender: str, message: str, response: str = None):
+        """Record a chat interaction"""
+        self.db.execute(
+            "INSERT INTO chat_history (tick, sender, message, response, created_at) VALUES (?, ?, ?, ?, ?)",
+            (tick, sender, message, response, int(time.time()))
+        )
+        self.db.commit()
+        logger.debug(f"Chat: {sender}: {message}")
+
+    def get_recent_chat(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent chat history"""
+        rows = self.db.execute("""
+            SELECT sender, message, response, tick
+            FROM chat_history
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+        return [
+            {"sender": sender, "message": msg, "response": resp, "tick": tick}
+            for sender, msg, resp, tick in reversed(rows)  # Reverse to get chronological order
+        ]
+
     # ========== Maintenance ==========
 
     def cleanup_old_data(self, current_tick: int, retention_ticks: int = 100000):
@@ -258,6 +413,7 @@ class MemoryStore:
         stats['areas'] = self.db.execute("SELECT COUNT(*) FROM areas").fetchone()[0]
         stats['encounters'] = self.db.execute("SELECT COUNT(*) FROM encounters").fetchone()[0]
         stats['active_goals'] = self.db.execute("SELECT COUNT(*) FROM goals WHERE status='active'").fetchone()[0]
+        stats['chat_messages'] = self.db.execute("SELECT COUNT(*) FROM chat_history").fetchone()[0]
         stats['db_size_kb'] = self.db.execute("SELECT page_count * page_size / 1024 FROM pragma_page_count(), pragma_page_size()").fetchone()[0]
         return stats
 
@@ -274,6 +430,69 @@ class MemoryStore:
 
 
 # Helper functions for common memory patterns
+
+def prepare_companion_state_for_db(game_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract relevant data from game state for companion_state table"""
+    equipped = game_state.get("equipped", {})
+    belt = game_state.get("belt", [])
+    inventory = game_state.get("inventory", [])
+    stats = game_state.get("stats", {})
+    me = game_state.get("me", [0, 0, 100, 100])
+
+    # Get readable equipment names
+    def get_item_name(eq_item: Dict[str, Any]) -> str:
+        if not eq_item:
+            return None
+        item_type = eq_item.get("type", "")
+        quality = eq_item.get("quality", "normal")
+
+        # Map type codes to readable names
+        type_names = {
+            "sw": "Sword", "ax": "Axe", "bw": "Bow", "mc": "Mace", "st": "Staff",
+            "sh": "Shield", "la": "Light Armor", "ma": "Medium Armor", "ha": "Heavy Armor",
+            "hl": "Helmet", "rg": "Ring", "am": "Amulet"
+        }
+
+        name = type_names.get(item_type, item_type.upper())
+        if quality == "magic":
+            return f"Magic {name}"
+        elif quality == "unique":
+            return f"Unique {name}"
+        return name
+
+    # Count potions/scrolls
+    hp_potions = sum(1 for slot in belt if slot in ["hp", "rj"])
+    hp_potions += sum(1 for item in inventory if item.get("type") in ["hp", "rj"])
+
+    mp_potions = sum(1 for slot in belt if slot == "mp")
+    mp_potions += sum(1 for item in inventory if item.get("type") == "mp")
+
+    scrolls = sum(1 for slot in belt if slot in ["sh", "sp", "sr", "si", "sl", "sf", "sc"])
+    scrolls += sum(1 for item in inventory if item.get("type") in ["sh", "sp", "sr", "si", "sl", "sf", "sc"])
+
+    return {
+        "weapon_left": get_item_name(equipped.get("hand_left")),
+        "weapon_right": get_item_name(equipped.get("hand_right")),
+        "armor": get_item_name(equipped.get("chest")),
+        "helm": get_item_name(equipped.get("head")),
+        "hp_potions": hp_potions,
+        "mp_potions": mp_potions,
+        "scrolls": scrolls,
+        "gold": game_state.get("gold", 0),
+        "inventory_count": game_state.get("inv_count", 0),
+        "level": stats.get("lvl", 1),
+        "experience": stats.get("exp", 0),
+        "stat_points": stats.get("pts", 0),
+        "class": stats.get("class", 0),
+        "floor": game_state.get("floor", 0),
+        "in_town": 1 if game_state.get("in_town") else 0,
+        "position_x": me[0],
+        "position_y": me[1],
+        # Session stats would need to be tracked separately
+        "kills_this_floor": 0,  # TODO: Track
+        "items_picked_up": 0,   # TODO: Track
+        "gold_spent": 0,        # TODO: Track
+    }
 
 def create_exploration_goal(memory: MemoryStore, floor: int, x: int, y: int, tick: int) -> int:
     """Create an exploration goal for a specific area"""

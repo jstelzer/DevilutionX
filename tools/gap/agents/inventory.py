@@ -37,21 +37,22 @@ class InventoryAgent(BaseAgent):
         """
         Refill belt with potions/scrolls from inventory.
 
-        Priority:
+        Urgency Levels:
+        1. EMERGENCY (HP<30% + no belt HP): weight 0.95 (beats almost everything)
+        2. PROACTIVE (no belt HP + safe): weight 0.7 (beats movement/combat)
+        3. NORMAL (belt_hp < 4): weight 0.4 (original behavior)
+
+        Priority by item type:
         1. Health potions (hp, rj) → fill belt slots
         2. Mana potions (mp) → fill belt slots (if caster)
         3. Healing scrolls (sh) → backup for health
         4. Other scrolls → utility slots
-
-        Returns MV command to refill belt slot from inventory slot.
-        Format: MV inv_slot belt_slot (future - not implemented in C++ yet)
-
-        For now, return NONE and log the need for belt refill.
-        This agent serves as a detection/notification system.
         """
         belt = state.get("belt", [])
         inventory = state.get("inventory", [])
         stats = state.get("stats", {})
+        me = state.get("me", [0, 0, 100, 100])
+        hp_pct = me[2]
 
         # Find empty belt slots
         empty_belt_slots = [i for i, slot in enumerate(belt) if slot == "em"]
@@ -67,19 +68,35 @@ class InventoryAgent(BaseAgent):
 
         # Count belt contents
         belt_hp = sum(1 for slot in belt if slot in ["hp", "rj"])
-        belt_mp = sum(1 for slot in belt if slot == "mp"]
+        belt_mp = sum(1 for slot in belt if slot == "mp")
+
+        # Detect urgency level
+        is_emergency = hp_pct < 30 and belt_hp == 0  # Low HP + no belt potions
+        is_proactive = belt_hp == 0  # Empty belt (should refill before danger)
 
         # Priority 1: Fill belt with health potions (want 4-6 slots)
         if belt_hp < 4 and hp_items:
             item = hp_items[0]
             belt_slot = empty_belt_slots[0]
 
-            logger.info(f"Inventory: Would move {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
+            # Determine urgency weight
+            if is_emergency:
+                weight = 0.95  # CRITICAL: beats almost everything except healing with potions
+                reasoning = "Inventory: EMERGENCY belt refill - low HP + empty belt"
+                logger.warning(f"🚨 {reasoning}: {item['type']} → belt slot {belt_slot}")
+            elif is_proactive:
+                weight = 0.7   # HIGH: beats movement/combat to prevent emergencies
+                reasoning = "Inventory: Proactive belt refill - empty belt"
+                logger.info(f"⚠️ {reasoning}: {item['type']} → belt slot {belt_slot}")
+            else:
+                weight = 0.4   # NORMAL: top up belt (belt_hp < 4)
+                reasoning = f"Inventory: Refilling belt with {item['type']}"
+                logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
             return AgentResponse(
-                command="NONE",  # Not implemented yet - needs C++ backend
-                weight=0.0,  # Don't override other agents
-                reasoning=f"Inventory: Need to refill belt with {item['type']} (inv→belt not implemented)"
+                command=f"BELT {item['slot']} {belt_slot}",
+                weight=weight,
+                reasoning=reasoning
             )
 
         # Priority 2: Fill belt with mana potions (casters only, want 2-3 slots)
@@ -88,25 +105,49 @@ class InventoryAgent(BaseAgent):
             item = mp_items[0]
             belt_slot = empty_belt_slots[0]
 
-            logger.info(f"Inventory: Would move {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
+            # Casters need mana for combat effectiveness
+            mp_pct = me[3]
+            is_emergency_mp = mp_pct < 20 and belt_mp == 0
+            is_proactive_mp = belt_mp == 0
+
+            if is_emergency_mp:
+                weight = 0.85  # HIGH: caster without mana can't fight effectively
+                reasoning = "Inventory: EMERGENCY mana refill - low MP + empty belt"
+                logger.warning(f"🚨 {reasoning}: {item['type']} → belt slot {belt_slot}")
+            elif is_proactive_mp:
+                weight = 0.65  # MEDIUM-HIGH: refill before running out
+                reasoning = "Inventory: Proactive mana refill - empty belt"
+                logger.info(f"⚠️ {reasoning}: {item['type']} → belt slot {belt_slot}")
+            else:
+                weight = 0.4   # NORMAL: top up mana
+                reasoning = f"Inventory: Refilling belt with {item['type']}"
+                logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
             return AgentResponse(
-                command="NONE",
-                weight=0.0,
-                reasoning=f"Inventory: Need to refill belt with {item['type']} (inv→belt not implemented)"
+                command=f"BELT {item['slot']} {belt_slot}",
+                weight=weight,
+                reasoning=reasoning
             )
 
-        # Priority 3: Add healing scrolls as backup
+        # Priority 3: Add healing scrolls as backup (if no HP potions available)
         if belt_hp < 2 and heal_scrolls:
             item = heal_scrolls[0]
             belt_slot = empty_belt_slots[0]
 
-            logger.info(f"Inventory: Would move {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
+            # If low HP and no potions, healing scrolls become urgent
+            if hp_pct < 40 and belt_hp == 0 and not hp_items:
+                weight = 0.8   # URGENT: last resort for healing
+                reasoning = "Inventory: URGENT healing scroll refill - low HP, no potions"
+                logger.warning(f"🚨 {reasoning}: {item['type']} → belt slot {belt_slot}")
+            else:
+                weight = 0.3   # NORMAL: add scrolls as backup
+                reasoning = f"Inventory: Refilling belt with {item['type']} scroll"
+                logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
             return AgentResponse(
-                command="NONE",
-                weight=0.0,
-                reasoning=f"Inventory: Need to refill belt with {item['type']} scroll (inv→belt not implemented)"
+                command=f"BELT {item['slot']} {belt_slot}",
+                weight=weight,
+                reasoning=reasoning
             )
 
         # Priority 4: Add town portal scrolls for convenience
@@ -114,12 +155,12 @@ class InventoryAgent(BaseAgent):
             item = portal_scrolls[0]
             belt_slot = empty_belt_slots[0]
 
-            logger.info(f"Inventory: Would move {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
+            logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
             return AgentResponse(
-                command="NONE",
-                weight=0.0,
-                reasoning=f"Inventory: Could add {item['type']} scroll to belt (inv→belt not implemented)"
+                command=f"BELT {item['slot']} {belt_slot}",
+                weight=0.2,  # Lowest priority
+                reasoning=f"Inventory: Adding {item['type']} scroll to belt"
             )
 
         # No urgent refill needs

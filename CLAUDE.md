@@ -216,6 +216,65 @@ This compact format gives LLMs complete tactical context while using 5x fewer to
 - Reduced JSON size by ~30%
 - Instant chat responses without state bundling
 
+## Agent Architecture Best Practices
+
+### Character Profile Pattern (Recommended)
+
+**Problem**: Agents see raw stats (`S=20,38,15,20,2,0,1,3423`) but lack identity and role awareness. They don't understand "I'm a **warrior** so I prefer swords over bows" or "I'm a **rogue** so I should kite rather than tank."
+
+**Solution**: Initialize a `CharacterProfile` object on handshake from the first game state. This gives agents self-awareness about their class, role, playstyle, and equipment preferences.
+
+**Benefits**:
+- ✅ **Class-Appropriate Decisions**: Warriors prefer melee weapons, rogues prefer bows, sorcerers manage mana
+- ✅ **Smart Loot Evaluation**: Keep gear that matches character build, skip inappropriate items
+- ✅ **Context-Aware Shopping**: Buy heavy armor for warriors, light armor for rogues, staffs for sorcerers
+- ✅ **Enhanced Chat**: Companion talks with character identity ("I'm a level 3 Rogue with 4 HP potions ready!")
+- ✅ **Combat Tactics**: Melee classes rush in, ranged classes kite, casters manage positioning
+
+**Implementation Pattern**:
+```python
+# On first valid state (orchestrator initialization)
+if self.profile is None and state.get("stats"):
+    self.profile = CharacterProfile(state)
+
+    # Inject profile into all agents
+    for agent in self.agents:
+        agent.profile = self.profile
+
+    # Inject into chat handler
+    self.chat_handler.profile = self.profile
+
+# In agents - use profile for decisions
+if self.profile.should_keep_item("bw", "magic"):
+    # Warrior: False ("bows aren't my thing")
+    # Rogue: True ("bows are my specialty")
+
+# For combat tactics
+combat_context = self.profile.get_combat_context()
+# Warrior: "MELEE FIGHTER - Get close, tank damage"
+# Rogue: "RANGED ATTACKER - Keep distance, kite enemies"
+```
+
+**Example Profile Output**:
+```
+👤 Character Profile Created
+   Class: Rogue (level 2)
+   Role: Ranged DPS - high DEX, bow damage, hit-and-run tactics
+   Playstyle: ranged_dps
+   Stats: STR=20 DEX=38 MAG=15 VIT=20
+   Preferred weapons: bw
+   Preferred armor: la
+```
+
+**Real-World Impact**:
+- Warrior finding magic bow → "You should take this, I'm better with swords"
+- Rogue near healer → Buys HP potions (not mana - not a caster)
+- Sorcerer in combat → Stays at range, manages mana vs. warriors who rush in
+
+**Reference Implementation**: See `CHARACTER-PROFILE-SYSTEM.md` and `tools/gap/character_profile.py` (350 lines)
+
+**Status**: ✅ Implemented (Nov 2025) - Recommended pattern for all GAP agents
+
 ## Development Environment
 
 ### Quick Setup:

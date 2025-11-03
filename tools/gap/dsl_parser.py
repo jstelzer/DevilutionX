@@ -194,6 +194,43 @@ def parse_dsl_state(line: str) -> Dict:
         if m := re.search(r'INVC=(\d+)', line):
             state["inv_count"] = int(m.group(1))
 
+        # Parse equipped gear: EQ=hd:hl_m,hl:sw_u,hr:sh,ch:la_m
+        # Slots: hd=head, rl=ring_left, rr=ring_right, am=amulet, hl=hand_left, hr=hand_right, ch=chest
+        if m := re.search(r'EQ=([^A-Z\s]+)', line):
+            eq_data = m.group(1)
+            state["equipped"] = {}
+
+            slot_names = {
+                "hd": "head",
+                "rl": "ring_left",
+                "rr": "ring_right",
+                "am": "amulet",
+                "hl": "hand_left",
+                "hr": "hand_right",
+                "ch": "chest",
+            }
+
+            for eq_str in eq_data.split(','):
+                if not eq_str or ':' not in eq_str:
+                    continue
+
+                slot_code, item_type = eq_str.split(':', 1)
+                slot_name = slot_names.get(slot_code, slot_code)
+
+                # Parse item type with quality suffix
+                quality = "normal"
+                if item_type.endswith('_m'):
+                    quality = "magic"
+                    item_type = item_type[:-2]
+                elif item_type.endswith('_u'):
+                    quality = "unique"
+                    item_type = item_type[:-2]
+
+                state["equipped"][slot_name] = {
+                    "type": item_type,
+                    "quality": quality,
+                }
+
         # Parse stats: S=str,dex,mag,vit,lvl,pts,class,exp
         # Class: 0=warrior, 1=rogue, 2=sorc, 3=monk, 4=bard, 5=barb
         if m := re.search(r'S=(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)', line):

@@ -33,6 +33,7 @@ class BaseAgent:
         self.ollama_url = ollama_url
         self.timeout = timeout
         self.dormant = False
+        self.profile = None  # CharacterProfile (injected by orchestrator)
 
     def set_model(self, model: str):
         """Update model for context-based switching (town vs dungeon)"""
