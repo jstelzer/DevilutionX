@@ -103,6 +103,56 @@ class CharacterProfile:
         logger.info(f"   Preferred weapons: {', '.join(self.preferred_weapons)}")
         logger.info(f"   Preferred armor: {', '.join(self.preferred_armor)}")
 
+        # Bootstrap mode detection (low level + low resources)
+        self.bootstrap_mode = self._check_bootstrap_mode(initial_state)
+        if self.bootstrap_mode:
+            logger.info("⚠️  BOOTSTRAP MODE ACTIVE - Extra cautious behavior")
+
+    def _check_bootstrap_mode(self, state: Dict[str, Any]) -> bool:
+        """
+        Detect if character is in early-game bootstrap mode.
+
+        Bootstrap criteria:
+        - Level <= 3 (early game)
+        - Gold < 500 (low resources)
+        - HP potions < 4 (under-supplied)
+
+        Returns True if character should play extra cautiously.
+        """
+        stats = state.get("stats", {})
+        level = stats.get("lvl", 1)
+        gold = state.get("gold", 0)
+        belt = state.get("belt", [])
+        hp_potions = sum(1 for slot in belt if slot == "hp")
+
+        # Bootstrap if low level AND (low gold OR low potions)
+        is_bootstrap = level <= 3 and (gold < 500 or hp_potions < 4)
+
+        return is_bootstrap
+
+    def get_bootstrap_config(self) -> Dict[str, float]:
+        """
+        Get behavior modifiers for bootstrap mode.
+
+        Returns:
+            Dict with multipliers/thresholds for agent behavior
+        """
+        if not self.bootstrap_mode:
+            return {
+                "healing_threshold": 0.30,  # Normal: use potion at 30% HP
+                "combat_priority": 1.0,     # Normal combat aggression
+                "loot_gold_priority": 1.0,  # Normal gold priority
+                "retreat_distance": 5,      # Normal retreat distance
+            }
+
+        # Bootstrap mode - extra cautious
+        return {
+            "healing_threshold": 0.45,  # Use potions earlier (45% HP)
+            "combat_priority": 0.6,     # Reduced combat aggression
+            "loot_gold_priority": 1.5,  # Prioritize gold pickup
+            "retreat_distance": 8,      # Retreat further when threatened
+        }
+
     def _summarize_belt(self, belt: List[str]) -> str:
         """Create human-readable belt summary"""
         hp_count = sum(1 for slot in belt if slot == "hp")
@@ -140,6 +190,17 @@ class CharacterProfile:
         # Update inventory summary
         self.inventory_count = state.get("inv_count", self.inventory_count)
         self.belt_summary = self._summarize_belt(state.get("belt", []))
+
+        # Re-check bootstrap mode (may exit after leveling up or getting gold)
+        was_bootstrap = self.bootstrap_mode
+        self.bootstrap_mode = self._check_bootstrap_mode(state)
+
+        if was_bootstrap and not self.bootstrap_mode:
+            logger.info("✅ EXITED BOOTSTRAP MODE - Normal behavior restored")
+            changed = True
+        elif not was_bootstrap and self.bootstrap_mode:
+            logger.warning("⚠️  ENTERED BOOTSTRAP MODE - Playing cautiously")
+            changed = True
 
         return changed
 

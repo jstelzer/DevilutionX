@@ -31,7 +31,7 @@ class AdriaAgent(BaseAgent):
         Activate if:
         1. In town
         2. Character is a caster (sorcerer or has magic stat investment)
-        3. Need mana potions OR have staves/books to sell
+        3. Need mana potions OR have staves/books to sell OR staff needs recharging
         """
         if not state.get("in_town", False):
             return False
@@ -53,6 +53,14 @@ class AdriaAgent(BaseAgent):
         mp_potions = sum(1 for slot in belt if slot == "mp")
         need_mana = mp_potions < 2
 
+        # Check if equipped staff has low charges
+        equipped = state.get("equipped", {})
+        hand_left = equipped.get("hand_left")
+        staff_low_charges = False
+        if hand_left and hand_left.get("type") == "st":
+            staff_charges = hand_left.get("charges", 0)
+            staff_low_charges = 0 < staff_charges <= 5  # Low but not empty
+
         # Check if we have staves/books to sell
         inventory = state.get("inventory", [])
         sellable_magic_items = [
@@ -60,7 +68,7 @@ class AdriaAgent(BaseAgent):
             if item["type"] in ["st", "bk"] and item["identified"]
         ]
 
-        return need_mana or len(sellable_magic_items) > 0
+        return need_mana or len(sellable_magic_items) > 0 or staff_low_charges
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
@@ -139,6 +147,19 @@ class AdriaAgent(BaseAgent):
 
         # Shop is open - decide what to do
         witch_items = stores["wt"]
+
+        # Priority 0: Check if equipped staff needs recharging
+        # Note: Actual recharging requires UI interaction not yet implemented for GAP
+        # For now, just log a warning when staff is low on charges
+        hand_left = state.get("equipped", {}).get("hand_left")
+        if hand_left and hand_left.get("type") == "st":
+            staff_charges = hand_left.get("charges", 0)
+            if 0 < staff_charges <= 5:
+                logger.warning(f"⚡ Adria: Equipped staff has LOW charges ({staff_charges})! "
+                              f"Recharging not yet implemented for GAP - consider manual recharge")
+            elif staff_charges == 0:
+                logger.warning(f"⚡ Adria: Equipped staff has NO charges! "
+                              f"Recharging not yet implemented for GAP - staff is useless until recharged")
 
         # Priority 1: Buy mana potions if low
         if mp_potions_total < 4:

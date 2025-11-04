@@ -29,10 +29,15 @@ class GriswoldAgent(BaseAgent):
         """
         Activate if:
         1. In town
-        2. Have items worth selling (identified junk)
+        2. Have items worth selling (identified junk) OR
+        3. Have damaged equipment that needs repair
         """
         if not state.get("in_town", False):
             return False
+
+        # Check for damaged equipment needing repair
+        if self._has_damaged_equipment(state):
+            return True
 
         # Check if we have sellable items (must be identified first!)
         inventory = state.get("inventory", [])
@@ -63,13 +68,14 @@ class GriswoldAgent(BaseAgent):
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
-        Decide which items to sell.
+        Decide which items to sell or repair.
 
         Strategy:
-        1. Navigate to Griswold if not nearby
-        2. Sell identified junk (items profile says we don't want)
-        3. Keep magic/unique items appropriate for our class
-        4. Prioritize selling when inventory > 40% full
+        1. PRIORITY: Repair damaged equipment (durability < 75%)
+        2. Navigate to Griswold if not nearby
+        3. Sell identified junk (items profile says we don't want)
+        4. Keep magic/unique items appropriate for our class
+        5. Prioritize repairs/selling when inventory > 40% full
         """
         inventory = state.get("inventory", [])
         inv_count = state.get("inv_count", 0)
@@ -77,6 +83,40 @@ class GriswoldAgent(BaseAgent):
         me_x, me_y, hp_pct, mp_pct = state.get("me", [0, 0, 100, 100])
         npcs = state.get("npcs", [])
         stores = state.get("stores", {})
+
+        # Find Griswold first (needed for both repair and selling)
+        griswold = next((npc for npc in npcs if npc["type"] == "sm"), None)
+        if not griswold:
+            logger.warning("Griswold: Need Griswold but he's not found in NPC list")
+            return None
+
+        gris_x, gris_y = griswold["x"], griswold["y"]
+        dist = max(abs(gris_x - me_x), abs(gris_y - me_y))
+
+        # PRIORITY 1: Repair damaged equipment
+        damaged_items = self._find_damaged_equipment(state)
+        if damaged_items:
+            slot_name, item, dur_pct, body_index = damaged_items[0]  # Most damaged
+
+            # Navigate if too far
+            if dist > 3:
+                weight = 0.75 if dur_pct < 30.0 else 0.6
+                urgency = "URGENT" if dur_pct < 30.0 else "RECOMMENDED"
+                logger.info(f"Griswold: Navigating to repair {slot_name} ({dur_pct:.0f}% durability)")
+                return AgentResponse(
+                    command=f"MV {gris_x} {gris_y}",
+                    weight=weight,
+                    reasoning=f"Griswold: Going to repair {slot_name} ({urgency})"
+                )
+
+            # At Griswold - repair the item
+            weight = 0.8 if dur_pct < 30.0 else 0.65
+            logger.info(f"Griswold: Repairing {slot_name} ({item['type']}, {dur_pct:.0f}% durability)")
+            return AgentResponse(
+                command=f"REPAIR {body_index}",
+                weight=weight,
+                reasoning=f"Griswold: Repair {slot_name} ({dur_pct:.0f}% durability)"
+            )
 
         # Find sellable items (must match should_activate logic!)
         sellable_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
@@ -102,18 +142,7 @@ class GriswoldAgent(BaseAgent):
         if not potential_sells:
             return None
 
-        # Find Griswold
-        griswold = next((npc for npc in npcs if npc["type"] == "sm"), None)
-
-        if not griswold:
-            logger.warning("Griswold: Have sellable items but Griswold not found in NPC list")
-            return None
-
-        # Calculate distance to Griswold (use Chebyshev distance)
-        gris_x, gris_y = griswold["x"], griswold["y"]
-        dist = max(abs(gris_x - me_x), abs(gris_y - me_y))
-
-        # Calculate urgency based on inventory fullness
+        # Calculate urgency based on inventory fullness (Griswold already found above)
         inv_fullness = inv_count / 40.0
 
         # Check if Griswold's shop is currently open
@@ -206,3 +235,70 @@ Example: SELL {item['slot']} {weight}"""
             logger.warning(f"Griswold: Failed to parse SELL command from LLM: {response}")
 
         return None
+
+    def _has_damaged_equipment(self, state: Dict[str, Any]) -> bool:
+        """
+        Check if any equipped gear needs repair (durability < 75%).
+
+        Returns:
+            True if any equipped item needs repair
+        """
+        equipped = state.get("equipped", {})
+
+        for slot_name, item in equipped.items():
+            stats = item.get("stats")
+            if not stats:
+                continue
+
+            # Check durability
+            durability = stats.get("durability")
+            max_durability = stats.get("max_durability")
+
+            if durability is not None and max_durability is not None and max_durability > 0:
+                dur_pct = (durability / max_durability) * 100
+                # Repair if below 75% durability
+                if dur_pct < 75.0:
+                    logger.info(f"Griswold: {slot_name} ({item['type']}) needs repair: {durability}/{max_durability} ({dur_pct:.0f}%)")
+                    return True
+
+        return False
+
+    def _find_damaged_equipment(self, state: Dict[str, Any]) -> list:
+        """
+        Find all equipped items needing repair.
+
+        Returns:
+            List of (slot_name, item, durability_pct, body_index) tuples
+        """
+        damaged_items = []
+        equipped = state.get("equipped", {})
+
+        # Map friendly slot names to body slot indexes for REPAIR command
+        slot_to_body_index = {
+            "head": 0,           # INVLOC_HEAD
+            "ring_left": 1,      # INVLOC_RING_LEFT
+            "ring_right": 2,     # INVLOC_RING_RIGHT
+            "amulet": 3,         # INVLOC_AMULET
+            "hand_left": 4,      # INVLOC_HAND_LEFT
+            "hand_right": 5,     # INVLOC_HAND_RIGHT
+            "chest": 6,          # INVLOC_CHEST
+        }
+
+        for slot_name, item in equipped.items():
+            stats = item.get("stats")
+            if not stats:
+                continue
+
+            durability = stats.get("durability")
+            max_durability = stats.get("max_durability")
+
+            if durability is not None and max_durability is not None and max_durability > 0:
+                dur_pct = (durability / max_durability) * 100
+                if dur_pct < 75.0:
+                    body_index = slot_to_body_index.get(slot_name, -1)
+                    if body_index >= 0:
+                        damaged_items.append((slot_name, item, dur_pct, body_index))
+
+        # Sort by durability (most damaged first)
+        damaged_items.sort(key=lambda x: x[2])
+        return damaged_items

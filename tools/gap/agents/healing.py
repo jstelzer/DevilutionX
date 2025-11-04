@@ -25,11 +25,14 @@ class HealingAgent(BaseAgent):
         """
         Decide if healing is needed based on HP and available potions.
 
-        Priority healing thresholds:
+        Priority healing thresholds (adjusts for bootstrap mode):
         - HP < 20%: CRITICAL (weight 1.0) → prefer rejuv/full heal
         - HP 20-35%: URGENT (weight 0.8) → prefer heal potion
         - HP 35-50%: RECOMMENDED (weight 0.5)
         - HP 50-90%: OPTIONAL (weight 0.2)
+
+        Bootstrap mode (low level + low resources):
+        - Raises thresholds by +15% (use potions earlier)
 
         Coordination with LootAgent:
         - If no potions in belt, DON'T recommend USE (let LootAgent pick up)
@@ -39,16 +42,21 @@ class HealingAgent(BaseAgent):
         hp_pct = me[2] if len(me) > 2 else 100
         belt = state.get("belt", [])
 
-        # Determine healing urgency
-        if hp_pct < 20:
+        # Check for bootstrap mode adjustments
+        bootstrap_boost = 0
+        if self.profile and self.profile.bootstrap_mode:
+            bootstrap_boost = 15  # Use potions 15% earlier in bootstrap mode
+
+        # Determine healing urgency (with bootstrap adjustments)
+        if hp_pct < (20 + bootstrap_boost):
             weight = 1.0
-            reasoning = "CRITICAL HP"
-        elif hp_pct < 35:
+            reasoning = "CRITICAL HP" + (" [BOOTSTRAP]" if bootstrap_boost else "")
+        elif hp_pct < (35 + bootstrap_boost):
             weight = 0.8
-            reasoning = "URGENT HP"
-        elif hp_pct < 50:
+            reasoning = "URGENT HP" + (" [BOOTSTRAP]" if bootstrap_boost else "")
+        elif hp_pct < (50 + bootstrap_boost):
             weight = 0.5
-            reasoning = "RECOMMENDED HP"
+            reasoning = "RECOMMENDED HP" + (" [BOOTSTRAP]" if bootstrap_boost else "")
         elif hp_pct < 90:
             weight = 0.2
             reasoning = "OPTIONAL HP"

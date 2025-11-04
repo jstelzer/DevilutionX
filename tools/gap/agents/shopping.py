@@ -29,22 +29,28 @@ class ShoppingAgent(BaseAgent):
         super().__init__(name="Shopping", **kwargs)
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
-        """Only activate in town with available stores"""
+        """
+        Only activate in town with available stores.
+
+        Defer to TownAgent if we need potions but healer shop isn't open yet.
+        """
         if not state.get("in_town", False):
             return False
 
         stores = state.get("stores", {})
-        npcs = state.get("npcs", [])
-        me = state.get("me", [0, 0, 100, 100])
-        has_stores = len(stores) > 0
+        belt = state.get("belt", [])
 
-        # Debug logging - show NPCs and distance to Pepin
-        pepin = next((npc for npc in npcs if npc["type"] == "hl"), None)
-        if pepin:
-            dist = abs(pepin["x"] - me[0]) + abs(pepin["y"] - me[1])
-            logger.info(f"🛒 Shopping: dist_to_pepin={dist}, stores={list(stores.keys())}, pepin_pos=({pepin['x']},{pepin['y']}), me_pos=({me[0]},{me[1]})")
-        else:
-            logger.warning(f"🛒 Shopping: Pepin not found in NPCs, stores={list(stores.keys())}")
+        # Count potions
+        hp_potions = sum(1 for slot in belt if slot == "hp")
+
+        # If we need potions but healer shop isn't open, defer to TownAgent
+        # (TownAgent will navigate to Pepin and open his shop)
+        if hp_potions < 3 and "hl" not in stores:
+            logger.debug(f"🛒 Shopping: Need potions ({hp_potions}) but healer shop closed - deferring to TownAgent")
+            return False
+
+        # If we have stores open, we can shop
+        has_stores = len(stores) > 0
 
         # Warning if stores empty
         if state.get("in_town") and not has_stores:
@@ -57,9 +63,12 @@ class ShoppingAgent(BaseAgent):
         Evaluate shopping needs and recommend action.
 
         Priority:
-        1. Buy health potions if belt has < 3 AND inventory doesn't have them
-        2. Sell junk items if inventory > 80% full (deferred to Griswold agent)
-        3. Repair damaged equipment (future)
+        1. Buy health potions if belt has < 3 AND healer shop is OPEN
+        2. Buy gear upgrades from Griswold if shop is OPEN
+        3. Sell junk items if inventory > 80% full (deferred to Griswold agent)
+
+        NOTE: This agent only buys from OPEN shops. Navigation to NPCs
+        and opening shops is handled by TownAgent (lower priority).
         """
         belt = state.get("belt", [])
         inventory = state.get("inventory", [])
@@ -71,7 +80,7 @@ class ShoppingAgent(BaseAgent):
         hp_potions_inv = sum(1 for item in inventory if item["type"] == "hp")
         hp_potions = hp_potions_belt + hp_potions_inv
 
-        # Check if we need to buy health potions
+        # Check if we need to buy health potions (ONLY if healer shop is already open)
         if hp_potions < 3 and "hl" in stores:
             # Look for health potions at healer
             healer_items = stores["hl"]

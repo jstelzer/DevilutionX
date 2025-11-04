@@ -47,9 +47,10 @@ class SpellAgent(BaseAgent):
     """Specialist for spell casting combat"""
 
     def __init__(self, **kwargs):
-        super().__init__(name="Spell", priority=9, **kwargs)  # High priority, just below healing
+        super().__init__(name="Spell", **kwargs)
         self.last_cast_tick = 0
         self.cast_cooldown = 20  # Ticks between casts (prevent spam)
+        self.last_staff_charges = None  # Track staff charges to detect when they hit zero
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Activate if we have monsters, mana, and sufficient magic stat"""
@@ -62,13 +63,13 @@ class SpellAgent(BaseAgent):
             return False
 
         # Need mana
-        me = state.get("me", {})
-        mana_pct = me.get("mp%", 0)
+        me = state.get("me", [0, 0, 100, 100])
+        mana_pct = me[3] if len(me) > 3 else 100
         if mana_pct < 20:  # Save mana for emergencies
             return False
 
         # Need monsters in range
-        monsters = state.get("monsters", [])
+        monsters = state.get("mobs", [])
         if not monsters:
             return False
 
@@ -83,26 +84,64 @@ class SpellAgent(BaseAgent):
 
         return True
 
-    def decide(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
+    def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """Select and cast appropriate spell"""
-        monsters = state.get("monsters", [])
+        monsters = state.get("mobs", [])
         if not monsters:
             return None
 
-        me = state.get("me", {})
-        my_pos = (me.get("x", 0), me.get("y", 0))
-        mana_pct = me.get("mp%", 100)
+        me = state.get("me", [0, 0, 100, 100])
+        my_pos = (me[0], me[1]) if len(me) >= 2 else (0, 0)
+        mana_pct = me[3] if len(me) > 3 else 100
         stats = state.get("stats", {})
         magic_stat = stats.get("mag", 0)
+        equipped = state.get("equipped", {})
 
         # Get class context from profile if available
         class_context = ""
         if self.profile:
             class_context = f"{self.profile.class_name} " if not self.profile.is_caster else ""
 
+        # Check if we have a staff with charges equipped
+        hand_left = equipped.get("hand_left")
+        staff_spell_id = None
+        staff_charges = 0
+        if hand_left and hand_left.get("type") == "st":
+            staff_charges = hand_left.get("charges", 0)
+            staff_spell_id = hand_left.get("spell_id")
+
+            # Detect when staff charges hit zero
+            if self.last_staff_charges is not None and self.last_staff_charges > 0 and staff_charges == 0:
+                # Staff just ran out - notify via chat
+                spell_names = {
+                    SPELL_FIREBOLT: "Firebolt",
+                    SPELL_CHARGED_BOLT: "Charged Bolt",
+                    SPELL_FIREBALL: "Fireball",
+                    SPELL_LIGHTNING: "Lightning",
+                    SPELL_FLASH: "Flash",
+                    SPELL_FIRE_WALL: "Fire Wall",
+                    SPELL_STONE_CURSE: "Stone Curse",
+                    SPELL_CHAIN_LIGHTNING: "Chain Lightning",
+                }
+                spell_name = spell_names.get(staff_spell_id, f"spell {staff_spell_id}")
+
+                chat_msg = f"My staff of {spell_name} is out of charges. Time to find a new one or visit Adria for a recharge."
+                logger.info(f"⚡ Staff depleted: {chat_msg}")
+
+                # Return a SAY command to notify the player
+                return AgentResponse(
+                    command=f"SAY {chat_msg}",
+                    weight=0.1,  # Low priority, just informational
+                    reasoning=f"Staff depleted notification"
+                )
+
+            # Track current charges for next tick
+            self.last_staff_charges = staff_charges
+
         # Select spell and target based on situation
         spell_id, target_pos, weight, reasoning = self._select_spell(
-            monsters, my_pos, mana_pct, magic_stat, class_context
+            monsters, my_pos, mana_pct, magic_stat, class_context,
+            staff_spell_id, staff_charges
         )
 
         if spell_id is None:
@@ -126,13 +165,17 @@ class SpellAgent(BaseAgent):
         my_pos: Tuple[int, int],
         mana_pct: int,
         magic_stat: int,
-        class_context: str = ""
+        class_context: str = "",
+        staff_spell_id: Optional[int] = None,
+        staff_charges: int = 0
     ) -> Tuple[Optional[int], Optional[Tuple[int, int]], float, str]:
         """
         Select best spell for current situation.
 
         Args:
             class_context: Optional class prefix for logging (e.g., "Warrior ")
+            staff_spell_id: Spell ID available on equipped staff (if any)
+            staff_charges: Number of charges remaining on staff
 
         Returns: (spell_id, target_pos, weight, reasoning)
         """
@@ -179,28 +222,54 @@ class SpellAgent(BaseAgent):
         target_pos = best_target["pos"]
         weight = 0.7  # Base weight
         reasoning = ""
+        use_staff = False
 
-        # High mana + grouped enemies = Fireball (AoE)
-        if mana_pct >= 40 and len(grouped_monsters) >= 3:
-            spell_id = SPELL_FIREBALL
-            weight = 0.9  # High priority for grouped targets
-            reasoning = f"{class_context}Spell: Fireball on group of {len(grouped_monsters)}"
+        # PRIORITY 1: Use staff charges if available (no mana cost!)
+        # Staff charges are precious - prefer them when mana is low
+        if staff_spell_id and staff_charges > 0:
+            # Only use staff if mana is below 40% OR staff spell matches our preferred spell
+            if mana_pct < 40:
+                spell_id = staff_spell_id
+                weight = 0.85  # High priority - saves mana
+                reasoning = f"{class_context}Staff spell (charges: {staff_charges}, saving mana)"
+                use_staff = True
+            # Also prefer staff for grouped enemies if it's Fireball/Lightning/Chain Lightning
+            elif staff_spell_id in [SPELL_FIREBALL, SPELL_LIGHTNING, SPELL_CHAIN_LIGHTNING] and len(grouped_monsters) >= 3:
+                spell_id = staff_spell_id
+                weight = 0.9
+                reasoning = f"{class_context}Staff AoE spell (charges: {staff_charges})"
+                use_staff = True
 
-        # Mid-range combat with decent mana = Lightning (fast projectile)
-        elif mana_pct >= 30 and best_target["distance"] <= 12:
-            spell_id = SPELL_LIGHTNING
-            weight = 0.8
-            reasoning = f"{class_context}Spell: Lightning at {best_target['distance']:.1f} tiles"
+        # PRIORITY 2: Use memorized spells if staff not used
+        if not use_staff:
+            # High mana + grouped enemies = Fireball (AoE)
+            if mana_pct >= 40 and len(grouped_monsters) >= 3:
+                spell_id = SPELL_FIREBALL
+                weight = 0.9  # High priority for grouped targets
+                reasoning = f"{class_context}Spell: Fireball on group of {len(grouped_monsters)}"
 
-        # Low mana or long range = Firebolt (cheap, long range)
-        elif mana_pct >= 20:
-            spell_id = SPELL_FIREBOLT
-            weight = 0.7
-            reasoning = f"{class_context}Spell: Firebolt (mana: {mana_pct}%)"
+            # Mid-range combat with decent mana = Lightning (fast projectile)
+            elif mana_pct >= 30 and best_target["distance"] <= 12:
+                spell_id = SPELL_LIGHTNING
+                weight = 0.8
+                reasoning = f"{class_context}Spell: Lightning at {best_target['distance']:.1f} tiles"
 
-        # Very low mana = conserve, don't cast
-        else:
-            return None, None, 0.0, "Conserving mana"
+            # Low mana or long range = Firebolt (cheap, long range)
+            elif mana_pct >= 20:
+                spell_id = SPELL_FIREBOLT
+                weight = 0.7
+                reasoning = f"{class_context}Spell: Firebolt (mana: {mana_pct}%)"
+
+            # Very low mana BUT we have staff charges = use staff!
+            elif staff_spell_id and staff_charges > 0:
+                spell_id = staff_spell_id
+                weight = 0.85
+                reasoning = f"{class_context}Staff spell (LOW MANA, charges: {staff_charges})"
+                use_staff = True
+
+            # Very low mana and no staff = conserve
+            else:
+                return None, None, 0.0, "Conserving mana (no staff charges)"
 
         # Safety check: ensure spell in range
         spell_range = SPELL_RANGES.get(spell_id, 15)

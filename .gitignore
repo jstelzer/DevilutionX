@@ -468,4 +468,9 @@ uwp-project/Assets/ui_art
 hackery
 gap_logs
 tools/gap/log.sh
+tools/gap/gap_memory.db*
 tools/gap/gap_memory.db
+tools/gap/gap_memory.db-shm
+tools/gap/gap_memory.db-wal
+gap_memory.*
+*.MPQ

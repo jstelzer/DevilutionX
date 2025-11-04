@@ -154,7 +154,7 @@ class LootAgent(BaseAgent):
             "n": 1.0,  # normal
         }.get(quality, 1.0)
 
-        # Type scoring
+        # Type scoring (base value before profile adjustments)
         type_score = {
             "go": 1.0,  # gold - always good
             "sw": 0.8,  # weapons
@@ -171,6 +171,23 @@ class LootAgent(BaseAgent):
             "am": 0.9,
             "ms": 0.3,  # misc - low priority unless magic/unique
         }.get(item_type, 0.3)
+
+        # Profile-based adjustments (prioritize preferred weapon/armor types)
+        if self.profile:
+            # Boost score for preferred weapon types
+            if item_type in self.profile.preferred_weapons:
+                type_score *= 1.3  # 30% boost for class-appropriate weapons
+                logger.debug(f"Loot: {self.profile.class_name} prefers {item_type} - boosting score")
+            # Boost score for preferred armor types
+            elif item_type in self.profile.preferred_armor:
+                type_score *= 1.2  # 20% boost for class-appropriate armor
+                logger.debug(f"Loot: {self.profile.class_name} prefers {item_type} - boosting score")
+
+            # CRITICAL: Always pick up unidentified magic/unique items of preferred types
+            # These could be major upgrades once identified
+            if quality in ["m", "u"] and item_type in (self.profile.preferred_weapons + self.profile.preferred_armor):
+                logger.info(f"🎯 Loot: Unidentified {quality}/{item_type} for {self.profile.class_name} - HIGH PRIORITY")
+                quality_mult *= 1.5  # Extra boost for unidentified class gear
 
         # Special case: potions in misc
         # If belt is full, lower potion priority
@@ -209,6 +226,11 @@ class LootAgent(BaseAgent):
         # Gold always gets minimum 0.5 score (always pick up)
         if item_type == "go" and value >= 50:
             score = max(score, 0.5)
+
+        # Bootstrap mode: prioritize gold pickup (need resources!)
+        if self.profile and self.profile.bootstrap_mode and item_type == "go":
+            score *= 1.5  # 50% boost to gold priority
+            logger.debug(f"Loot: Bootstrap mode - boosting gold priority {score:.2f}")
 
         # Unique items always get high score
         if quality == "u":

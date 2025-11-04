@@ -287,6 +287,38 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             if (!inv_item._iIdentified && inv_item._iMagical != ITEM_QUALITY_NORMAL) {
                 type_code += "!";
             }
+
+            // Add stats for identified equipment
+            if (inv_item._iIdentified && (inv_item.isWeapon() || inv_item.isArmor() || inv_item.isHelm() || inv_item.isShield())) {
+                type_code += ":";
+
+                // Weapons: damage:toHit
+                if (inv_item.isWeapon()) {
+                    type_code += std::to_string(static_cast<int>(inv_item._iMinDam));
+                    type_code += "-";
+                    type_code += std::to_string(static_cast<int>(inv_item._iMaxDam));
+                    if (inv_item._iPLDam != 0) {
+                        type_code += "+";
+                        type_code += std::to_string(inv_item._iPLDam);
+                    }
+                    type_code += ":";
+                    type_code += std::to_string(inv_item._iPLToHit);
+                }
+                // Armor: AC+bonus
+                else {
+                    type_code += std::to_string(inv_item._iAC + inv_item._iPLAC);
+                    int primary_bonus = 0;
+                    if (inv_item._iPLStr != 0) primary_bonus = inv_item._iPLStr;
+                    else if (inv_item._iPLDex != 0) primary_bonus = inv_item._iPLDex;
+                    else if (inv_item._iPLMag != 0) primary_bonus = inv_item._iPLMag;
+                    else if (inv_item._iPLVit != 0) primary_bonus = inv_item._iPLVit;
+
+                    if (primary_bonus != 0) {
+                        type_code += "+";
+                        type_code += std::to_string(primary_bonus);
+                    }
+                }
+            }
         }
 
         // Format: type@slot_index
@@ -301,11 +333,12 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
     // Equipped gear: EQ=slot:type,slot:type,...
     // Slots: hd=head, rl=ring_left, rr=ring_right, am=amulet, hl=hand_left, hr=hand_right, ch=chest
     // Example: EQ=hd:hl_m,hl:sw_u,hr:sh,ch:la_m
+    // Staves with charges: hl:st_m^12:2 (magic staff with 12 charges of spell ID 2=Firebolt)
     std::ostringstream equipped;
     bool first_equipped = true;
 
-    // Helper lambda to get item type code (reusing inventory logic)
-    auto getItemTypeCode = [](const Item& item) -> std::string {
+    // Helper lambda to get item type code with stats (for inventory and equipped items)
+    auto getItemTypeCodeWithStats = [](const Item& item, bool includeStats = true) -> std::string {
         if (item.isEmpty()) return "";
 
         std::string type_code;
@@ -334,6 +367,65 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             } else if (item._iMagical == ITEM_QUALITY_UNIQUE) {
                 type_code += "_u";
             }
+
+            // Add charges and spell ID suffix for staves (e.g., "st_m^12:2" for 12 charges of Firebolt)
+            if (item._itype == ItemType::Staff && item._iCharges > 0) {
+                type_code += "^" + std::to_string(item._iCharges);
+                type_code += ":" + std::to_string(static_cast<int>(item._iSpell));
+            }
+
+            // Add stats for equipment (weapons and armor) if requested
+            if (includeStats && (item.isWeapon() || item.isArmor() || item.isHelm() || item.isShield())) {
+                type_code += ":";
+
+                // Weapons: damage,toHit,damBonus,durability
+                // Format: minDam-maxDam+damBonus:toHit:dur/maxDur
+                // Example: "3-6+2:15:45/60" = 3-6 damage, +2 damage bonus, +15 ToHit, 45/60 durability
+                if (item.isWeapon()) {
+                    type_code += std::to_string(static_cast<int>(item._iMinDam));
+                    type_code += "-";
+                    type_code += std::to_string(static_cast<int>(item._iMaxDam));
+                    if (item._iPLDam != 0) {
+                        type_code += "+";
+                        type_code += std::to_string(item._iPLDam);
+                    }
+                    type_code += ":";
+                    type_code += std::to_string(item._iPLToHit);
+
+                    // Add durability (except for indestructible items)
+                    if (item._iMaxDur > 0 && item._iMaxDur != DUR_INDESTRUCTIBLE) {
+                        type_code += ":";
+                        type_code += std::to_string(item._iDurability);
+                        type_code += "/";
+                        type_code += std::to_string(item._iMaxDur);
+                    }
+                }
+                // Armor/Helm/Shield: AC,primaryBonus,durability
+                // Format: AC+primaryBonus:dur/maxDur
+                // Example: "25+5:40/50" = 25 AC, +5 Str, 40/50 durability
+                else {
+                    type_code += std::to_string(item._iAC + item._iPLAC);
+                    // Add primary stat bonus (prioritize Str > Dex > Mag > Vit)
+                    int primary_bonus = 0;
+                    if (item._iPLStr != 0) primary_bonus = item._iPLStr;
+                    else if (item._iPLDex != 0) primary_bonus = item._iPLDex;
+                    else if (item._iPLMag != 0) primary_bonus = item._iPLMag;
+                    else if (item._iPLVit != 0) primary_bonus = item._iPLVit;
+
+                    if (primary_bonus != 0) {
+                        type_code += "+";
+                        type_code += std::to_string(primary_bonus);
+                    }
+
+                    // Add durability (except for indestructible items)
+                    if (item._iMaxDur > 0 && item._iMaxDur != DUR_INDESTRUCTIBLE) {
+                        type_code += ":";
+                        type_code += std::to_string(item._iDurability);
+                        type_code += "/";
+                        type_code += std::to_string(item._iMaxDur);
+                    }
+                }
+            }
         }
         return type_code;
     };
@@ -344,7 +436,7 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         const Item& eq_item = player->InvBody[slot];
         if (eq_item.isEmpty()) continue;
 
-        std::string type_code = getItemTypeCode(eq_item);
+        std::string type_code = getItemTypeCodeWithStats(eq_item, true);  // Include stats
         if (type_code.empty()) continue;
 
         if (!first_equipped) equipped << ",";

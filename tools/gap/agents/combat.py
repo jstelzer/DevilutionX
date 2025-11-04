@@ -249,5 +249,11 @@ Example: AT {mobs[0].get('id', 27)} 0.85"""
                 logger.error(f"Combat: Failed to parse monster ID from ranged attack: {e}")
                 # Fall through to regular melee attack
 
+        # Apply bootstrap mode modifier (reduce combat aggression for low-level chars)
+        if self.profile and self.profile.bootstrap_mode:
+            parsed.weight *= 0.6  # Reduce combat priority by 40%
+            parsed.reasoning += " [BOOTSTRAP: Cautious]"
+            logger.debug(f"Combat: Bootstrap mode active, reducing weight {parsed.weight:.2f}")
+
         parsed.reasoning = f"Combat: {parsed.command}"
         return parsed

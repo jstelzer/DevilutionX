@@ -623,18 +623,26 @@ bool GapIntentProcessor::ExecuteCastSpell(int spell_id, int x, int y) {
     std::cout << "GAP: ExecuteCastSpell - spell_id=" << spell_id
               << " target=(" << x << "," << y << ")" << std::endl;
 
-    // Set up the queued spell (required by StartSpell)
+    // Set the readied spell (like pressing 's' and selecting the spell)
+    // This ensures the spell is "equipped" before casting
+    player->_pRSpell = spellID;
+    player->_pRSplType = SpellType::Spell;
+
+    // Set up the queued spell for network sync
     player->queuedSpell.spellId = spellID;
     player->queuedSpell.spellType = SpellType::Spell;
     player->queuedSpell.spellFrom = 0;  // From memory
 
-    // Calculate direction to target
-    Direction dir = GetDirection(player->position.tile, WorldTilePosition(x, y));
+    // Send network command (follows multiplayer protocol like right-clicking to cast)
+    // This ensures proper network sync and validation
+    const int spellFrom = 0;
+    NetSendCmdLocParam4(true, CMD_SPELLXY, Point{x, y},
+                        static_cast<int8_t>(spellID),
+                        static_cast<uint8_t>(SpellType::Spell),
+                        player->GetSpellLevel(spellID),
+                        spellFrom);
 
-    // Call StartSpell directly (bypasses auto-pathing like we do for ranged attacks)
-    StartSpell(*player, dir, x, y);
-
-    std::cout << "GAP: Successfully cast spell " << spell_id << " at (" << x << "," << y << ")" << std::endl;
+    std::cout << "GAP: Successfully queued spell " << spell_id << " at (" << x << "," << y << ")" << std::endl;
     return true;
 }
 

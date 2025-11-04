@@ -152,6 +152,9 @@ def parse_dsl_state(line: str) -> Dict:
         # Types: hp, mp, rj, sw, ax, bw, etc.
         # Quality: _m=magic, _u=unique (e.g., sw_m = magic sword)
         # Identified: ! suffix means unidentified (e.g., sw_m! = unidentified magic sword)
+        # Stats (identified equipment): type:stats@slot
+        #   - Weapons: "sw_m:3-6+2:15@5" = magic sword, 3-6 dmg +2 bonus, +15 ToHit, slot 5
+        #   - Armor: "la_m:25+5@3" = magic light armor, 25 AC +5 Str, slot 3
         if m := re.search(r'INV=([^A-Z\s]+)', line):
             inv_data = m.group(1)
             for inv_str in inv_data.split(';'):
@@ -159,8 +162,57 @@ def parse_dsl_state(line: str) -> Dict:
                     continue
 
                 try:
+                    # Split by @ to get type_code and slot
                     type_code, slot_str = inv_str.split('@')
                     slot = int(slot_str)
+
+                    # Parse stats if present (identified equipment has :stats before @slot)
+                    stats = None
+                    if ':' in type_code:
+                        # Split on FIRST colon to separate type from stats
+                        parts = type_code.split(':', 1)
+                        type_code = parts[0]
+                        stat_str = parts[1]
+
+                        # Parse weapon stats: "3-6+2:15" or armor stats: "25+5"
+                        if '-' in stat_str:  # Weapon: damage-range
+                            # Format: minDam-maxDam+bonus:toHit
+                            try:
+                                dam_part, tohit_str = stat_str.split(':', 1)
+                                # Parse damage: "3-6+2" or "3-6"
+                                if '+' in dam_part:
+                                    dam_range, dam_bonus = dam_part.split('+')
+                                    min_dam, max_dam = map(int, dam_range.split('-'))
+                                    dam_bonus = int(dam_bonus)
+                                else:
+                                    min_dam, max_dam = map(int, dam_part.split('-'))
+                                    dam_bonus = 0
+
+                                tohit = int(tohit_str)
+
+                                stats = {
+                                    "min_dam": min_dam,
+                                    "max_dam": max_dam,
+                                    "dam_bonus": dam_bonus,
+                                    "to_hit": tohit,
+                                }
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"Failed to parse weapon stats {stat_str}: {e}")
+                        else:  # Armor: AC or AC+bonus
+                            try:
+                                if '+' in stat_str:
+                                    ac_str, bonus_str = stat_str.split('+')
+                                    stats = {
+                                        "ac": int(ac_str),
+                                        "stat_bonus": int(bonus_str),
+                                    }
+                                else:
+                                    stats = {
+                                        "ac": int(stat_str),
+                                        "stat_bonus": 0,
+                                    }
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"Failed to parse armor stats {stat_str}: {e}")
 
                     # Parse type code with quality/identified flags
                     base_type = type_code
@@ -180,12 +232,18 @@ def parse_dsl_state(line: str) -> Dict:
                         quality = "unique"
                         base_type = base_type[:-2]
 
-                    state["inventory"].append({
+                    inv_item = {
                         "type": base_type,
                         "slot": slot,
                         "quality": quality,
                         "identified": identified,
-                    })
+                    }
+
+                    # Add stats if present
+                    if stats:
+                        inv_item["stats"] = stats
+
+                    state["inventory"].append(inv_item)
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse inventory item: {inv_str} - {e}")
                     continue
@@ -196,6 +254,9 @@ def parse_dsl_state(line: str) -> Dict:
 
         # Parse equipped gear: EQ=hd:hl_m,hl:sw_u,hr:sh,ch:la_m
         # Slots: hd=head, rl=ring_left, rr=ring_right, am=amulet, hl=hand_left, hr=hand_right, ch=chest
+        # Staves with charges: hl:st_m^12:2 (magic staff with 12 charges of spell ID 2)
+        # Equipment stats: hl:sw_m:3-6+2:15 (magic sword, 3-6 dmg +2 bonus, +15 ToHit)
+        #                  ch:la_m:25+5 (magic light armor, 25 AC +5 Str)
         if m := re.search(r'EQ=([^A-Z\s]+)', line):
             eq_data = m.group(1)
             state["equipped"] = {}
@@ -214,8 +275,98 @@ def parse_dsl_state(line: str) -> Dict:
                 if not eq_str or ':' not in eq_str:
                     continue
 
-                slot_code, item_type = eq_str.split(':', 1)
+                # Split on FIRST colon to get slot_code and item_data
+                parts = eq_str.split(':', 1)
+                slot_code = parts[0]
+                item_data = parts[1]
                 slot_name = slot_names.get(slot_code, slot_code)
+
+                # Parse stats if present (after item type, before charges)
+                # Format: type:stats or type^charges:spell or type:stats^charges:spell
+                stats = None
+
+                # First handle charges (for staves)
+                charges = 0
+                spell_id = None
+                if '^' in item_data:
+                    item_type, charge_data = item_data.split('^', 1)
+                    # charge_data could be "12:2" (charges:spell_id) or just "12"
+                    if ':' in charge_data:
+                        charges_str, spell_str = charge_data.split(':', 1)
+                        charges = int(charges_str)
+                        spell_id = int(spell_str)
+                    else:
+                        charges = int(charge_data)
+                else:
+                    item_type = item_data
+
+                # Now parse stats from item_type (if present)
+                # Stats appear after type code: "sw_m:3-6+2:15" or "la_m:25+5"
+                if ':' in item_type:
+                    # Split on colons to separate type from stats
+                    type_parts = item_type.split(':')
+                    item_type = type_parts[0]  # First part is always type code
+
+                    # Remaining parts are stats
+                    if len(type_parts) >= 2:
+                        stat_str = ':'.join(type_parts[1:])  # Rejoin in case of weapon stats (dam:tohit)
+
+                        # Parse weapon stats: "3-6+2:15:45/60" or armor stats: "25+5:40/50"
+                        if '-' in stat_str:  # Weapon: damage-range
+                            try:
+                                parts = stat_str.split(':')
+                                dam_part = parts[0]
+                                tohit_str = parts[1]
+
+                                if '+' in dam_part:
+                                    dam_range, dam_bonus = dam_part.split('+')
+                                    min_dam, max_dam = map(int, dam_range.split('-'))
+                                    dam_bonus = int(dam_bonus)
+                                else:
+                                    min_dam, max_dam = map(int, dam_part.split('-'))
+                                    dam_bonus = 0
+
+                                tohit = int(tohit_str)
+
+                                stats = {
+                                    "min_dam": min_dam,
+                                    "max_dam": max_dam,
+                                    "dam_bonus": dam_bonus,
+                                    "to_hit": tohit,
+                                }
+
+                                # Parse durability if present (parts[2] = "45/60")
+                                if len(parts) > 2 and '/' in parts[2]:
+                                    dur, max_dur = map(int, parts[2].split('/'))
+                                    stats["durability"] = dur
+                                    stats["max_durability"] = max_dur
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"Failed to parse equipped weapon stats {stat_str}: {e}")
+                        else:  # Armor: AC or AC+bonus:dur/maxDur
+                            try:
+                                # Split by colon to separate stats from durability
+                                armor_parts = stat_str.split(':')
+                                ac_part = armor_parts[0]
+
+                                if '+' in ac_part:
+                                    ac_str, bonus_str = ac_part.split('+')
+                                    stats = {
+                                        "ac": int(ac_str),
+                                        "stat_bonus": int(bonus_str),
+                                    }
+                                else:
+                                    stats = {
+                                        "ac": int(ac_part),
+                                        "stat_bonus": 0,
+                                    }
+
+                                # Parse durability if present (armor_parts[1] = "40/50")
+                                if len(armor_parts) > 1 and '/' in armor_parts[1]:
+                                    dur, max_dur = map(int, armor_parts[1].split('/'))
+                                    stats["durability"] = dur
+                                    stats["max_durability"] = max_dur
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"Failed to parse equipped armor stats {stat_str}: {e}")
 
                 # Parse item type with quality suffix
                 quality = "normal"
@@ -226,10 +377,22 @@ def parse_dsl_state(line: str) -> Dict:
                     quality = "unique"
                     item_type = item_type[:-2]
 
-                state["equipped"][slot_name] = {
+                equipped_item = {
                     "type": item_type,
                     "quality": quality,
                 }
+
+                # Add stats if present
+                if stats:
+                    equipped_item["stats"] = stats
+
+                # Add charges and spell if present (staves)
+                if charges > 0:
+                    equipped_item["charges"] = charges
+                if spell_id is not None:
+                    equipped_item["spell_id"] = spell_id
+
+                state["equipped"][slot_name] = equipped_item
 
         # Parse stats: S=str,dex,mag,vit,lvl,pts,class,exp
         # Class: 0=warrior, 1=rogue, 2=sorc, 3=monk, 4=bard, 5=barb

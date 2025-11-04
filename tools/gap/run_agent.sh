@@ -70,4 +70,4 @@ python3 orchestrator.py \
     --chat-model "$TOWN_MODEL" \
     --password "$PASSWORD" \
     --think-interval "$THINK_INTERVAL" \
-    "$@"
+    "$@" 2>&1 | tee agent.log

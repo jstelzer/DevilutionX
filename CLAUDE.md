@@ -1,97 +1,143 @@
-# DevilutionX GAP Project
+# DevilutionX GAP - Developer Guide
 
-GAP (Game Agent Protocol) enables LLM control of Diablo characters via IPC/JSON protocol.
+> **📚 For Architecture & Project Overview**: See [GAP-PROJECT-SUMMARY.md](./GAP-PROJECT-SUMMARY.md)
+> **📋 This Document**: Implementation details, recent changes, development workflow
 
-> **📋 Single Source of Truth**: This document contains the complete GAP roadmap and implementation guide. The `docs/gap-evolution-roadmap.md` content has been integrated here for unified reference.
+## Quick Reference
 
-## Project Overview
-- **Goal**: Run an LLM on NVIDIA GPU to play Diablo autonomously/cooperatively
-- **Architecture**: Unix socket IPC, JSON protocol, compile flag `-DENABLE_GAP`
-- **Integration**: Hooks in `game_loop()` for state, `GameEventHandler()` for input
-- **Status**: Multiplayer companion mode with chat fully functional
-## Documentation
-
-- **docs**: Review the ./docs directory for context.
-
-## Notes
-
-* When generating scripts/python note I'm on linux so only use \n not \r\n for line ending.s
-
-## Completed Features Summary
-
-**Phase 1-3.5 Complete**: Basic protocol, combat, LLM integration, level transitions all working.
-
-### Key Achievements:
-- ✅ **GAP Protocol**: Unix socket IPC with JSON messaging
-- ✅ **State Extraction**: Player, monsters, items, vision system
-- ✅ **Combat System**: Melee, ranged, and spell casting with tactical positioning
-- ✅ **Ranged Combat**: Direct function calls for true kiting behavior (no auto-pathing)
-- ✅ **Spell Casting**: Full magic system - any class can cast with sufficient Magic stat
-- ✅ **LLM Integration**: Ollama bridge via MCP server
-- ✅ **Level Transitions**: Automatic companion following through stairs/portals
-- ✅ **Chat System**: Bidirectional conversation with AI companion
-- ✅ **Multiplayer Mode**: Companion loads from save files
-- ✅ **Mutual Support**: Item sharing, gold drops, request handling
-- ✅ **Character Profiles**: Self-aware agents with class identity and role preferences
-
-### Current Usage:
+**Start Game + AI Companion:**
 ```bash
-# Start game with companion
+# Terminal 1: Start game with companion
+cd /home/mental/projects/DevilutionX/build
 ./devilutionx --companion-save multi_1.sv --companion-slot 1
 
-# Start AI agent
-python3 tools/gap/mcp_server.py --companion-slot 1 --model qwen2.5:3b --password "foo"
+# Terminal 2: Start AI agent
+cd /home/mental/projects/DevilutionX/tools/gap
+python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b --password "foo"
 ```
 
-**Recommended Models**: qwen2.5:3b (fast), llama3.2:latest (balanced), llama3.1:8b (powerful)
+**Recommended Models**:
+- `qwen2.5:3b` - Fast (200-300ms), good for testing
+- `llama3.2:latest` - Balanced (400-500ms)
+- `llama3.1:8b` - Best reasoning (800-1200ms), slower
 
-### Recent Changes (Nov 3, 2025):
-- ✅ **Spell Casting System**: Complete C++ and Python implementation
-- ✅ **Profile Integration**: SpellAgent uses CharacterProfile for class-aware logging
-- 🧪 **Testing Needed**: Spell casting with Magic ≥20 character (Sorcerer or high-level Warrior/Rogue)
+---
 
-### Known Working:
-- Rogue companion with bow: Kites perfectly, maintains 4-10 tile range
-- Town NPCs: Pepin, Adria, Griswold (healing, shopping, selling)
-- Chat: Bidirectional conversation, item requests, DROP command
-- Missile damage: Companions deal and take ranged/spell damage correctly
+## Project Status (November 4, 2025)
 
-## Active Development Focus
+### ✅ Production-Ready Features
 
-### ✅ DSL Migration Complete! (November 2025)
+**Core Systems:**
+- ✅ DSL protocol (100-200 bytes, 80-120 tokens)
+- ✅ Multi-agent orchestrator with weighted voting
+- ✅ SQLite persistent memory
+- ✅ Character profile system (class-aware behavior)
 
-**Problem**: JSON protocol was slow (500ms-2s decisions), token-heavy (400-600 tokens/call), and stateless
+**Combat:**
+- ✅ Melee combat (direct attack functions)
+- ✅ Ranged combat with kiting (no auto-pathing, true shift-key behavior)
+- ✅ Spell casting (Magic ≥20, any class)
+- ✅ Emergency survival reflexes (Python overrides)
 
-**Solution**: Migrated to compact DSL + SQLite memory system
+**Town Services:**
+- ✅ Pepin (healing purchase)
+- ✅ Adria (spells, mana potions)
+- ✅ Griswold (selling junk, **auto-repair damaged gear**)
+- ✅ Cain (item identification)
 
-**Results Achieved**:
-- ✅ 10x smaller messages (1-2KB → 100-200 bytes)
-- ✅ 5x fewer tokens (400-600 → 80-120)
-- ✅ 2-4x faster decisions (500ms-2s → 200-500ms)
-- ✅ Persistent SQLite memory (spatial awareness, goal tracking)
-- ✅ Grammar constraints force valid DSL output
-- ✅ Risk signals (RISK=high/med/low, SAFE_TILE, BEST_LOOT)
-- ✅ Async chat handler (template-based, non-blocking)
-- ✅ Python survival/combat overrides (HP<30% retreat, HP>35% attack)
+**Equipment Management:**
+- ✅ Item stat extraction (damage, AC, ToHit, durability)
+- ✅ Durability tracking (current/max for equipped gear)
+- ✅ Auto-repair detection (<75% durability → Griswold)
+- ✅ Profile-aware loot (Rogues prioritize bows, Warriors prioritize swords)
+- ✅ ItemComparator (weapon/armor scoring for upgrades)
 
-**Agent Stack** (`tools/gap/`): `dsl_agent.py`, `dsl_parser.py`, `chat_handler.py`, `memory_store.py`
+**Social:**
+- ✅ Bidirectional chat (reactive + proactive)
+- ✅ Item requests ("give me a potion" → DROP command)
+- ✅ First-person perspective ("I have" not "you have")
 
-### ✅ Ranged Combat System Complete! (Nov 3, 2025)
+### 🚧 In Progress / Known Gaps
 
-**Problem**: Rogue companion with bow was face-tanking enemies instead of using ranged tactics
+See [GAP-PROJECT-SUMMARY.md - TODO Section](./GAP-PROJECT-SUMMARY.md#todo-feature-gaps) for prioritized feature roadmap.
 
-**Root Cause**: Using `destAction = ACTION_ATTACKMON` triggered the game engine's auto-pathing system, which created movement paths to targets even after calling `ClrPlrPath()`. The engine recreates paths during attack processing.
+**High Priority Next Steps:**
+- [ ] UpgradeAgent (use ItemComparator to find upgrades)
+- [ ] EQUIP command (C++ - swap inventory to equipped slot)
+- [ ] Multi-item Cain identification loop
 
-**The Critical Solution - Direct Function Calls**:
+---
 
-Instead of queuing actions via `destAction` (which triggers engine auto-pathing), we **call attack functions directly**:
+## Recent Changes Log
+
+### November 4, 2025: Equipment Stats & Auto-Repair
+
+**Item Stat Tracking:**
+- Extended DSL format to include equipment stats (damage, AC, ToHit, durability)
+- Format: `sw_m:3-6+2:15:45/60` (magic sword: 3-6 dmg, +2% bonus, +15 ToHit, 45/60 durability)
+- Format: `la_m:25+5:40/50` (magic light armor: 25 AC, +5 Str, 40/50 durability)
+- Updated `dsl_parser.py` to parse weapon and armor stats with durability
+
+**ItemComparator Class** (`tools/gap/item_comparator.py`):
+- Weapon scoring: avg_damage * (1 + to_hit/100) * class_bonus
+- Armor scoring: AC + (stat_bonus * 2.0) * class_bonus
+- Smart thresholds: 10% improvement for weapons, 8% for armor
+- Quality bonuses: unique/magic items get extra value
+- `find_upgrades()` - scans inventory for all potential equipment upgrades
+
+**Griswold Auto-Repair:**
+- Detects damaged equipment (<75% durability)
+- Prioritizes repairs BEFORE selling (lines 96-119 in griswold.py)
+- Urgency levels: <30% = URGENT (weight 0.75), <75% = RECOMMENDED (weight 0.6)
+- Command: `REPAIR <body_slot_index>` (0=head, 4=hand_left, 5=hand_right, 6=chest)
+
+**LootAgent Profile Integration:**
+- 30% score boost for preferred weapon types
+- 20% score boost for preferred armor types
+- 50% extra boost for unidentified magic/unique items of class-appropriate types
+- Rogue sees unidentified magic bow → HIGH PRIORITY pickup for Cain
+
+**Files Modified:**
+- `Source/gap/gap_dsl.cpp` - Added durability to equipment stats (lines 377-428)
+- `tools/gap/dsl_parser.py` - Parse durability values (lines 314-369)
+- `tools/gap/item_comparator.py` - NEW FILE (360 lines)
+- `tools/gap/agents/griswold.py` - Repair detection + prioritization (lines 28-280)
+- `tools/gap/agents/loot.py` - Profile-aware scoring (lines 175-190)
+
+**Agent Perspective Verification:**
+- ✅ Confirmed: All chat prompts use first-person ("I'm wielding", "I have")
+- ✅ CharacterProfile: "You are a level 3 Rogue" (correct perspective for AI)
+
+### November 3, 2025: Spell Casting System
+
+**C++ Implementation:**
+- Exported `StartSpell()` from player.cpp (lines 1483-1525)
+- Added `CAST spell_id x y` DSL command parsing
+- `ExecuteCastSpell()` - validates spell memorized, checks mana, calls StartSpell() directly (no auto-pathing)
+- Uses direct function call pattern (same as ranged combat)
+
+**Python SpellAgent** (`tools/gap/agents/spell.py`):
+- Priority 9 (just below healing at 10)
+- Activates when Magic ≥20 (any class can cast if they have the stat)
+- Spell selection: Fireball (AoE), Lightning (fast), Firebolt (cheap)
+- Cooldown: 20 ticks between casts
+- Profile-aware logging: "Warrior Spell: Firebolt" vs "Spell: Lightning"
+
+**Files Modified:**
+- `Source/player.cpp/h` - Export StartSpell
+- `Source/gap/gap_intent.cpp/h` - CAST command + ExecuteCastSpell
+- `tools/gap/agents/spell.py` - NEW FILE (214 lines)
+- `tools/gap/orchestrator.py` - SpellAgent integration (priority 9)
+
+### November 3, 2025: Ranged Combat Fix
+
+**Problem**: Rogue with bow was running into melee range (face-tanking)
+
+**Root Cause**: `destAction = ACTION_ATTACKMON` triggers game engine auto-pathing, which creates movement paths even after `ClrPlrPath()`.
+
+**Solution**: Direct function calls instead of queuing actions
 
 ```cpp
-// ❌ OLD WAY - Triggers auto-pathing
-player.destAction = ACTION_ATTACKMON;
-player.destParam1 = monster_id;
-// Result: Engine creates path to target, companion runs to monster
-
 // ✅ NEW WAY - True shift-key behavior
 if (player.UsesRangedWeapon()) {
     StartRangeAttack(player, dir, monsterPos.x, monsterPos.y, true);
@@ -101,664 +147,357 @@ if (player.UsesRangedWeapon()) {
 // Result: Attack animation starts from current position, NO movement
 ```
 
-**Implementation Steps**:
-1. **Export functions from player.cpp** (Source/player.h:968-969):
-   - Moved `StartAttack()` and `StartRangeAttack()` OUT of anonymous namespace
-   - Added public declarations: `void StartAttack(Player&, Direction, bool)` and `void StartRangeAttack(Player&, Direction, WorldTileCoord, WorldTileCoord, bool)`
-
-2. **Call directly from GAP** (Source/gap/gap_network.cpp:202-212):
-   - Replaced `destAction = ACTION_ATTACKMON` with direct function calls
-   - Added range validation: bow ≤15 tiles, melee ≤1 tile
-   - Functions start attack animations **without creating movement paths**
-
-3. **Python agent tactics** (tools/gap/agents/combat.py:181-246):
-   - **4-10 tiles**: `AT x y` - Attack from current position (optimal bow range)
-   - **<4 tiles**: `MV away` - Kite backwards to safety
-   - **>10 tiles**: `MV toward` - Move to 8-tile optimal range first
-
-**Files Changed**:
-- `Source/player.h` - Export StartAttack/StartRangeAttack declarations
+**Files Changed:**
+- `Source/player.h` - Export StartAttack/StartRangeAttack (lines 968-969)
 - `Source/player.cpp` - Move functions out of anonymous namespace (lines 169-232)
 - `Source/gap/gap_network.cpp` - Direct function calls + range checks (lines 172-212)
-- `tools/gap/agents/combat.py` - Ranged positioning logic
+- `tools/gap/agents/combat.py` - Ranged positioning logic (lines 181-246)
 
-**Status**: ✅ **WORKING** - Companion now stands and shoots, maintains distance, kites when needed
+**Key Lesson**: For AI tactical control, call underlying action functions directly to bypass auto-pathing. Apply this pattern to spells, abilities, any position-critical action.
 
-**Apply This Pattern To**:
-- ✅ Ranged attacks (done)
-- 🔮 **Spell casting** (next) - Same issue will occur, use `StartSpell()` directly
-- 🎯 **Targeted abilities** - Any action that needs position control
+### November 3, 2025: Mutual Support System
 
-**Key Lesson**: `destAction` is for human input processing where auto-pathing is desired. For AI companions that need tactical positioning control, call the underlying action functions directly to get true "shift-key" behavior.
+**DROP Command** (C++):
+- `DROP <inv_slot>` - Drop item from inventory
+- `DROP GOLD <amount>` - Drop gold pile
+- Uses `FindAdjacentPositionForItem()` and `CMD_PUTITEM`
 
-### ✅ Mutual Support System (Nov 3, 2025)
+**Chat Item Detection** (Python):
+- Natural language: "give me a potion" → searches inventory → generates DROP command
+- Response: "Sure! Dropping a healing potion for you now."
 
-**Problem**: Players couldn't request items from companions, no cooperative gameplay.
+**Anti-Pickup Loop**:
+- LootAgent tracks `recently_dropped` positions
+- Items ignored for 10 seconds (200 ticks) at drop location
+- Prevents companion from immediately picking back up
 
-**Solution**: Built complete item sharing system with natural language requests.
-
-**Features Implemented**:
-1. **DROP Command** (C++ - `Source/gap/gap_intent.cpp`):
-   - `DROP <inv_slot>` - Drop item from inventory slot
-   - `DROP GOLD <amount>` - Drop gold pile
-   - Uses `FindAdjacentPositionForItem()` and `CMD_PUTITEM` network message
-   - Added to direct execution list (works in town + dungeon)
-
-2. **Chat Item Detection** (Python - `tools/gap/agents/chat.py`):
-   - Detects requests: "give me a potion", "drop gold", "share a health pot"
-   - Searches live inventory for requested item type
-   - Generates `DROP` command with correct slot
-   - Natural responses: "Sure! Dropping a healing potion for you now."
-
-3. **Anti-Pickup Loop** (Python - `tools/gap/agents/loot.py` + `orchestrator.py`):
-   - LootAgent tracks `recently_dropped` positions
-   - Orchestrator notifies LootAgent when DROP command issued
-   - Items ignored for 10 seconds (200 ticks) at drop position
-   - Prevents companion from immediately picking items back up
-
-**Usage Examples**:
-```
-You: "Can you give me a potion?"
-Companion: *drops healing potion* "Sure! Dropping a healing potion for you now."
-
-You: "Drop some gold"
-Companion: *drops 500 gold* "Here's 500 gold - spend it wisely!"
-
-You: "Need mana"
-Companion: "Sorry, no mana potions on me right now."
-```
-
-**Files Modified**:
-- `Source/gap/gap_intent.h/cpp` - DROP command parsing & execution
-- `tools/gap/agents/chat.py` - Item request detection & inventory lookup
+**Files Modified:**
+- `Source/gap/gap_intent.h/cpp` - DROP command
+- `tools/gap/agents/chat.py` - Item request detection
 - `tools/gap/agents/loot.py` - Recently dropped blacklist
-- `tools/gap/orchestrator.py` - Fixed duplicate chat responses, DROP tracking
+- `tools/gap/orchestrator.py` - DROP tracking
 
-**Technical Details**:
-- Inventory lookup uses DSL state: `game_state.get("inventory")` with slot mapping
-- Gold requires ≥100 to drop (drops up to 1000 or 50%)
-- Position-based blacklist (handles multiple items at same location)
-- Multi-message flow: DROP command on tick N, chat response on tick N+1
+---
 
-**Chat System Improvements**:
-- Fixed duplicate replies (removed ChatHandler call in orchestrator.py:510)
-- Messages >150 chars split at sentence boundaries
-- Multi-part responses queue via `pending_responses` and send over consecutive ticks
-- Natural conversation pacing instead of truncation or spam
+## Critical Design Principles
 
-### ✅ Town Agent Fixes (Nov 3, 2025)
+### 1. Companions as First-Class Players
 
-**Problem 1: NPC Interaction Loops**
-- Agents tried to move to NPC's exact tile position (e.g., Griswold at 62,63)
-- NPCs block their own tiles, causing infinite movement loops
-- Companion gets close (dist=2-3) but can't reach exact position
+**Rule**: AI companions must be indistinguishable from real multiplayer players to the game engine. Never create special case logic.
 
-**Solution**: Increase interaction range from `dist <= 1` to `dist <= 3` and use `IN {npc_id}` command instead of trying to move to blocked tile.
+**Examples:**
 
-**Files Fixed**:
-- `tools/gap/agents/town.py` - Pepin and Adria interaction distances (lines 60-106, 119-140)
-- `tools/gap/agents/griswold.py` - Griswold interaction distance (lines 119-153)
-
-**Problem 2: Griswold Selling Logic Unreachable**
-- Agent had early returns for `dist <= 3` (interact) and `dist > 3` (navigate)
-- Selling logic (lines 155-195) was **completely unreachable** - never executed
-- Agent opened shop then walked away, infinite loop
-
-**Root Cause**: Logic structure:
-```python
-if dist <= 3:
-    return interact_command  # Early return!
-if dist > 3:
-    return move_command      # Early return!
-# Lines below NEVER execute
-sell_logic_here()
-```
-
-**Solution**: Check shop status FIRST, only return early if shop NOT open:
-```python
-shop_is_open = "sm" in stores and len(stores.get("sm", [])) > 0
-
-if shop_is_open:
-    # Fall through to selling logic below (no early return)
-    pass
-elif dist <= 3:
-    return interact_command  # Open shop
-else:  # dist > 3
-    return move_command      # Navigate closer
-
-# Selling logic now reachable!
-sell_item_with_llm()
-```
-
-**Problem 3: Inventory Fullness Check Too Strict**
-- Shop opens, enters selling logic
-- Checks inventory: 16/40 = 40% full
-- Logic: `if inv_fullness <= 0.4: return None`
-- Returns None even though shop already open and has sellable items!
-
-**Solution**: If shop is already open, sell items regardless of inventory fullness. Fullness affects WEIGHT (urgency) but not whether to sell:
-```python
-else:
-    # Shop is already open, might as well sell even if inventory not full
-    weight = 0.25  # Low priority
-    urgency = "OPTIONAL"
-```
-
-**Files Changed**:
-- `tools/gap/agents/griswold.py` (lines 119-172)
-
-**Result**: Companion now properly navigates to NPCs, opens shops, and sells junk items without getting stuck in loops.
-
-**Key Lessons for Future Inventory/Shopping Work**:
-1. NPCs block their tiles - use interaction range ≥3, not exact positioning
-2. Check "already open" state BEFORE early returns, or logic becomes unreachable
-3. Separate "should activate" logic (inventory fullness for opening shop) from "execute" logic (sell once shop open)
-
-## Next Features to Implement
-
-### ✅ Spell Casting System Complete! (Nov 3, 2025)
-
-**Problem**: Sorcerer companions needed ranged magic attack capabilities similar to ranged physical attacks.
-
-**Solution**: Implemented complete spell casting system following the direct function call pattern.
-
-**Implementation Steps**:
-1. **Export StartSpell** (`Source/player.cpp:1483-1525`, `Source/player.h:970`):
-   - Moved `StartSpell()` out of anonymous namespace
-   - Added public declaration for GAP usage
-   - Function validates spell, checks mana, starts animation without auto-pathing
-
-2. **DSL Command** (`Source/gap/gap_intent.cpp:204-209`):
-   - Added `CAST spell_id x y` command parsing
-   - Format: `CAST 2 45 23` (cast Firebolt at position 45,23)
-
-3. **ExecuteCastSpell** (`Source/gap/gap_intent.cpp:589-639`, `gap_intent.h:53`):
-   - Validates player can cast (alive, not in animation)
-   - Checks spell is memorized (`_pMemSpells` bitmask)
-   - Validates mana available for spell
-   - Calls `StartSpell()` directly for position control
-   - Returns false with logging if validation fails
-
-4. **SpellAgent** (`tools/gap/agents/spell.py`):
-   - Priority 9 (just below healing at 10)
-   - **Stat-based activation**: Magic stat ≥20 (any class can cast - warriors can learn Town Portal, Healing, etc.)
-   - **Profile integration**: Uses `self.profile` for class-aware logging (e.g., "Warrior Spell: Firebolt" vs "Spell: Lightning")
-   - Checks mana ≥20% before casting
-   - Cooldown: 20 ticks between casts (prevents spam)
-   - **Spell Selection Logic**:
-     - **Fireball** (mana ≥40%, 3+ grouped enemies) - AoE damage, weight 0.9
-     - **Lightning** (mana ≥30%, distance ≤12) - Fast projectile, weight 0.8
-     - **Firebolt** (mana ≥20%) - Cheap, long range, weight 0.7
-   - Range validation: Ensures target within spell range before casting
-   - Weight boosts: +0.1 for 4+ hostiles, +0.05 for low HP targets
-   - **Design philosophy**: Like Diablo 1, any class can learn spells if they have the magic stat (Option B)
-
-5. **Orchestrator Integration** (`tools/gap/orchestrator.py:361-368`):
-   - Added spell_rec evaluation in decision loop
-   - Priority 9 multiplier (higher than combat 8/6)
-   - Placed after combat evaluation (lines after 359)
-
-**Files Modified**:
-- `Source/player.cpp` - Export StartSpell (lines 1483-1525)
-- `Source/player.h` - StartSpell declaration (line 970)
-- `Source/gap/gap_intent.h/cpp` - CAST command + ExecuteCastSpell (lines 204-209, 589-639)
-- `tools/gap/agents/spell.py` - Complete spell agent (new file, 214 lines)
-- `tools/gap/orchestrator.py` - SpellAgent integration (lines 16, 85, 100, 361-368)
-
-**Testing Status**:
-- ✅ Code complete and compiles
-- ✅ Profile-aware (uses CharacterProfile for class-context logging)
-- ⏳ Awaiting testing with any character with Magic ≥20 (Sorcerers, or high-level Warriors/Rogues with magic investment)
-- Current test saves: multi_0.sv (unknown class), multi_1.sv (Rogue, Magic <20)
-
-**Expected Behavior**:
-- Any character with Magic ≥20 casts spells from safe distance without auto-pathing
-- Conserves mana intelligently (won't cast below 20%)
-- Uses AoE (Fireball) for groups, single-target (Lightning/Firebolt) for isolated enemies
-- Logs show class context for non-casters: "Warrior Spell: Firebolt" vs "Spell: Lightning" for Sorcerers
-
-### 📦 Lootable Objects in Dungeons (High Priority)
-**Problem**: Currently only tracks ground loot (items dropped by monsters). Missing dungeon interactables:
-- Chests (wooden, trapped, locked)
-- Barrels (can contain items/gold)
-- Tombs/Sarcophagi (skeleton spawn + loot)
-- Shrines (buff effects)
-- Bookstands (lore/spells)
-
-**Implementation Needed**:
-1. **State Extraction** (`Source/gap/gap_state.cpp`):
-   - Add object detection similar to monster/item extraction
-   - Extract: object type, position, interactable state
-   - DSL format: `OBJ=type@x,y;...` (e.g., `OBJ=chest@45,23;barrel@46,25`)
-
-2. **Python Agent** (`tools/gap/agents/`):
-   - Create `exploration.py` or extend existing agents
-   - Priority: Chests > Barrels > Tombs
-   - Pathfinding: Navigate to object, send `IN {object_id}` to interact
-   - Safety: Check for nearby monsters before opening (avoid ambushes)
-
-3. **DSL Commands**: Reuse `IN {object_id}` command (same as NPC interaction)
-
-**Why Important**:
-- Major loot source (chests often have best items)
-- Exploration completeness (companions should open everything)
-- Tactical decisions (skip barrels in combat, open chests when safe)
-
-**Reference**: Object interaction uses same pattern as NPC interaction - use range ≥3, send `IN` command
-
-### 💰 Other Planned Features
-1. Gold tracking and economic decisions
-2. Equipment comparison and upgrades
-3. Multi-enemy threat prioritization
-4. Spell/ability cooldown management
-
-## GAP Protocol Data Structure (DSL Format)
-
-### Current DSL State Format (100-200 bytes):
-```
-T=12345 F=2 ME=34,18,72,33 PLYR=51,54 M=12@38,16,55,1;19@36,17,20,1 L=71@35,19,10;83@37,18,250
-```
-
-**Format Breakdown**:
-- `T=12345` - Game tick (timestamp)
-- `F=2` - Floor/level number (0=town, 1-16=dungeon)
-- `ME=34,18,72,33` - Companion: x, y, hp%, mp%
-- `PLYR=51,54` - Main player position (x, y)
-- `M=id@x,y,hp%,flags;...` - Monsters (semicolon-separated)
-  - flags: bit 0=hostile, bit 1=unique, bit 2=ranged
-- `L=id@x,y,value;...` - Loot items (semicolon-separated)
-
-### LLM Prompt Format (Generated by `dsl_parser.py`):
-```
-SUM ME=78,78 HP62 MP100 FL=1 PLYR=77,77 dist=2 NEAR: 38@79,78:100%^0 164@78,88:100%^0 LOOT: 27@77,74:14
-RISK=low SAFE_TILE=77,77
-GOAL explore floor_1
-MEM visited visited visited
-```
-
-**Risk Signals**:
-- `RISK=high/med/low` - Calculated from HP% and monster count
-- `SAFE_TILE=x,y` - Main player position (retreat target)
-- `BEST_LOOT=id@x,y:value` - Highest value item nearby
-
-### DSL Command Format (Agent → Game):
-```
-MV 51 54    # Move to coordinates
-AT 164      # Attack monster ID 164
-PK 27       # Pick up item ID 27
-SAY Hello   # Chat message
-```
-
-This compact format gives LLMs complete tactical context while using 5x fewer tokens than JSON!
-
-## Key Implementation Details
-- **Socket**: `/tmp/devilutionx-gap.sock`
-- **Build**: `-DENABLE_GAP=ON` compile flag
-- **Pathfinding**: `MakePlrPath()` + `NetSendCmdLoc()`
-- **Player ID**: `MyPlayerId >= MAX_PLRS` (unsigned)
-
-### MCP Agent Architecture:
-```
-┌─────────────┐    GAP Socket    ┌─────────────┐    HTTP API    ┌─────────────┐
-│   Diablo    │◄────────────────►│ MCP Server  │◄──────────────►│   Ollama    │
-│   (GAP)     │   JSON Messages  │ (Bridge)    │  Natural Lang  │  (LLM GPU)  │
-└─────────────┘                  └─────────────┘                └─────────────┘
-                                        │
-                                        ▼
-                                 ┌─────────────┐
-                                 │   Claude    │
-                                 │ Code (MCP)  │
-                                 └─────────────┘
-```
-
-**Key Components:**
-- **MCP Server**: Bridges GAP socket ↔ Ollama API  
-- **State Translator**: Game state → Natural language context
-- **Intent Parser**: LLM decisions → GAP intents
-- **Context Manager**: Maintain game session memory
-- **Prompt Templates**: Personality system & tactical guidance
-
-**Implementation Location**: `tools/gap/` directory for MCP server, prompts, and LLM integration tooling.
-
-### Testing & Known Issues
-- **Test agents**: See `tools/gap/` directory
-- **Known limitations**: Complex pathfinding struggles, spell casting not implemented
-- **Performance**: Varies by LLM model (qwen2.5:3b recommended)
-
-## Architectural Approaches
-
-### Companion Mode (POC Complete, Architecture Redesign Needed) ⚠️
-- **Concept**: Load saved character into multiplayer slot
-- **POC Success**: Chat, LLM decisions, combat AI, navigation all proven working
-- **Critical Bug**: Commands execute on wrong player due to network routing assumptions
-- **Root Cause**: GAP was bolted onto single-player control; needs proper entity control abstraction
-
-### Headless Peer Mode (Future)
-- **Concept**: Two separate game instances via TCP/IP
-- **Benefits**: Natural multiplayer, independent saves
-- **Status**: Planning phase
-
-### POC Evaluation Summary (Sept 2025)
-- ✅ **JSON Communication**: Fixed truncation with `num_predict: 200`
-- ✅ **LLM Integration**: Combat decisions, navigation, chat all working  
-- ✅ **Multi-Tech Stack**: DevilutionX ↔ GAP ↔ MCP ↔ Ollama successfully integrated
-- ✅ **AI Behavior**: Threat assessment, combat priorities, survival reflexes functional
-- ❌ **Architecture Limitation**: Network routing sends companion commands to wrong player
-- **Lesson Learned**: Need proper entity control abstraction for scalable companion system
-
-## Recent Protocol Enhancements
-
-### Phase 0 Complete ✅ 
-- **Intent Types**: `cast`, `pickup`, `use_potion`, `interact`, `path`, `explore`
-- **State Additions**: Belt info, spells, objects, exploration data
-- **Chat System**: Bidirectional LLM-powered conversation
-- **Safety Systems**: Python survival reflexes, emergency healing
-- **Navigation**: A* pathfinding with stuck detection
-
-### Chat Commands:
-- `!ai help` - Show commands
-- `!ai status` - Display state  
-- `!ai debug` - Debug info
-
-## Recent Updates
-
-### Enhanced Combat & AI Integration (Dec 2024) ✅
-- **Wired Navigation & Survival Systems**: Integrated `navigation.py` and `survival_reflexes.py` into `mcp_server.py`
-- **Combat Priority System**: Added smart target prioritization (low HP + close distance = high priority)
-- **Enhanced Combat Prompts**: Crystal clear attack guidance with threat levels ("ATTACK_NOW", "ATTACK", "IGNORE")
-- **Survival Override**: Emergency healing (<25% HP) and kiting (4+ enemies) override LLM decisions
-- **A* Pathfinding**: NavigationPlanner enhances LLM movement with robust obstacle avoidance
-- **Python Environment**: Fixed `setup.sh` and `pyproject.toml` for proper uv/venv compatibility
-
-### Chat Separation (Sept 2025)
-- Separated chat messages from state payloads
-- Reduced JSON size by ~30%
-- Instant chat responses without state bundling
-
-## Agent Architecture Best Practices
-
-### Character Profile Pattern (Recommended)
-
-**Problem**: Agents see raw stats (`S=20,38,15,20,2,0,1,3423`) but lack identity and role awareness. They don't understand "I'm a **warrior** so I prefer swords over bows" or "I'm a **rogue** so I should kite rather than tank."
-
-**Solution**: Initialize a `CharacterProfile` object on handshake from the first game state. This gives agents self-awareness about their class, role, playstyle, and equipment preferences.
-
-**Benefits**:
-- ✅ **Class-Appropriate Decisions**: Warriors prefer melee weapons, rogues prefer bows, sorcerers manage mana
-- ✅ **Smart Loot Evaluation**: Keep gear that matches character build, skip inappropriate items
-- ✅ **Context-Aware Shopping**: Buy heavy armor for warriors, light armor for rogues, staffs for sorcerers
-- ✅ **Enhanced Chat**: Companion talks with character identity ("I'm a level 3 Rogue with 4 HP potions ready!")
-- ✅ **Combat Tactics**: Melee classes rush in, ranged classes kite, casters manage positioning
-
-**Implementation Pattern**:
-```python
-# On first valid state (orchestrator initialization)
-if self.profile is None and state.get("stats"):
-    self.profile = CharacterProfile(state)
-
-    # Inject profile into all agents
-    for agent in self.agents:
-        agent.profile = self.profile
-
-    # Inject into chat handler
-    self.chat_handler.profile = self.profile
-
-# In agents - use profile for decisions
-if self.profile.should_keep_item("bw", "magic"):
-    # Warrior: False ("bows aren't my thing")
-    # Rogue: True ("bows are my specialty")
-
-# For combat tactics
-combat_context = self.profile.get_combat_context()
-# Warrior: "MELEE FIGHTER - Get close, tank damage"
-# Rogue: "RANGED ATTACKER - Keep distance, kite enemies"
-```
-
-**Example Profile Output**:
-```
-👤 Character Profile Created
-   Class: Rogue (level 2)
-   Role: Ranged DPS - high DEX, bow damage, hit-and-run tactics
-   Playstyle: ranged_dps
-   Stats: STR=20 DEX=38 MAG=15 VIT=20
-   Preferred weapons: bw
-   Preferred armor: la
-```
-
-**Real-World Impact**:
-- Warrior finding magic bow → "You should take this, I'm better with swords"
-- Rogue near healer → Buys HP potions (not mana - not a caster)
-- Sorcerer in combat → Stays at range, manages mana vs. warriors who rush in
-
-**Reference Implementation**: See `CHARACTER-PROFILE-SYSTEM.md` and `tools/gap/character_profile.py` (350 lines)
-
-**Status**: ✅ Implemented (Nov 2025) - Recommended pattern for all GAP agents
-
-## Development Environment
-
-### Quick Setup:
-```bash
-cd tools/gap
-./setup.sh              # Auto-setup with uv or traditional venv
-./dev.sh run mypassword  # Run enhanced MCP server  
-./dev.sh test           # Validate all systems
-```
-
-### Development Commands:
-- `./dev.sh run [password]` - Run enhanced MCP server
-- `./dev.sh combat [password]` - Run combat agent
-- `./dev.sh test` - Run validation tests
-- `./dev.sh format` - Format code with black
-- `./dev.sh lint` - Check code with ruff
-- `./dev.sh clean` - Clean logs and cache
-
-### Enhanced AI Features:
-- ⚔️ **Aggressive Combat**: AI prioritizes combat over exploration
-- 🎯 **Smart Targeting**: Low HP enemies first, threat-based prioritization  
-- 🚨 **Survival Reflexes**: Emergency healing and kiting override LLM
-- 🧭 **A* Navigation**: Robust pathfinding with waypoint chunking
-- 💬 **Natural Chat**: Bidirectional conversation with context awareness
-
-## Combat Debug Investigation History
-
-### Sept 2025: Command Routing Bug Identified ✅
-**Issue**: Companion AI generates correct intents but commands execute on wrong player
-**Root Cause**: GAP architecture evolved from single-player to companion mode without updating network command routing
-
-**Debug Evidence**:
-```
-GAP: GetControlledPlayer - controlled_slot=1 MyPlayerId=
-GAP: ExecuteMove - Controlling player 1 (name: Rodney) at pos (2,/) to target (53,44)
-⚔️ SENDING TO LLM: 5 monsters, priority target: ID 7 Skeleton (Action: ATTACK_NOW)
-🔍 RAW OLLAMA RESPONSE: {"intent": {"type": "intent", "action": "attack", "params": {"x": 76, "y": -1}}}
-```
-
-**Architecture Issue**:
-- ✅ `GetControlledPlayer()` correctly returns slot 1 (companion)
-- ✅ LLM generates valid attack intents for companion
-- ❌ `NetSendCmdLoc(companion_id, ...)` routes commands to main player instead of companion
-- **Fix needed**: Update GAP network command routing for proper player slot isolation
-
-### Dec 2024: Monster Visibility Investigation ✅ (RESOLVED)
-**Issue**: Companion not detecting monsters (resolved - was AI processing bug)
-**Solution**: Enhanced debug logging revealed companion receives full monster data correctly
-
-## Next Architecture: First-Class Entity Control System
-
-### Problem with Current Architecture
-- GAP was designed for single-player AI control (AI controls main player)
-- Companion mode was bolted on using multiplayer slots
-- Network command routing assumes single player context
-- Results in commands executing on wrong player
-
-### Proposed Solution: Entity Controller Abstraction
-```
-Human Input    → EntityController[0] → Player 0 Actions
-GAP Protocol   → EntityController[1] → Player 1 Actions  
-GAP Protocol   → EntityController[2] → Player 2 Actions
-GAP Protocol   → EntityController[3] → Player 3 Actions
-```
-
-### Benefits
-- **Clean separation**: Each entity has its own control interface
-- **Scalable**: Support 1→3+ companions without architectural changes  
-- **No network hacks**: Direct entity manipulation instead of fighting multiplayer routing
-- **Diablo 2 style**: Similar to mercenary/hireling system
-- **Future-proof**: Supports different control types (human, AI, scripted)
-
-### Implementation Notes
-- Create `EntityController` abstract interface
-- `HumanController` for keyboard/mouse input
-- `GapAIController` for LLM/GAP protocol
-- `EntityManager` to coordinate all controllers
-- Direct player state manipulation without network commands
-
-## Critical Design Principle: Companions as First-Class Players ⚡
-
-**FUNDAMENTAL RULE**: AI companions must be indistinguishable from real players to the game engine. Never create special case logic - instead, ensure companions follow the same initialization and systems as human players.
-
-### ✅ Success Story: Universal Damage System (Sept 2025)
-**Problem**: Companions made hit sounds but took no damage due to engine restricting damage to `MyPlayerId` only.
-
-**Wrong Approach**: Patch compilation flags, add GAP-specific conditions
-**Correct Solution**: Remove player ID restriction entirely - ALL players take damage from monster attacks
-
+✅ **Universal Damage System:**
 ```cpp
-// ❌ BAD: Special cases and restrictions  
-if (player.getId() == MyPlayerId) {
-    ApplyPlrDamage(...);  // Only human player
-}
-#ifdef ENABLE_GAP
-else if (gap::IsCompanion(player.getId())) {
-    ApplyPlrDamage(...);  // Special companion case
-}
-#endif
-
-// ✅ GOOD: Universal behavior
-// Apply damage to any valid player in the game (multiplayer-like behavior)
+// ✅ GOOD: Works for any player
 ApplyPlrDamage(DamageType::Physical, player, 0, 0, dam);
+
+// ❌ BAD: Special cases
+if (player.getId() == MyPlayerId) {
+    ApplyPlrDamage(...);  // Only human
+}
 ```
 
-**Result**: Companions now take damage exactly like real players, no special handling required.
+✅ **Missile Damage** (Nov 3, 2025):
+- Fixed companions being invulnerable to fireballs/arrows/acid/lightning
+- Removed `if (&player == MyPlayer)` restriction in `missiles.cpp` (lines 332-334, 1138-1150)
+- Now companions take damage from ANY missile source, just like real players
 
-### Design Guidelines
-1. **No Special Cases**: If you're writing `#ifdef ENABLE_GAP` to handle companion behavior differently, you're probably doing it wrong
-2. **Multiplayer Parity**: Ask "How does this work for player 2 in real multiplayer?" and make companions work the same way
-3. **Universal Systems**: Engine systems should work for ANY player, not just `MyPlayerId`
-4. **Proper Initialization**: Ensure companions go through same player initialization as joining multiplayer players
-
-### Code Review Questions
+**Code Review Questions:**
 - Does this code treat companions differently than multiplayer players?
 - Would this work if player 2 joined a multiplayer game?
 - Are we adding complexity instead of removing restrictions?
-- Is the engine properly recognizing the companion as a valid player entity?
 
-### ✅ Missile Damage System (Nov 3, 2025)
+### 2. Direct Function Calls for Tactical Control
 
-**Problem**: After fixing melee damage (Sept 2025), discovered companions had two more invulnerability bugs:
-1. Companion arrows didn't damage monsters (hit detection worked, damage calculation happened, but `ApplyMonsterDamage` was never called)
-2. Companions were invulnerable to ALL monster missiles (fireballs, arrows, acid, lightning, traps)
+**Problem**: `destAction` queuing triggers auto-pathing (good for humans, bad for AI)
 
-**Root Cause**: Same `MyPlayer` restriction pattern in `missiles.cpp`:
+**Solution**: Call underlying action functions directly with last parameter `true` (shift-key behavior)
 
+**Pattern:**
 ```cpp
-// ❌ BAD: Only MyPlayer can deal/take missile damage
-if (&player == MyPlayer)
-    ApplyMonsterDamage(damageType, monster, dam);
+// Ranged attack (no pathfinding)
+StartRangeAttack(player, dir, targetX, targetY, true);
 
-if (&player == MyPlayer) {
-    ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
-}
+// Melee attack (no pathfinding)
+StartAttack(player, dir, true);
+
+// Spell casting (no pathfinding)
+StartSpell(player, dir, targetX, targetY, spell_id, true);
 ```
 
-**The Fix**: Applied first-class player principle to two functions in `missiles.cpp`:
+**When to use**: Any action requiring tactical positioning (ranged, spells, abilities)
 
-1. **MonsterMHit** (line 332-334) - Ranged attacks hitting monsters:
-```cpp
-// Apply damage for ANY player (companions and multiplayer players)
-// Remove MyPlayer restriction to enable first-class player behavior
-ApplyMonsterDamage(damageType, monster, dam);
+### 3. Hybrid Architecture (LLM + Python + C++)
+
+**LLM**: Strategic decisions (target selection, chat, shopping preferences)
+**Python**: Tactical execution (kiting math, emergency healing, stat comparison)
+**C++**: Pure execution (pathfinding, combat calculations, rendering)
+
+See [GAP-PROJECT-SUMMARY.md - What's LLM vs What's Code](./GAP-PROJECT-SUMMARY.md#whats-llm-vs-whats-code) for detailed breakdown.
+
+---
+
+## Development Workflow
+
+### Adding a New Agent
+
+1. **Create agent file** in `tools/gap/agents/`
+2. **Inherit from BaseAgent** (`tools/gap/agents/base.py`)
+3. **Implement methods**:
+   - `should_activate(state)` - When should this agent run?
+   - `_evaluate_impl(state)` - Return `AgentResponse` with command + weight
+4. **Add to orchestrator** (`tools/gap/orchestrator.py`):
+   - Import agent
+   - Initialize in `__init__`
+   - Add to agent list with priority
+5. **Test in isolation** before integrating
+
+**Example Skeleton:**
+```python
+from .base import BaseAgent, AgentResponse
+
+class MyNewAgent(BaseAgent):
+    def __init__(self, **kwargs):
+        super().__init__(name="MyNew", **kwargs)
+
+    def should_activate(self, state):
+        # When should this agent run?
+        return state.get("some_condition")
+
+    def _evaluate_impl(self, state):
+        # What action should we take?
+        return AgentResponse(
+            command="MV 50 50",
+            weight=0.6,
+            reasoning="MyNew: Going somewhere"
+        )
 ```
 
-2. **PlayerMHit** (lines 1138-1150) - Monster missiles hitting players:
-```cpp
-// Apply damage for ANY player (companions and multiplayer players)
-// Remove MyPlayer restriction to enable first-class player behavior
-ApplyPlrDamage(damageType, player, 0, 0, dam, deathReason);
+### Adding a New DSL Command
+
+**C++ Side:**
+1. **Parse command** in `Source/gap/gap_intent.cpp` (add to `ParseIntent()`)
+2. **Implement executor** (e.g., `ExecuteMyCommand()`)
+3. **Add to command list** in `ProcessIntent()`
+
+**Python Side:**
+1. **Generate command** from agent logic
+2. **Test with logs** to verify parsing/execution
+
+**Example Flow:**
+```
+Python: "MYCMD 42 100"
+   ↓
+C++: ParseIntent() → creates Intent with type=MYCMD, params={42, 100}
+   ↓
+C++: ExecuteMyCommand() → performs game action
+   ↓
+Logs: "GAP: ExecuteMyCommand - param1=42, param2=100"
 ```
 
-**Result**:
-- ✅ Companion arrows now kill monsters (ranged damage works)
-- ✅ Companions take damage from fireballs, arrows, acid, lightning, traps (no longer invulnerable)
-- ✅ Companions are truly mortal - can die from any damage source like real players
+### Debugging Tips
 
-**Weird Behavior Before Fix**:
-- Companion could be stabbed to death by skeleton (melee ✅)
-- Companion could tank fireballs to the face without damage (missiles ❌)
-- Companion could shoot skeletons all day without killing them (ranged ❌)
+**Follow the flow:**
+1. **Python logs** - Agent decision + command generation
+2. **DSL command** - What was sent over socket?
+3. **C++ logs** - Was it parsed correctly?
+4. **Game behavior** - Did it execute as expected?
 
-**Files Modified**:
-- `Source/missiles.cpp` (lines 332-334, 1138-1150)
+**Common Issues:**
+- **Command not executing**: Check if it's in `ProcessIntent()` switch
+- **Wrong player executing**: Verify `GetControlledPlayer()` returns companion slot
+- **Auto-pathing interfering**: Use direct function calls instead of `destAction`
+- **LLM hallucination**: Add grammar constraint (GBNF) to force valid syntax
 
-## Technical Debt
-- ~~**PRIORITY: Implement first-class entity control system**~~ ✅ Fixed with universal damage system
-- Replace custom JSON with nlohmann/json
-- Add GAP config file
-- Implement state delta compression
-- ~~Fix MCP server movement bug~~ ✅ Fixed with navigation integration
-- ~~Fix JSON truncation in LLM responses~~ ✅ Fixed with `num_predict: 200`
-- ~~Investigate GAP companion monster visibility~~ ✅ Resolved - monsters visible to companion
+---
 
-## Known Restrictions (Pending Design Decision)
+## DSL Protocol Reference
 
-The following `MyPlayer` restrictions were found during Nov 3, 2025 audit but **not fixed** pending game design decisions:
+### State Format (Compact, 100-200 bytes)
 
-### Interactive Objects (`objects.cpp`)
+```
+T=12345 F=2 ME=34,18,72,33 PLYR=51,54 M=12@38,16,55,1;19@36,17,20,1 L=71@35,19,10
+```
 
-**1. Shrines** (~30 shrine types affected):
-- **Current**: All shrines check `if (&player != MyPlayer) return;` before applying effects
-- **Impact**: Companions cannot activate shrines at all
-- **Examples**: Mysterious, Hidden, Gloomy, Weird, Stone, Religious, Enchanted, Thaumaturgic, etc.
-- **Trade-offs**: Many shrines have downsides (stat swaps, item degradation, curses)
-- **Question**: Should companions be able to use shrines autonomously? Some are risky.
+**Fields:**
+- `T=tick` - Game tick (timestamp)
+- `F=floor` - Floor/level (0=town, 1-16=dungeon)
+- `ME=x,y,hp%,mp%` - Companion position and vitals
+- `PLYR=x,y` - Main player position (for following)
+- `M=id@x,y,hp%,flags;...` - Monsters (flags: bit 0=hostile, 1=unique, 2=ranged)
+- `L=id@x,y,value;...` - Loot items
+- `EQ=slot:type;...` - Equipped gear with stats
+- `INV=type@slot;...` - Inventory items with stats
+- `NPC=type@x,y,id;...` - Town NPCs
+- `GOLD=amount` - Current gold
 
-**2. Fountains** (3 types):
-- **Current**: Blood Fountain, Purifying Fountain, Tear Fountain all restrict to `MyPlayer`
-- **Impact**: Companions cannot drink from fountains (HP/Mana restore)
-- **Location**: `objects.cpp` lines 3223, 3239, 3279
-- **Question**: Intentional resource limit or should companions access fountains?
+**Equipment Stats Format:**
+- **Weapon**: `sw_m:3-6+2:15:45/60` (type:minDam-maxDam+bonus:toHit:dur/maxDur)
+- **Armor**: `la_m:25+5:40/50` (type:AC+statBonus:dur/maxDur)
 
-**3. Barrels**:
-- **Current**: `if (!forcebreak && &player != MyPlayer) return;` (line 3459-3460)
-- **Impact**: Companions won't break barrels during exploration unless forced
-- **Question**: Should companions autonomously break barrels for loot/spawns?
+### Command Format (Output by agents)
 
-### Edge Cases (`items.cpp`)
+```
+MV x y              # Move to coordinates
+AT x y              # Attack position (ranged, no pathfinding)
+AT id               # Attack monster ID (melee, paths to target)
+PK id               # Pick up item
+CAST spell_id x y   # Cast spell at position
+REPAIR slot         # Repair equipped item (0-6)
+DROP slot           # Drop inventory item
+DROP GOLD amount    # Drop gold
+IN npc_id           # Interact with NPC
+SAY message         # Chat with player
+SELL slot           # Sell inventory item
+BUY store item_idx  # Buy from store
+ID slot             # Identify item at Cain
+```
 
-**4. Death During Equipment Recalc**:
-- **Current**: `if (&player == MyPlayer && (player._pHitPoints >> 6) <= 0)` (line 2637)
-- **Impact**: If companion HP drops to 0 during stat recalculation, might not trigger death properly
-- **Likelihood**: Very rare (requires HP to hit 0 during `CalcPlrItemVals` call)
-- **Question**: Worth fixing for completeness?
+---
 
-**5. Auric Amulet (Gold Limit)**:
-- **Current**: Uses global `MaxGold` variable, only updated for `MyPlayer` (line 2754)
-- **Impact**: Companions don't get increased gold limit from Auric Amulet
-- **Complexity**: Would require per-player gold limit tracking (architectural change)
-- **Question**: Keep as-is (global limit) or redesign?
+## Technical Debt & Known Issues
 
-### Design Considerations
+### High Priority
 
-**First-Class Player Principle** says: Remove all restrictions, treat companions like multiplayer players.
+**Equipment Upgrade Workflow:**
+- [ ] Create UpgradeAgent to use ItemComparator.find_upgrades()
+- [ ] Implement EQUIP command (C++ side - swap inventory → equipped)
+- [ ] Mark old equipment for selling after upgrade
 
-**Game Balance Perspective** says: Some restrictions prevent:
-- Companions making risky shrine decisions (could weaken themselves)
-- Double-dipping fountain resources (both players healing from same source)
-- Companions triggering barrel spawns at inopportune times
-- Companions "stealing" player loot from interactive objects
+**Cain Multi-Identification:**
+- [ ] Loop through all unidentified items, not just first one
+- [ ] Prioritize class-appropriate items (bows for Rogue, swords for Warrior)
 
-**Recommendation**: Review each restriction individually based on gameplay impact rather than blanket "fix all" approach.
+### Medium Priority
 
-## Python
+**Dungeon Objects:**
+- [ ] Add chest/barrel/shrine detection to DSL state
+- [ ] Create exploration agent for object interaction
+- [ ] Safety checks (don't open chest with 5 monsters nearby)
 
-when working with python, use unix line endings, not windows.
+**Economic Intelligence:**
+- [ ] Track gold budget (essential vs luxury purchases)
+- [ ] Value assessment (save gold for better gear vs buy potions now)
+
+### Known Restrictions (Pending Decisions)
+
+**Shrines** (30+ types):
+- Current: All shrines check `if (&player != MyPlayer) return;`
+- Impact: Companions cannot activate shrines at all
+- Question: Should companions use shrines autonomously? Many have downsides (stat swaps, curses)
+
+**Fountains** (3 types):
+- Current: Blood/Purifying/Tear fountains restrict to `MyPlayer`
+- Impact: Companions cannot drink from fountains
+- Question: Intentional resource limit or should companions access?
+
+**Barrels**:
+- Current: `if (!forcebreak && &player != MyPlayer) return;`
+- Impact: Companions won't break barrels during exploration
+- Question: Should companions autonomously break barrels for loot/spawns?
+
+See `Source/objects.cpp` for details.
+
+---
+
+## Development Environment
+
+### Setup (First Time)
+
+```bash
+# 1. Build game with GAP enabled
+cd /home/mental/projects/DevilutionX
+mkdir build && cd build
+cmake .. -DENABLE_GAP=ON
+cmake --build . --target devilutionx -j4
+
+# 2. Setup Python environment
+cd ../tools/gap
+./setup.sh              # Auto-setup with uv or traditional venv
+source venv/bin/activate  # If using venv
+
+# 3. Install Ollama and models
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5:3b
+ollama pull llama3.1:8b
+```
+
+### Daily Development
+
+```bash
+# Quick rebuild after C++ changes
+cd /home/mental/projects/DevilutionX/build
+cmake --build . --target devilutionx -j4
+
+# Run game + agent
+./devilutionx --companion-save multi_1.sv --companion-slot 1
+
+# In separate terminal
+cd ../tools/gap
+python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b --password "foo"
+```
+
+### Development Scripts
+
+```bash
+cd tools/gap
+
+./dev.sh run [password]  # Run enhanced MCP server
+./dev.sh test           # Validate all systems
+./dev.sh format         # Format code with black
+./dev.sh lint           # Check code with ruff
+./dev.sh clean          # Clean logs and cache
+```
+
+---
+
+## Python Notes
+
+- **Line endings**: Always use `\n` (Unix), never `\r\n` (Windows)
+- **Platform**: Developed on Linux, uses Unix domain sockets
+- **Python version**: 3.9+ required
+
+---
+
+## Chat Commands (In-Game)
+
+```
+!ai help      # Show available commands
+!ai status    # Display companion state
+!ai debug     # Show debug information
+```
+
+---
+
+## File Structure
+
+```
+Source/gap/              # C++ GAP integration
+├── gap_dsl.cpp          # DSL state encoder
+├── gap_intent.cpp       # DSL command parser
+├── gap_network.cpp      # Socket IPC + command execution
+└── gap_stores.cpp       # Store interaction helpers
+
+tools/gap/               # Python agent system
+├── orchestrator.py      # Multi-agent coordinator
+├── dsl_parser.py        # DSL state parser
+├── memory_store.py      # SQLite persistent memory
+├── character_profile.py # Class-aware behavior
+├── item_comparator.py   # Equipment upgrade detection
+└── agents/              # Specialized agents
+    ├── base.py          # BaseAgent class
+    ├── combat.py        # Combat decisions
+    ├── healing.py       # Potion usage
+    ├── loot.py          # Item pickup
+    ├── chat.py          # Conversation
+    ├── spell.py         # Spell casting
+    ├── town.py          # Pepin, Adria
+    ├── griswold.py      # Selling, repair
+    └── cain.py          # Item identification
+```
+
+---
+
+*Last Updated: November 4, 2025*
+*For architecture overview, see [GAP-PROJECT-SUMMARY.md](./GAP-PROJECT-SUMMARY.md)*
