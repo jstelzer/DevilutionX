@@ -97,6 +97,7 @@ class ChatHandler:
         self.thread = None
         self.game_context = {}  # Store latest game state for context
         self.profile = None  # CharacterProfile (injected by orchestrator)
+        self.personality = None  # PersonalityStore (injected by orchestrator)
 
         logger.info(f"ChatHandler initialized (LLM: {use_llm}, model: {model})")
 
@@ -202,10 +203,39 @@ class ChatHandler:
                 if self.profile:
                     context_str += f" Carrying {self.profile.inventory_count}/40 items. Belt: {self.profile.belt_summary}."
 
+            # Build personality context from memories
+            personality_context = ""
+            if self.personality:
+                # Get recent memories and traits
+                try:
+                    personality_data = self.personality.load_personality()
+                    traits = personality_data.get("traits", {})
+                    memories = personality_data.get("memories", [])[:3]  # Last 3 memories
+
+                    # Add trait context
+                    if traits:
+                        trait_strs = []
+                        for name, data in traits.items():
+                            trait_strs.append(f"{name.replace('_', ' ')}: {data['value']}")
+                        if trait_strs:
+                            personality_context += "Personality: " + ", ".join(trait_strs) + ". "
+
+                    # Add memorable recent experiences
+                    if memories:
+                        personality_context += "Recent experiences: "
+                        mem_strs = []
+                        for mem in memories:
+                            mem_strs.append(mem["description"])
+                        personality_context += "; ".join(mem_strs) + ". "
+                except Exception as e:
+                    logger.debug(f"Could not load personality for chat: {e}")
+
             # Natural conversation prompt - relaxed personality with class awareness
             prompt = f"""You're an adventurer fighting through Diablo's dungeons with your friend. You're brave but not reckless, helpful but not a servant. You have opinions, crack jokes, and aren't afraid to be sarcastic when things get rough. You talk like a real person, not a formal assistant.
 
 {context_str}
+
+{personality_context}
 
 Your friend says: "{message}"
 

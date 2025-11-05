@@ -45,7 +45,8 @@ class ShoppingAgent(BaseAgent):
 
         # If we need potions but healer shop isn't open, defer to TownAgent
         # (TownAgent will navigate to Pepin and open his shop)
-        if hp_potions < 3 and "hl" not in stores:
+        # Threshold: 4 or fewer potions (companion says "running low" at 3)
+        if hp_potions <= 4 and "hl" not in stores:
             logger.debug(f"🛒 Shopping: Need potions ({hp_potions}) but healer shop closed - deferring to TownAgent")
             return False
 
@@ -81,7 +82,8 @@ class ShoppingAgent(BaseAgent):
         hp_potions = hp_potions_belt + hp_potions_inv
 
         # Check if we need to buy health potions (ONLY if healer shop is already open)
-        if hp_potions < 3 and "hl" in stores:
+        # Threshold: 4 or fewer potions
+        if hp_potions <= 4 and "hl" in stores:
             # Look for health potions at healer
             healer_items = stores["hl"]
             hp_items = [item for item in healer_items if item["type"] == "hp"]

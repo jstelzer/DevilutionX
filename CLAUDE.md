@@ -70,6 +70,71 @@ See [GAP-PROJECT-SUMMARY.md - TODO Section](./GAP-PROJECT-SUMMARY.md#todo-featur
 
 ## Recent Changes Log
 
+### November 4, 2025: Personality Persistence System ✅
+
+**Phase 1 Complete - Core Infrastructure:**
+
+Implemented SQLite-backed personality system enabling companion AI to remember experiences and grow across sessions.
+
+**Bootstrap Pattern**: Same concept as CLAUDE.md bootstrapping AI assistant state → personality DB bootstraps companion state.
+
+**Implementation Details:**
+- **Schema** (`tools/gap/schema/personality.sql`):
+  - `personality_traits` - Evolving traits (risk_tolerance, player_relationship) with confidence levels
+  - `memories` - Episodic events (deaths, victories, gifts) with emotional impact (-1.0 to 1.0)
+  - `learned_strategies` - Success/failure tracking with confidence scores
+  - `prompt_injections` - Dynamic context injection into agent prompts
+  - `session_reflections` - LLM-generated end-of-session summaries
+
+- **PersonalityStore Class** (`tools/gap/personality_store.py`, ~312 lines):
+  - `load_personality()` - Load traits/memories/strategies on startup
+  - `update_trait()` - Modify personality traits with context
+  - `add_memory()` - Record significant events with emotional impact
+  - `add_strategy()` - Track what works/doesn't work, calculate confidence
+  - `get_prompt_context()` - Generate personality context for agent prompts
+  - `save_session_reflection()` - End-of-session LLM summary
+
+- **Orchestrator Integration** (`tools/gap/orchestrator.py`):
+  - Personality initialization on startup
+  - Session stats tracking (battles, deaths, victories, near_deaths, gifts, levels_cleared)
+  - SIGINT/SIGTERM signal handlers for graceful shutdown
+  - `_shutdown_handler()` - Save state and generate reflection on Ctrl+C
+  - `_save_session_reflection()` - LLM reflects on gameplay session before exit
+
+**Example Usage Flow:**
+```python
+# On startup
+personality.load_personality()  # Load traits, memories, strategies
+
+# During gameplay
+personality.add_memory("death", "Killed by Butcher", -0.8, "level_2", "Butcher")
+personality.add_strategy("facing_butcher", "retreat_to_stairs", success=True)
+personality.update_trait("risk_tolerance", "cautious", 0.8, "Nearly died to Butcher")
+
+# On Ctrl+C
+# LLM generates: "Learned to retreat from tough enemies. Player is supportive."
+personality.save_session_reflection(reflection, stats)
+```
+
+**Testing:**
+- ✅ All tests pass (`test_personality.py`)
+- ✅ Database creation and schema verified
+- ✅ Persistence across restarts confirmed
+- ✅ Graceful shutdown with reflection works
+
+**Next Steps (Phase 2):**
+- Integrate personality updates into combat/chat/healing agents
+- Add prompt injection to BaseAgent (inject personality context into agent decisions)
+- Test personality continuity across multiple gameplay sessions
+
+**Files Created/Modified:**
+- `tools/gap/schema/personality.sql` - Database schema (64 lines)
+- `tools/gap/personality_store.py` - PersonalityStore class (312 lines)
+- `tools/gap/test_personality.py` - Test suite (178 lines)
+- `tools/gap/orchestrator.py` - Signal handlers + session stats (modified lines 13-14, 32, 67-82, 129-221)
+
+---
+
 ### November 4, 2025: Equipment Stats & Auto-Repair
 
 **Item Stat Tracking:**

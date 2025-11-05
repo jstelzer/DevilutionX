@@ -243,7 +243,95 @@ memory.query_spatial(x, y, radius=20)  # "You've been here before"
 - Recall quest objectives across sessions
 - Learn from deaths ("Butcher killed me last time - be careful")
 
-### 5. Grammar-Constrained Output (GBNF)
+### 5. Character-Specific Personality Persistence
+
+**Problem:** AI companions should remember experiences and grow across sessions - but each character should have distinct memories
+
+**Solution:** SQLite personality database with character-scoped memories
+
+**Character Identity Format:**
+```
+Rogue level 5    → "Rogue_5"
+Warrior level 3  → "Warrior_3"
+Sorcerer level 12 → "Sorcerer_12"
+```
+
+**What Gets Remembered (Per Character):**
+```python
+# Episodic memories with emotional impact
+personality.add_memory(
+    "death",
+    "Killed by Butcher on level 2",
+    emotional_impact=-0.9,
+    location="level_2",
+    actor="Butcher"
+)
+
+# Learned strategies with success tracking
+personality.add_strategy(
+    "facing_butcher",
+    "retreat_to_stairs",
+    success=True  # 2 wins, 0 losses = 100% confidence
+)
+
+# Evolving personality traits
+personality.update_trait(
+    "risk_tolerance",
+    "cautious",
+    confidence=0.8,
+    context="Nearly died to Butcher in first session"
+)
+```
+
+**Database Schema (5 Tables):**
+- **personality_traits**: Evolving traits per character (risk_tolerance, player_relationship)
+- **memories**: Episodic events with emotional impact (-1.0 to +1.0)
+- **learned_strategies**: Success/failure tracking with confidence scores
+- **prompt_injections**: Dynamic context for agent decisions
+- **session_reflections**: LLM-generated end-of-session summaries
+
+**Key Feature: Character Isolation**
+
+Each companion character maintains completely separate memories:
+- Your **Rogue_5** remembers kiting tactics, bow gifts from player, cautious playstyle
+- Your **Warrior_3** remembers face-tanking failures, close calls, aggressive tactics
+- Your **Sorcerer_8** starts fresh, builds own magical combat memories
+
+**Why This Matters:**
+- **Realistic:** Just like each save file is separate, each character's personality is unique
+- **Class-appropriate:** Rogue learns ranged tactics, Warrior learns melee strategies
+- **Relationship tracking:** Player's generosity to one character doesn't affect another
+- **Multiple playthroughs:** Run 3 different characters, each with distinct personalities
+
+**Example Session Flow:**
+```bash
+# Play as Rogue companion
+python3 orchestrator.py  # Detects "Rogue_5", loads Rogue memories
+# ... gameplay ...
+# Ctrl+C: "Learned to keep distance. Player shared potions."
+
+# Later, play as Warrior companion
+python3 orchestrator.py  # Detects "Warrior_3", loads Warrior memories
+# ... gameplay ...
+# Ctrl+C: "Tanking works better with shield. Need more HP potions."
+
+# View Rogue's memories only
+python3 view_personality.py gap_personality.db Rogue_5
+```
+
+**Graceful Shutdown:**
+On Ctrl+C, the orchestrator:
+1. Generates LLM reflection on the session
+2. Saves all memories/traits for that character
+3. Closes database cleanly
+
+**Chat Integration:**
+Companion responses reference recent memories:
+- After Butcher death: "I'm being careful after that Butcher incident"
+- After player gift: "Thanks! You've been generous with potions today"
+- Context-aware personality: Cautious Rogue vs Aggressive Warrior
+
+### 6. Grammar-Constrained Output (GBNF)
 
 **Problem:** LLMs sometimes hallucinate invalid commands
 
@@ -371,6 +459,46 @@ Chat Agent (with profile context):
 [After combat]
 Chat Agent: "That was close! I'm at 40% HP, heading back to town."
 ```
+
+### Personality Persistence (Character-Specific)
+```
+[Playing as Rogue_5 companion - Session 1]
+Orchestrator: "📚 PersonalityStore initialized for Rogue_5"
+[Combat: Nearly dies to Butcher, survives at 15% HP]
+Memory: "Won tough battle on floor 2 (lowest HP: 15%)" [impact: +0.7]
+
+[Ctrl+C to exit]
+Reflection: "Learned to keep distance from Butcher. Kiting works!"
+✅ Shutdown complete. Personality saved.
+
+[Playing as Warrior_3 companion - Session 1]
+Orchestrator: "📚 PersonalityStore initialized for Warrior_3"
+[Combat: Face-tanks Butcher, dies at level 2]
+Memory: "Died in combat on floor 2" [impact: -0.9]
+
+[Ctrl+C to exit]
+Reflection: "Need better armor before facing unique monsters."
+✅ Shutdown complete. Personality saved.
+
+[Later: View database]
+$ python3 view_personality.py gap_personality.db
+
+🎭 CHARACTERS: Rogue_5, Warrior_3
+
+[Rogue_5] Memories:
+  😊 Won tough battle on floor 2 (lowest HP: 15%)
+     Impact: +0.7 | Confidence building
+
+[Warrior_3] Memories:
+  💔 Died in combat on floor 2
+     Impact: -0.9 | Learning from mistakes
+
+[Playing as Rogue_5 again - Session 2]
+Orchestrator: "📚 Loaded personality: 0 traits, 1 memory"
+Chat Agent (referencing memory): "I remember that close call with Butcher..."
+```
+
+**Key Feature:** Each character maintains completely separate memories. Your Rogue doesn't remember your Warrior's death, and vice versa!
 
 ---
 
@@ -836,7 +964,7 @@ Edit `tools/gap/orchestrator.py`:
 ### Build Instructions
 ```bash
 # 1. Clone DevilutionX with GAP
-git clone https://github.com/[your-fork]/DevilutionX.git
+git clone https://github.com/jstelzer/DevilutionX.git
 cd DevilutionX
 git checkout GAP
 
@@ -863,27 +991,27 @@ python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b
 
 ## License & Attribution
 
-**DevilutionX:** GPL-2.0 (original project)
+**DevilutionX:** Sustainable Use License (original project)
 **GAP Extensions:** [Your License] (your additions)
 
 **Citation:**
 ```
 GAP: Game Agent Protocol for LLM-Powered AI Companions
-Author: [Your Name]
+Author: [Jason Stelzer]
 Year: 2025
-Repository: [GitHub URL]
+Repository: [http://github.com/jstelzer/DevilutionX/]
 ```
 
 ---
 
 ## Contact & Links
 
-- **GitHub:** [Your Profile]
-- **LinkedIn:** [Your Profile]
+- **GitHub:** [https://github.com/jstelzer]
+- **LinkedIn:** [https://www.linkedin.com/in/jason-stelzer-9b5a422/]
 - **YouTube:** [Demo Video]
-- **Email:** [Your Email]
+- **Email:** [mental@neverlight.com]
 
 ---
 
-*Last Updated: November 2, 2025*
+*Last Updated: November 4, 2025*
 *Version: 0.9 (Pre-release)*

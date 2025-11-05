@@ -40,7 +40,8 @@ class TownAgent(BaseAgent):
         mp_potions = sum(1 for slot in belt if slot == "mp")
 
         # Priority 1: Navigate to Pepin (healer) if health potions low
-        if hp_potions < 3:
+        # Trigger at 4 or fewer potions (companion says "running low" at 3)
+        if hp_potions <= 4:
             # If stores are visible (we're near vendor), defer to Shopping agent
             if "hl" in stores and len(stores["hl"]) > 0:
                 return AgentResponse(
@@ -59,16 +60,20 @@ class TownAgent(BaseAgent):
 
                 if dist <= 3:
                     # Close enough - interact to open shop
+                    # High weight - this is critical (low potions!)
+                    urgency_weight = 0.9 if hp_potions <= 1 else 0.8
                     return AgentResponse(
                         command=f"IN {pepin['id']}",
-                        weight=0.75,
+                        weight=urgency_weight,
                         reasoning=f"Town: Interacting with Pepin for potions ({hp_potions}/8)"
                     )
                 elif dist > 3:
                     # Too far - navigate to Pepin
+                    # High weight to beat movement agent (priority 5 × 0.8 = 4.0 beats movement's 3.0)
+                    urgency_weight = 0.9 if hp_potions <= 1 else 0.8
                     return AgentResponse(
                         command=f"MV {npc_x} {npc_y}",
-                        weight=0.7,
+                        weight=urgency_weight,
                         reasoning=f"Town: Going to Pepin for potions ({hp_potions}/8, dist={dist})"
                     )
             else:

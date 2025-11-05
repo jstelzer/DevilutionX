@@ -3,6 +3,7 @@
 #include "../player.h"
 #include "../monster.h"
 #include "../items.h"
+#include "../objects.h"   // For Objects array and object functions
 #include "../diablo.h"
 #include "../towners.h"
 #include "../spelldat.h"  // For SpellID enum
@@ -159,6 +160,49 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
 
     if (!first_item) {
         dsl << " L=" << items.str();
+    }
+
+    // Objects: OBJ=id@x,y,type;...
+    // Types: ch=chest, tc=trapped_chest, dr=door, ba=barrel, sh=shrine
+    // Only include objects within light radius for exploration
+    std::ostringstream objects;
+    bool first_object = true;
+
+    for (int i = 0; i < ActiveObjectCount; i++) {
+        const auto& obj = Objects[ActiveObjects[i]];
+        Point objPos = obj.position;
+
+        int dx = std::abs(objPos.x - playerPos.x);
+        int dy = std::abs(objPos.y - playerPos.y);
+        int distance = static_cast<int>(std::sqrt(dx * dx + dy * dy));
+
+        // Only include objects within light radius AND visible
+        if (distance <= lightRadius && IsTileLit(objPos)) {
+            std::string type_code = "";
+
+            if (obj.IsChest()) {
+                type_code = obj.IsTrappedChest() ? "tc" : "ch";
+            } else if (obj.isDoor()) {
+                type_code = "dr";
+            } else if (obj.IsBarrel()) {
+                type_code = obj.isExplosive() ? "xb" : "ba";  // xb=explosive barrel
+            } else if (obj.IsShrine()) {
+                type_code = "sh";
+            }
+
+            // Only include interactable objects
+            if (!type_code.empty() && obj.canInteractWith()) {
+                if (!first_object) objects << ";";
+                first_object = false;
+
+                objects << static_cast<int>(ActiveObjects[i]) << "@"
+                        << objPos.x << "," << objPos.y << "," << type_code;
+            }
+        }
+    }
+
+    if (!first_object) {
+        dsl << " OBJ=" << objects.str();
     }
 
     // Belt: B=type,type,type,... (8 slots)

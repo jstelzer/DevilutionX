@@ -10,6 +10,8 @@ import struct
 import logging
 import time
 import argparse
+import signal
+import sys
 from typing import Optional, List, Tuple
 from agents.base import AgentResponse
 from agents.combat import CombatAgent
@@ -25,8 +27,10 @@ from agents.griswold import GriswoldAgent
 from agents.cain import CainAgent
 from agents.adria import AdriaAgent
 from agents.chat import ChatAgent
+from agents.exploration import ExplorationAgent
 from dsl_parser import parse_dsl_state
 from memory_store import MemoryStore, prepare_companion_state_for_db
+from personality_store import PersonalityStore
 from chat_handler import ChatHandler
 from character_profile import CharacterProfile
 
@@ -61,15 +65,33 @@ class AgentOrchestrator:
 
         self.sock = None
         self.memory = MemoryStore()
+        self.personality = None  # PersonalityStore (initialized after character profile is known)
+        self.personality_data = {}  # Will be populated after character_id is known
         self.last_think_time = 0
         self.last_state = None
         self.current_context = None  # Track town vs dungeon for model switching
         self.profile = None  # Character profile (initialized on handshake)
 
+        # Session statistics for end-of-session reflection
+        self.session_stats = {
+            "battles": 0,
+            "deaths": 0,
+            "victories": 0,
+            "gifts_received": 0,
+            "levels_cleared": 0,
+            "near_deaths": 0
+        }
+
         # Failure tracking to prevent infinite USE loops
         self.last_command = None
         self.last_hp = 100
         self.failed_use_count = 0
+
+        # Personality tracking state
+        self.in_combat = False  # Track if currently in combat
+        self.combat_start_tick = 0
+        self.combat_start_hp = 100
+        self.lowest_hp_in_combat = 100  # Track lowest HP during combat for near-death detection
 
         # Hysteresis tracking to prevent ping-ponging
         self.last_decision_agent = None
@@ -92,6 +114,7 @@ class AgentOrchestrator:
         self.griswold = GriswoldAgent(model=model, ollama_url=ollama_url)
         self.cain = CainAgent(model=model, ollama_url=ollama_url)
         self.adria = AdriaAgent(model=model, ollama_url=ollama_url)
+        self.exploration = ExplorationAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
         self.chat = ChatAgent(memory=self.memory, model=chat_model, ollama_url=ollama_url)
 
@@ -99,9 +122,11 @@ class AgentOrchestrator:
         self.agents = [
             self.combat, self.spell, self.healing, self.loot,
             self.stats, self.town, self.shopping,
-            self.inventory, self.griswold, self.cain, self.adria, self.movement,
+            self.inventory, self.griswold, self.cain, self.adria, self.exploration, self.movement,
             self.chat
         ]
+
+        # Note: Personality and profile will be injected after character_id is known (on first state)
 
         # Chat handler (runs in thread, non-blocking)
         self.chat_handler = ChatHandler(
@@ -111,12 +136,17 @@ class AgentOrchestrator:
             ollama_url=ollama_url
         )
 
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._shutdown_handler)
+        signal.signal(signal.SIGTERM, self._shutdown_handler)
+
         logger.info("🎯 Agent Orchestrator initialized")
         logger.info(f"  Agents: Combat, Healing, Loot, Stats, Town, Shopping, Inventory, Griswold, Cain, Adria, Movement, Chat")
         logger.info(f"  Dungeon model: {self.dungeon_model} (fast combat)")
         logger.info(f"  Town model: {self.town_model} (sophisticated interactions)")
         logger.info(f"  Think interval: {think_interval}s")
         logger.info(f"  Strategy: Context-based model switching (automatic)")
+        logger.info(f"  Personality: Will initialize after character identity is known")
 
     def connect(self):
         """Connect to GAP Unix socket"""
@@ -128,6 +158,80 @@ class AgentOrchestrator:
         except Exception as e:
             logger.error(f"❌ Failed to connect to {self.socket_path}: {e}")
             raise
+
+    def _shutdown_handler(self, signum, frame):
+        """Graceful shutdown on Ctrl+C or SIGTERM"""
+        logger.info("\n🛑 Graceful shutdown initiated...")
+
+        try:
+            # Generate session reflection if meaningful session occurred and personality initialized
+            if self.personality and (self.session_stats["battles"] > 0 or self.session_stats["deaths"] > 0):
+                logger.info("📖 Generating session reflection...")
+                self._save_session_reflection()
+            elif not self.personality:
+                logger.info("📖 Personality not initialized (session too short)")
+            else:
+                logger.info("📖 No meaningful session to reflect on (no battles/deaths)")
+
+            # Close database connections
+            if self.personality:
+                self.personality.close()
+            self.memory.close()
+
+            # Close socket
+            if self.sock:
+                self.sock.close()
+
+            logger.info("✅ Shutdown complete. Personality and memories saved.")
+
+        except Exception as e:
+            logger.error(f"⚠️ Error during shutdown: {e}")
+        finally:
+            sys.exit(0)
+
+    def _save_session_reflection(self):
+        """Ask LLM to reflect on session before exit"""
+        try:
+            # Build reflection prompt
+            prompt = f"""Session ending. Reflect briefly on this gameplay session:
+
+Battles fought: {self.session_stats['battles']}
+Deaths: {self.session_stats['deaths']}
+Victories: {self.session_stats['victories']}
+Near-death experiences: {self.session_stats['near_deaths']}
+Gifts from player: {self.session_stats['gifts_received']}
+Levels cleared: {self.session_stats['levels_cleared']}
+
+In 1-2 sentences: What should you remember for next time? What did you learn?"""
+
+            # Use chat model for reflection (better at summaries)
+            import requests
+            payload = {
+                "model": self.town_model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 100
+                }
+            }
+
+            resp = requests.post(self.ollama_url, json=payload, timeout=15.0)
+            resp.raise_for_status()
+            reflection = resp.json().get("response", "Session complete.").strip()
+
+            # Save reflection
+            self.personality.save_session_reflection(reflection, self.session_stats)
+
+            logger.info(f"📖 Reflection: {reflection}")
+
+        except Exception as e:
+            logger.error(f"⚠️ Failed to generate reflection: {e}")
+            # Save with generic reflection
+            self.personality.save_session_reflection(
+                "Session complete - stats recorded.",
+                self.session_stats
+            )
 
     def recv_message(self) -> Optional[str]:
         """Receive length-prefixed message from socket"""
@@ -391,6 +495,15 @@ class AgentOrchestrator:
             score = loot_rec.weight * priority * danger_mult
             recommendations.append(("Loot", loot_rec, score))
 
+        # EXPLORATION - open chests, doors, barrels (priority 4, between loot and movement)
+        exploration_rec = self.exploration.evaluate(state)
+        if exploration_rec and exploration_rec.weight > 0.0:
+            # Priority 4 for exploration (chests/doors/barrels)
+            # Dampened when in danger (don't open chests while surrounded)
+            danger_mult = 0.3 if danger > 0.6 else 1.0
+            score = exploration_rec.weight * 4 * danger_mult
+            recommendations.append(("Exploration", exploration_rec, score))
+
         # MOVEMENT - fallback, always evaluates
         movement_rec = self.movement.evaluate(state)
         if movement_rec and movement_rec.weight > 0.0:
@@ -470,15 +583,108 @@ class AgentOrchestrator:
             logger.info(f"   Alternatives: {alternatives}")
         logger.debug(f"   Reasoning: {response.reasoning}")
 
+        # Track personality-relevant events
+        self._track_personality_events(state, agent_name, response.command, hp_pct)
+
         # Track command for failure detection
         self.last_command = response.command
         self.last_hp = hp_pct
 
         return response.command
 
+    def _track_personality_events(self, state: dict, agent_name: str, command: str, hp_pct: int):
+        """Track personality-relevant events (combat, near-deaths, victories, gifts)"""
+        mobs = state.get("mobs", [])
+        floor = state.get("floor", 0)
+        tick = state.get("tick", 0)
+        me_x, me_y, _, _ = state["me"]
+
+        # Combat tracking
+        if mobs and not self.in_combat:
+            # Combat started
+            self.in_combat = True
+            self.combat_start_tick = tick
+            self.combat_start_hp = hp_pct
+            self.lowest_hp_in_combat = hp_pct
+            self.session_stats["battles"] += 1
+            logger.debug(f"⚔️  Combat started (HP: {hp_pct}%)")
+
+        elif self.in_combat:
+            # Currently in combat - track lowest HP
+            if hp_pct < self.lowest_hp_in_combat:
+                self.lowest_hp_in_combat = hp_pct
+
+            # Check for death (HP dropped to 0 or very low)
+            if hp_pct <= 5 and self.last_hp > 5:
+                self.session_stats["deaths"] += 1
+                self.personality.add_memory(
+                    memory_type="death",
+                    description=f"Died in combat on floor {floor}",
+                    emotional_impact=-0.9,
+                    location=f"level_{floor}",
+                    actor="monster",
+                    context={"hp_before": self.last_hp, "tick": tick}
+                )
+                logger.info(f"💀 Death recorded (floor {floor})")
+
+            # Check for near-death experience (survived below 25% HP)
+            elif self.lowest_hp_in_combat < 25 and hp_pct > 30:
+                self.session_stats["near_deaths"] += 1
+                logger.debug(f"😰 Near-death: survived at {self.lowest_hp_in_combat}% HP")
+
+            # Combat ended (no more monsters)
+            if not mobs:
+                self.in_combat = False
+                combat_duration = tick - self.combat_start_tick
+
+                # Victory if we survived
+                if hp_pct > 5:
+                    self.session_stats["victories"] += 1
+
+                    # Record memorable victories (either long fights or close calls)
+                    if combat_duration > 100 or self.lowest_hp_in_combat < 40:
+                        impact = 0.7 if self.lowest_hp_in_combat < 25 else 0.5
+                        self.personality.add_memory(
+                            memory_type="victory",
+                            description=f"Won tough battle on floor {floor} (lowest HP: {self.lowest_hp_in_combat}%)",
+                            emotional_impact=impact,
+                            location=f"level_{floor}",
+                            actor="self",
+                            context={
+                                "duration_ticks": combat_duration,
+                                "lowest_hp": self.lowest_hp_in_combat,
+                                "start_hp": self.combat_start_hp
+                            }
+                        )
+                        logger.info(f"🏆 Victory recorded (floor {floor}, lowest HP: {self.lowest_hp_in_combat}%)")
+
+                logger.debug(f"⚔️  Combat ended (duration: {combat_duration} ticks)")
+
+        # Track gifts from player (DROP commands via chat)
+        if command.startswith("DROP ") and not command.startswith("DROP GOLD"):
+            # This is a response to player request - it's a gift
+            self.session_stats["gifts_received"] += 1
+            self.personality.add_memory(
+                memory_type="gift",
+                description=f"Received item from player on floor {floor}",
+                emotional_impact=0.8,
+                location=f"level_{floor}" if floor > 0 else "town",
+                actor="Player",
+                context={"command": command, "tick": tick}
+            )
+            logger.debug(f"🎁 Gift memory recorded")
+
     def warmup_llm(self):
-        """Warm up the LLM by loading the model into memory"""
+        """
+        Warm up the LLM by loading the model into memory.
+
+        This is done BEFORE connecting to the game to eliminate the initial lag
+        that happens when the companion first spawns. The first LLM inference can
+        take several seconds (model loading), which would cause the companion to
+        stand idle. By warming up first, the companion responds immediately.
+        """
         logger.info("🔥 Warming up LLM (loading model into memory)...")
+        logger.info("   This prevents initial lag when companion spawns...")
         try:
             import requests
             resp = requests.post(
@@ -492,7 +698,7 @@ class AgentOrchestrator:
                 timeout=60.0
             )
             resp.raise_for_status()
-            logger.info("✅ LLM warmed up and ready")
+            logger.info("✅ LLM warmed up and ready - companion will be responsive immediately")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to warm up LLM: {e}")
@@ -500,11 +706,12 @@ class AgentOrchestrator:
 
     def run(self):
         """Main orchestrator loop"""
-        self.connect()
-
-        # Warm up LLM before starting
+        # Warm up LLM BEFORE connecting (avoids initial lag when companion joins)
         if not self.warmup_llm():
             logger.warning("⚠️  LLM warmup failed, but continuing anyway...")
+
+        # Connect to game (this triggers companion spawn/join)
+        self.connect()
 
         # Start chat handler thread
         self.chat_handler.start()
@@ -546,11 +753,21 @@ class AgentOrchestrator:
                 if self.profile is None and state.get("stats"):
                     logger.info("🔍 Initializing character profile from first state...")
                     self.profile = CharacterProfile(state)
-                    # Share profile with all agents
+
+                    # Initialize personality store with character-specific ID
+                    character_id = f"{self.profile.class_name}_{self.profile.level}"
+                    logger.info(f"📚 Initializing PersonalityStore for {character_id}")
+                    self.personality = PersonalityStore(character_id=character_id)
+                    self.personality_data = self.personality.load_personality()
+
+                    # Share profile and personality with all agents
                     for agent in self.agents:
                         agent.profile = self.profile
-                    # Share profile with chat handler
+                        agent.personality = self.personality
+
+                    # Share profile and personality with chat handler
                     self.chat_handler.profile = self.profile
+                    self.chat_handler.personality = self.personality
                 elif self.profile:
                     # Update profile on state changes (level ups, etc.)
                     if self.profile.update_stats(state):

@@ -474,3 +474,4 @@ tools/gap/gap_memory.db-shm
 tools/gap/gap_memory.db-wal
 gap_memory.*
 *.MPQ
+tools/gap/*.db

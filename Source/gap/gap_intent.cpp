@@ -264,6 +264,13 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         intent.action = "belt_refill";
         iss >> intent.param_inv_slot >> intent.param_slot;
 
+    } else if (cmd == "REPAIR") {
+        // REPAIR body_slot_index
+        // Example: REPAIR 4  (repair left hand weapon, body slot 4)
+        // Body slots: 0=head, 4=hand_left, 5=hand_right, 6=chest
+        intent.action = "repair_item";
+        iss >> intent.param_slot;
+
     } else if (cmd == "DROP") {
         // DROP inv_slot OR DROP GOLD amount
         // Example: DROP 5  (drop item from inventory slot 5)
@@ -349,6 +356,8 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteAddStat(intent.param_kind);
     } else if (intent.action == "belt_refill") {
         return ExecuteBeltRefill(intent.param_inv_slot, intent.param_slot);
+    } else if (intent.action == "repair_item") {
+        return ExecuteRepairItem(intent.param_slot);
     } else if (intent.action == "drop_item") {
         return ExecuteDropItem(intent.param_inv_slot);
     } else if (intent.action == "drop_gold") {
@@ -847,6 +856,7 @@ void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
             gap_intent.action == "repair" ||
             gap_intent.action == "identify" ||
             gap_intent.action == "belt_refill" ||
+            gap_intent.action == "repair_item" ||
             gap_intent.action == "drop_item" ||
             gap_intent.action == "drop_gold"
         );
@@ -1062,6 +1072,71 @@ bool GapIntentProcessor::ExecuteBeltRefill(int invSlot, int beltSlot) {
 
     std::cout << "GAP Belt: Moved item from inv slot " << invSlot
               << " to belt slot " << beltSlot << std::endl;
+
+    return true;
+}
+
+bool GapIntentProcessor::ExecuteRepairItem(int bodySlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Repair: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    // Map body slot index to INVLOC enum
+    // Python sends: 0=head, 4=hand_left, 5=hand_right, 6=chest
+    // C++ uses: INVLOC_HEAD=0, INVLOC_HAND_LEFT=4, INVLOC_HAND_RIGHT=5, INVLOC_CHEST=3
+    inv_body_loc slot;
+    if (bodySlot == 0) {
+        slot = INVLOC_HEAD;
+    } else if (bodySlot == 4) {
+        slot = INVLOC_HAND_LEFT;
+    } else if (bodySlot == 5) {
+        slot = INVLOC_HAND_RIGHT;
+    } else if (bodySlot == 6 || bodySlot == 3) {
+        slot = INVLOC_CHEST;
+    } else {
+        std::cerr << "GAP Repair: Invalid body slot: " << bodySlot << std::endl;
+        return false;
+    }
+
+    // Get the item in that body slot
+    Item& item = player->InvBody[slot];
+    if (item.isEmpty()) {
+        std::cerr << "GAP Repair: No item in body slot " << bodySlot << std::endl;
+        return false;
+    }
+
+    // Check if item needs repair
+    if (item._iDurability >= item._iMaxDur) {
+        std::cerr << "GAP Repair: Item already at full durability" << std::endl;
+        return false;
+    }
+
+    // Calculate repair cost (same formula as stores.cpp AddStoreHoldRepair)
+    int due = item._iMaxDur - item._iDurability;
+    int cost;
+    if (item._iMagical != ITEM_QUALITY_NORMAL && item._iIdentified) {
+        cost = 30 * item._iIvalue * due / (item._iMaxDur * 100 * 2);
+        if (cost == 0) cost = 1;
+    } else {
+        cost = item._ivalue * due / (item._iMaxDur * 2);
+        cost = std::max(cost, 1);
+    }
+
+    // Check if player can afford it
+    if (player->_pGold < cost) {
+        std::cerr << "GAP Repair: Not enough gold (need " << cost << ", have " << player->_pGold << ")" << std::endl;
+        return false;
+    }
+
+    // Repair the item
+    std::cout << "GAP Repair: Repairing " << item._iIName
+              << " (durability " << item._iDurability << "/" << item._iMaxDur
+              << ") for " << cost << " gold" << std::endl;
+
+    item._iDurability = item._iMaxDur;
+    player->_pGold -= cost;
 
     return true;
 }

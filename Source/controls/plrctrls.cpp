@@ -384,6 +384,14 @@ void CheckPlayerNearby()
 			continue;
 		const int mx = player.position.future.x;
 		const int my = player.position.future.y;
+
+		// Debug: Check why companion isn't targetable for Heal Other
+		if (spl == SpellID::HealOther && player.plractive) {
+			LogVerbose("FindPlayerUnderCursor: Checking {} at ({},{}) - dPlayer={} lit={} hp={} active={}",
+				player._pName, mx, my, dPlayer[mx][my], IsTileLit(player.position.future),
+				player._pHitPoints >> 6, player.plractive);
+		}
+
 		if (dPlayer[mx][my] == 0
 		    || !IsTileLit(player.position.future)
 		    || (player._pHitPoints == 0 && spl != SpellID::Resurrect))

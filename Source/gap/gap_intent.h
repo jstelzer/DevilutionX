@@ -63,6 +63,7 @@ private:
     bool ExecuteIdentify(int invSlot);
     bool ExecuteAddStat(const std::string& statName);
     bool ExecuteBeltRefill(int invSlot, int beltSlot);
+    bool ExecuteRepairItem(int bodySlot);
     bool ExecuteDropItem(int invSlot);
     bool ExecuteDropGold(int amount);
 };

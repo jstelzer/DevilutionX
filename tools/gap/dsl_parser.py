@@ -39,6 +39,7 @@ def parse_dsl_state(line: str) -> Dict:
         "player": None,  # Main player position (x, y) if companion
         "mobs": [],
         "loot": [],
+        "objects": [],  # Objects: [{"id": 15, "x": 45, "y": 30, "type": "ch", "dist": 5}, ...]
         "belt": [],  # Belt slots: ["hp", "mp", "em", ...]
         "inventory": [],  # Inventory items: [{"type": "hp", "slot": 5, "quality": "normal", "identified": True}, ...]
         "inv_count": 0,  # Total items in inventory
@@ -139,6 +140,36 @@ def parse_dsl_state(line: str) -> Dict:
                     })
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse loot: {loot_str} - {e}")
+                    continue
+
+        # Parse objects: OBJ=id@x,y,type;...
+        # Type codes: ch=chest, tc=trapped_chest, dr=door, ba=barrel, xb=explosive_barrel, sh=shrine
+        if m := re.search(r'OBJ=([^A-Z\s]+)', line):
+            object_data = m.group(1)
+            for obj_str in object_data.split(';'):
+                if not obj_str:
+                    continue
+
+                try:
+                    obj_id, rest = obj_str.split('@')
+                    parts = rest.split(',')
+
+                    x, y = int(parts[0]), int(parts[1])
+                    obj_type = parts[2] if len(parts) > 2 else "unknown"
+
+                    # Calculate distance
+                    me_x, me_y, _, _ = state["me"]
+                    dist = abs(x - me_x) + abs(y - me_y)
+
+                    state["objects"].append({
+                        "id": int(obj_id),
+                        "x": x,
+                        "y": y,
+                        "type": obj_type,
+                        "dist": dist,
+                    })
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse object: {obj_str} - {e}")
                     continue
 
         # Parse belt: B=hp,mp,em,em,hp,hp,rj,em (8 slots)
