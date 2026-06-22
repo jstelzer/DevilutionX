@@ -56,6 +56,10 @@
 #include "utils/str_split.hpp"
 #include "utils/utf8.hpp"
 
+#ifdef ENABLE_GAP
+#include "gap/gap_chat.h"
+#endif
+
 #define ValidateField(logValue, condition)                    \
 	do {                                                      \
 		if (!(condition)) {                                   \
@@ -75,6 +79,10 @@
 	} while (0)
 
 namespace devilution {
+
+#ifdef ENABLE_GAP
+extern bool gGapHeadless;  // defined in diablo.cpp
+#endif
 
 void EventFailedPacket(const char *playerName)
 {
@@ -2451,6 +2459,14 @@ size_t OnString(const TCmd &cmd, size_t maxCmdSize, Player &player)
 
 	if (gbBufferMsgs == 0)
 		SendPlrMsg(player, playerMessage);
+
+#ifdef ENABLE_GAP
+	// On the AI's own client, forward incoming chat from OTHER players to the
+	// orchestrator so it can respond. The control.cpp hook only fires for
+	// locally-typed chat, which the headless AI never produces (sidecar leftover).
+	if (gGapHeadless && &player != MyPlayer)
+		ProcessGAPChatCommand(playerMessage);
+#endif
 
 	const size_t nullSize = str.size() != playerMessage.size() ? 1 : 0;
 	return headerSize + playerMessage.size() + nullSize;
