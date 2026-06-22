@@ -24,6 +24,12 @@ class GriswoldAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(name="Griswold", **kwargs)
+        # Repairs we can't afford: body_index we tried to repair but gold didn't
+        # drop (the engine rejected it). Stops her wedging at the smith forever.
+        self.unaffordable_repairs = set()
+        self._pending_repair_slot = None  # slot we issued REPAIR for last tick
+        self._gold_at_repair = None       # gold when we issued it
+        self._last_seen_gold = None       # to detect when she gains gold
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """
@@ -93,8 +99,30 @@ class GriswoldAgent(BaseAgent):
         gris_x, gris_y = griswold["x"], griswold["y"]
         dist = max(abs(gris_x - me_x), abs(gris_y - me_y))
 
-        # PRIORITY 1: Repair damaged equipment
-        damaged_items = self._find_damaged_equipment(state)
+        # Detect a repair that didn't go through: last tick we issued REPAIR but
+        # gold didn't drop -> the engine rejected it (can't afford). Mark the slot
+        # unaffordable so we stop looping at the smith.
+        if self._pending_repair_slot is not None:
+            if gold >= self._gold_at_repair:
+                self.unaffordable_repairs.add(self._pending_repair_slot)
+                logger.info(
+                    f"Griswold: can't afford repair of slot {self._pending_repair_slot} "
+                    f"(gold {gold} unchanged); deferring until we have more gold"
+                )
+            self._pending_repair_slot = None
+
+        # If we've gained gold since last tick (sold something, looted a pile),
+        # retry the repairs we previously deferred as unaffordable.
+        if (self.unaffordable_repairs and self._last_seen_gold is not None
+                and gold > self._last_seen_gold):
+            self.unaffordable_repairs.clear()
+        self._last_seen_gold = gold
+
+        # PRIORITY 1: Repair damaged equipment (skip ones we can't afford yet)
+        damaged_items = [
+            d for d in self._find_damaged_equipment(state)
+            if d[3] not in self.unaffordable_repairs
+        ]
         if damaged_items:
             slot_name, item, dur_pct, body_index = damaged_items[0]  # Most damaged
 
@@ -109,7 +137,11 @@ class GriswoldAgent(BaseAgent):
                     reasoning=f"Griswold: Going to repair {slot_name} ({urgency})"
                 )
 
-            # At Griswold - repair the item
+            # At Griswold - repair the item. Record the attempt so next tick we
+            # can tell whether it actually went through (gold dropped) or was
+            # rejected for lack of gold (gold unchanged -> defer it).
+            self._pending_repair_slot = body_index
+            self._gold_at_repair = gold
             weight = 0.8 if dur_pct < 30.0 else 0.65
             logger.info(f"Griswold: Repairing {slot_name} ({item['type']}, {dur_pct:.0f}% durability)")
             return AgentResponse(
