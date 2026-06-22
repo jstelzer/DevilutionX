@@ -26,6 +26,14 @@ class TransitionAgent(BaseAgent):
         my_floor = state.get("floor")
         player_floor = state.get("player_floor")
         stairs = state.get("stairs") or []
+        # Stay and help if the fight is survivable; only leave (to follow/retreat)
+        # when low on HP AND out of potions.
+        if state.get("mobs"):
+            hp_pct = state.get("me", [0, 0, 100, 100])[2]
+            has_potions = any(s in ("hp", "rj") for s in state.get("belt", []))
+            doomed = hp_pct <= 30 and not has_potions
+            if not doomed:
+                return False
         # Only when we know the player's floor, it differs from ours, and there
         # are level-transition triggers to act on. (Walking to the player's
         # cross-floor coordinates is meaningless — we must change levels ourselves.)

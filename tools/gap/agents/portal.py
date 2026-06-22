@@ -50,6 +50,16 @@ class PortalAgent(BaseAgent):
         if not theirs:
             return False
 
+        # Combat nuance: stay and help if the fight is survivable; only break off
+        # to follow/retreat through the portal when we're low on HP AND have no
+        # potions to recover (i.e. we'd likely die). Otherwise help, don't flee.
+        if state.get("mobs"):
+            hp_pct = state.get("me", [0, 0, 100, 100])[2]
+            has_potions = any(s in ("hp", "rj") for s in state.get("belt", []))
+            doomed = hp_pct <= 30 and not has_potions
+            if not doomed:
+                return False
+
         # Case A — already separated: the player is on a different floor and
         # their portal here leads to them. Step through to catch up.
         if player_floor != my_floor:
