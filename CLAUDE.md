@@ -89,6 +89,70 @@ See [GAP-PROJECT-SUMMARY.md - TODO Section](./GAP-PROJECT-SUMMARY.md#todo-featur
 
 ---
 
+## GAP-TRUE-MP: Headless Client Architecture (active work, this branch)
+
+> Branch `GAP-TRUE-MP`. The goal: make the AI a **true second player**, not a
+> local slot hack.
+
+### Why
+Today the companion is a local player slot in the single human client. The
+engine loads/simulates exactly ONE level (the human's), so the companion can't
+be on a different level — a "leash" (`diablo.cpp` `LoadGameLevelSyncPlayerEntry`)
+teleports it onto the human's level on every transition. That blocks independent
+behavior (e.g. portal to town to re-arm while the human keeps fighting) and forces
+a pile of `MyPlayer`-gated workarounds.
+
+### The plan
+The AI runs its **own headless `devilutionx` client** that joins the human's
+**TCP multiplayer game on localhost** as a real player 2. Each client runs its
+own simulation with its own loaded level → the single-level constraint vanishes,
+and the leash + companion-slot injection get **retired**. The headless client
+owns the GAP DSL socket. State syncs over the engine's normal `NetSendCmd` pipe;
+localhost keeps latency negligible as long as we never block the game loop.
+
+### Engine facts (verified)
+- `HeadlessMode` (Source/headless_mode.hpp) already exists but is set only in
+  tests; it gates **rendering/assets**, NOT window/audio creation. Two ways to go
+  headless: gate `init_create_window()`/`snd_init()` (`diablo.cpp:1283`,`:1340`)
+  behind `!HeadlessMode`, OR run with `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy`
+  (no engine change — SDL fakes a window, asserts pass, render is a no-op).
+- TCP provider exists (`Source/dvlnet/tcp_*`). Non-interactive join =
+  `SNetInitializeProvider(SELCONN_TCP, gameData)` + `SNetJoinGame("127.0.0.1:6112",
+  password, &playerId)`, replacing the `UiSelectProvider`/`UiSelectGame` block in
+  `InitMulti` (`multi.cpp:510-520`). Set `gbSelectProvider=false`,
+  `gbIsMultiplayer=true`.
+- Hero loads via `gSaveNumber = ParseSaveNumber("multi_1.sv")` before `NetInit`,
+  consumed at `multi.cpp:530` (`pfile_read_player_from_save`). `MyPlayerId` is
+  assigned by the host handshake (`base.cpp` `HandleAccept`) — do NOT hard-code.
+- Menus to bypass (mirror demo mode's non-interactive start, `menu.cpp:164`/`111`):
+  `UiMainMenuDialog`, `UiSelHeroMultDialog`, `UiSelectProvider`, `UiSelectGame`.
+  `SNetInitializeProvider` already auto-skips the hero dialog in headless
+  (`storm_net.cpp:131`).
+- GAP pump is ALREADY in the authoritative tick (`diablo.cpp:3577 ProcessIntents`,
+  `:3584 OnGameTick`) and packets at `:985` — a real joining client reaches them
+  for free.
+
+### The catch (do not forget)
+True 2-client MP is **lockstep-deterministic**. The current GAP code drives the
+companion with DIRECT calls (`StartAttack`, `AutoGetItem`, direct state pokes)
+that work with one client but will **desync** two. AI actions must route through
+the network command layer (`NetSendCmd*`) — i.e. actually honor the "companions
+as first-class players, no special cases" principle. The leash era let us cheat;
+this era makes us honest.
+
+### Increments
+1. **Headless boot stable** — `--headless` flag sets `HeadlessMode=true`; boot via
+   dummy SDL drivers; verify a clean startup (no window, no crash).
+2. **Non-interactive TCP join** — bypass menus, wire `SNetInitializeProvider` +
+   `SNetJoinGame`, load `multi_1` via `gSaveNumber`; confirm it joins a hosted
+   localhost game and runs the loop headless.
+3. **Network-correct GAP execution** — move command executors from direct calls
+   to `NetSendCmd*` so two clients stay in sync.
+4. **Retire** the leash + companion-slot injection; build stairs/portals the
+   normal way (the AI is just `MyPlayer` in its own client).
+
+Merge to `GAP` only when unbroken.
+
 ## Recent Changes Log
 
 ### June 22, 2026: Revival + Agency/Memory Pass ✅
