@@ -120,6 +120,10 @@ Example: BUY hl 1 0.9"""
                 # Parse response
                 parsed = self.parse_weighted_response(response)
                 if parsed and parsed.command.startswith("BUY"):
+                    # Small models copy the example index ("BUY hl 1") instead of
+                    # substituting the real one, which buys the wrong (unaffordable)
+                    # store item and stalls. We already know the correct index.
+                    parsed.command = f"BUY hl {item['id']}"
                     parsed.reasoning = f"Shopping: Buy health potion ({item['price']}g, have {gold}g)"
                     logger.info(f"Shopping: Recommending BUY hl {item['id']} (price={item['price']}, gold={gold}, belt_hp={hp_potions})")
                     return parsed
@@ -161,6 +165,8 @@ Example: BUY hl 2 0.7"""
 
                         parsed = self.parse_weighted_response(response)
                         if parsed and parsed.command.startswith("BUY"):
+                            # Force the correct store index (see HP-potion note above).
+                            parsed.command = f"BUY hl {item['id']}"
                             parsed.reasoning = f"Shopping: Buy mana potion ({item['price']}g)"
                             return parsed
 

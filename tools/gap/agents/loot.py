@@ -16,6 +16,7 @@ class LootAgent(BaseAgent):
         super().__init__(name="Loot", **kwargs)
         self.failed_pickups = {}  # item_id -> attempt_count
         self.last_loot_state = []  # Track items from last tick
+        self.last_pk_attempt = None  # item_id we actually issued PK for last tick
         self.recently_dropped = {}  # item_position -> tick_when_dropped (avoid picking up what we just dropped)
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
@@ -44,19 +45,23 @@ class LootAgent(BaseAgent):
 
         # Detect picked up items (items that disappeared from state)
         current_item_ids = {item.get('id') for item in loot}
-        last_item_ids = {item.get('id') for item in self.last_loot_state}
-        picked_up_ids = last_item_ids - current_item_ids
 
-        # Clear successful pickups from failed list
-        for item_id in picked_up_ids:
-            self.failed_pickups.pop(item_id, None)
+        # Clear tracking for items that are gone (picked up by anyone, or despawned)
+        for item_id in list(self.failed_pickups):
+            if item_id not in current_item_ids:
+                self.failed_pickups.pop(item_id, None)
 
-        # Detect failed pickups (items still present that we tried to pick up)
-        for item_id in last_item_ids & current_item_ids:
-            if item_id in self.failed_pickups:
-                self.failed_pickups[item_id] += 1
-                if self.failed_pickups[item_id] >= 3:
-                    logger.warning(f"Loot: Item {item_id} failed 3+ times, blacklisting")
+        # A pickup only counts as FAILED if we issued PK for that item last tick
+        # AND it is still on the ground AND still adjacent now. Merely walking
+        # toward an item, or the council choosing another action and moving us
+        # away, must NOT count against it — that was the premature-blacklist bug.
+        if self.last_pk_attempt is not None:
+            attempted = next((it for it in loot if it.get('id') == self.last_pk_attempt), None)
+            if attempted is not None and attempted.get('dist', 999) <= 1:
+                self.failed_pickups[self.last_pk_attempt] = self.failed_pickups.get(self.last_pk_attempt, 0) + 1
+                if self.failed_pickups[self.last_pk_attempt] >= 3:
+                    logger.warning(f"Loot: Item {self.last_pk_attempt} failed PK 3+ times, blacklisting")
+        self.last_pk_attempt = None  # reset; set again below only if we PK this tick
 
         # Update state tracking
         self.last_loot_state = loot
@@ -114,11 +119,8 @@ class LootAgent(BaseAgent):
         item_id = best_item.get('id', 0)
         item_desc = f"{best_item.get('quality', 'n')}/{best_item.get('type', 'ms')}"
 
-        # Mark as attempted so we can detect failure next tick (for both MV and PK)
-        if item_id not in self.failed_pickups:
-            self.failed_pickups[item_id] = 0
-
-        # If item is far away, move toward it first
+        # If item is far away, move toward it first (this is NOT a pickup attempt,
+        # so it must not be recorded as one — see failure tracking above).
         if item_dist > 1:
             return AgentResponse(
                 command=f"MV {item_x} {item_y}",
@@ -126,8 +128,9 @@ class LootAgent(BaseAgent):
                 reasoning=f"Loot: Moving to {item_desc} value={best_item.get('value', 0)} dist={item_dist}"
             )
 
-        # Item is adjacent - pick it up
-
+        # Item is adjacent - pick it up. Record the real attempt so we can tell
+        # next tick whether the PK actually worked.
+        self.last_pk_attempt = item_id
         return AgentResponse(
             command=f"PK {item_id}",
             weight=min(best_score, 1.0),
