@@ -157,6 +157,10 @@ class AgentOrchestrator:
         # Commitment/hysteresis: keeps the council on one goal for several rounds
         self.commitment = CommitmentTracker()
 
+        # Tactical stance set by the player's chat commands ("hold here", "go in",
+        # "fall back", "on me"). Modulates the council so boss-fight planning works.
+        self.tactical_mode = "follow"  # follow | hold | engage | retreat
+
         # Track recently dropped items (for mutual support)
         self.recently_dropped_position = None
         self.recently_dropped_tick = 0
@@ -343,6 +347,102 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
     def send_message(self, msg: str):
         """Send length-prefixed message to socket"""
         self._send_message_internal(msg)
+
+    # --- Tactical commands ------------------------------------------------
+    # Concise battle directions the player can speak to coordinate fights:
+    #   hold    — hold position, stop following (set up a boss pull)
+    #   engage  — push the fight, prioritize attacking
+    #   retreat — break off and regroup on the player
+    #   follow  — resume normal following (the default stance)
+    # Keyword phrases checked most-specific first; each maps to a stance + a
+    # short spoken acknowledgement.
+    TACTICAL_INTENTS = [
+        ("hold", "Holding here.", (
+            "hold position", "hold here", "hold up", "hold on", "wait here",
+            "stay here", "stay put", "stay back", "hang back", "wait there",
+            "hold", "wait", "stay", "stop",
+        )),
+        ("retreat", "Falling back!", (
+            "fall back", "pull back", "back up", "back off", "get back",
+            "retreat", "regroup", "disengage", "run", "flee", "bail",
+        )),
+        ("engage", "Going in!", (
+            "go in", "get him", "get her", "get it", "take him", "take it",
+            "attack", "engage", "kill it", "kill him", "push", "charge",
+            "go go", "light em up", "open fire", "fire",
+        )),
+        ("follow", "On you.", (
+            "with me", "on me", "come on", "let's go", "lets go", "move out",
+            "follow me", "follow", "come", "regroup on me",
+        )),
+    ]
+
+    def _detect_tactical_intent(self, message: str):
+        """Return (mode, acknowledgement) if the message is a tactical command,
+        else None. Commands are imperative — they LEAD the sentence — so we match
+        at the start (after stripping a politeness lead-in). That keeps chatter
+        like 'I follow your logic' or 'no, go ahead' from tripping a stance."""
+        text = message.lower().strip().rstrip("!.?,")
+        for lead in ("can you ", "could you ", "go ahead and ", "ok ", "okay ",
+                     "now ", "hey ", "please ", "yo "):
+            if text.startswith(lead):
+                text = text[len(lead):]
+                break
+        words = text.split()
+        for mode, ack, phrases in self.TACTICAL_INTENTS:
+            for phrase in phrases:
+                pw = phrase.split()
+                if words[:len(pw)] == pw:
+                    return mode, ack
+        return None
+
+    def _apply_tactical_mode(self, recommendations, state):
+        """Modulate the council's recommendations by the current stance."""
+        mode = self.tactical_mode
+        if mode == "follow" or not recommendations:
+            return recommendations
+
+        if mode == "hold":
+            # Don't move toward the player — hold position. Combat/heal/loot
+            # still run (she'll defend herself), but follow/transition/portal are
+            # suppressed and we actively stand put.
+            held = [(n, r, s) for (n, r, s) in recommendations
+                    if n not in ("Movement", "Transition", "Portal")]
+            me_x, me_y = state["me"][0], state["me"][1]
+            held.append((
+                "Hold",
+                AgentResponse(command=f"MV {me_x} {me_y}", weight=0.4,
+                              reasoning="Hold: holding position (commanded)"),
+                0.4 * 4,
+            ))
+            return held
+
+        if mode == "engage":
+            # Push the fight: boost offensive agents.
+            return [(n, r, s * 1.4 if n in ("Combat", "Spell") else s)
+                    for (n, r, s) in recommendations]
+
+        if mode == "retreat":
+            # Break off and regroup on the player; drop offensive actions.
+            out = [(n, r, s) for (n, r, s) in recommendations
+                   if n not in ("Combat", "Spell")]
+            player = state.get("player")
+            if player:
+                out.append((
+                    "Retreat",
+                    AgentResponse(command=f"MV {player[0]} {player[1]}", weight=0.9,
+                                  reasoning="Retreat: regrouping on player (commanded)"),
+                    0.9 * 9,
+                ))
+            # Once she's regrouped (near the player and clear of mobs), drop back
+            # to normal following so she doesn't stay stuck in retreat.
+            me = state.get("me", [0, 0, 100, 100])
+            if player and not state.get("mobs"):
+                if max(abs(player[0] - me[0]), abs(player[1] - me[1])) <= 3:
+                    self.tactical_mode = "follow"
+            return out
+
+        return recommendations
 
     def should_think(self) -> bool:
         """Decide if it's time to ask agents for decision"""
@@ -643,6 +743,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                 logger.info(f"🚨 EMERGENCY but NO POTIONS: HP={hp_pct}% - deferring to agents")
                 # Fall through to normal scoring (LootAgent or retreat will handle)
 
+        # Apply the player's tactical stance (hold/engage/retreat) before
+        # hysteresis so the commanded behavior shapes the vote.
+        recommendations = self._apply_tactical_mode(recommendations, state)
+
         # Apply commitment/hysteresis: boost the goal we're already committed to
         # and damp fallback agents during a transient gap, so she finishes a goal
         # instead of pacing between (e.g.) walking to Pepin and following you.
@@ -877,8 +981,16 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                     if len(parts) == 2:
                         sender, message = parts
                         logger.info(f"💬 {sender}: {message}")
-                        # Queue to ChatAgent for intelligent responses with full context
-                        self.chat.queue_player_message(sender, message)
+                        # Tactical command? Set the stance + acknowledge. Otherwise
+                        # hand off to the ChatAgent for a conversational reply.
+                        intent = self._detect_tactical_intent(message)
+                        if intent:
+                            mode, ack = intent
+                            self.tactical_mode = mode
+                            logger.info(f"🎖️  Tactical stance → {mode} (from '{message}')")
+                            self.send_message(f"SAY {ack}")
+                        else:
+                            self.chat.queue_player_message(sender, message)
                     continue
 
                 # Parse state
