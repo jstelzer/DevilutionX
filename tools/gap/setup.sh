@@ -32,17 +32,16 @@ if [ "$USE_TRADITIONAL" = "1" ]; then
     python3 -m venv .venv
     source .venv/bin/activate
     pip install --upgrade pip
-    pip install aiohttp numpy typing-extensions
-    pip install pytest pytest-asyncio black ruff  # dev dependencies
+    # Deps are declared in pyproject.toml; install runtime + dev tools explicitly
+    # (no build backend, so we can't `pip install .`).
+    pip install requests pytest pytest-asyncio black ruff
     echo "✅ Traditional venv setup complete"
     echo "💡 To activate: source .venv/bin/activate"
 else
     echo "📁 Creating uv-managed Python environment..."
-    uv venv
-    echo "📦 Installing dependencies with uv..."
-    # Install dependencies directly (no -e . since this is a scripts project)
-    uv pip install aiohttp numpy typing-extensions
-    uv pip install pytest pytest-asyncio black ruff  # dev dependencies
+    echo "📦 Syncing dependencies from pyproject.toml with uv..."
+    # uv sync reads [project.dependencies] + the dev extra; creates .venv automatically.
+    uv sync --extra dev
     echo "✅ uv setup complete"
     echo "💡 To activate: source .venv/bin/activate"
 fi
@@ -50,9 +49,9 @@ fi
 echo ""
 echo "🧪 Running validation tests to verify setup..."
 if [ "$USE_TRADITIONAL" = "1" ]; then
-    source .venv/bin/activate && python3 validation_tests.py
+    source .venv/bin/activate && python3 -m pytest test_personality.py -q && python3 dsl_parser.py
 else
-    uv run python validation_tests.py
+    uv run python -m pytest test_personality.py -q && uv run python dsl_parser.py
 fi
 
 echo ""
@@ -62,12 +61,11 @@ echo "Usage:"
 echo "  Activate environment: source .venv/bin/activate"
 if [ "$USE_TRADITIONAL" = "0" ]; then
     echo "  Run with uv:          uv run python <script>"
-    echo "  Add dependency:       uv pip install <package>"
+    echo "  Add dependency:       uv add <package>"
 fi
-echo "  Run MCP server:       python mcp_server.py --model qwen2.5:3b --password <password>"
-echo "  Run combat agent:     python combat_gap_agent.py --password <password>"  
-echo "  Run validation:       python validation_tests.py"
-echo "  Debug tools:          python debug_tools.py"
+echo "  Run orchestrator:     uv run orchestrator.py --companion-slot 1 --model qwen2.5:3b --password <password>"
+echo "  Run tests:            uv run python -m pytest test_personality.py -q"
+echo "  Lint:                 uv run ruff check ."
 echo ""
 echo "Development tools:"
 echo "  Format code:          black *.py"

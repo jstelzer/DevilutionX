@@ -973,9 +973,9 @@ mkdir build && cd build
 cmake .. -DENABLE_GAP=ON
 cmake --build . --target devilutionx
 
-# 3. Install Python dependencies
+# 3. Install Python dependencies (uv reads pyproject.toml)
 cd ../tools/gap
-pip install -r requirements.txt
+uv sync
 
 # 4. Install Ollama and download models
 curl -fsSL https://ollama.com/install.sh | sh

@@ -6,9 +6,7 @@ authors = [{name = "GAP AI Team"}]
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "aiohttp>=3.8.0",
-    "numpy>=1.20.0",
-    "typing-extensions>=4.0.0",
+    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
@@ -19,16 +17,12 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-# No build system needed for scripts-only project
-# [build-system]
-# requires = ["hatchling"]
-# build-backend = "hatchling.build"
-
-# Script entry points for easy execution
-[project.scripts]
-gap-mcp-server = "mcp_server:main"
-gap-agent = "test_gap_agent:main"
-gap-combat = "combat_gap_agent:main"
+# No build system needed for scripts-only project.
+# uv treats this as a virtual (non-packaged) project — `uv sync` installs the
+# dependencies above into .venv without trying to build a wheel.
+# Run scripts directly, e.g. `uv run orchestrator.py --model qwen2.5:3b`.
+[tool.uv]
+package = false
 
 [tool.black]
 line-length = 100
