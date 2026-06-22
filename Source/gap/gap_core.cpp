@@ -443,4 +443,10 @@ bool GapCore::IsCompanionSlot(int slot) const {
     return enabled_ && gGapCompanionSlot >= 0 && slot == gGapCompanionSlot;
 }
 
+int GapCore::GetControlledPlayer() const {
+    // One client per player: drive this client's own player. (The old sidecar
+    // model controlled a separate companion slot; that is no longer used.)
+    return MyPlayerId;
+}
+
 } // namespace devilution::gap

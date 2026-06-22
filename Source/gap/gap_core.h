@@ -21,7 +21,10 @@ public:
     void SetTickRate(uint32_t rate) { tick_rate_ = rate; }
     
     void SetControlledPlayer(int slot) { controlled_player_ = slot; }
-    int GetControlledPlayer() const { return controlled_player_; }
+    // One client per player: the GAP layer always drives THIS client's own
+    // player (MyPlayer). The controlled_player_ slot is a leftover from the old
+    // sidecar/companion model. Defined in the .cpp so it can read MyPlayerId.
+    int GetControlledPlayer() const;
     
     bool SendMessage(const std::string& message);
     

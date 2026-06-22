@@ -45,12 +45,16 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
     // Town flag: TN=1 or TN=0
     dsl << " TN=" << (leveltype == DTYPE_TOWN ? 1 : 0);
 
-    // Main player position + floor (for companion to follow / decide to transition)
-    // If this IS the main player, PLYR will equal ME and PF will equal F.
-    if (MyPlayerId < MAX_PLRS && Players[MyPlayerId].plractive) {
-        Point mainPlayerPos = Players[MyPlayerId].position.tile;
-        dsl << " PLYR=" << mainPlayerPos.x << "," << mainPlayerPos.y;
-        dsl << " PF=" << static_cast<int>(Players[MyPlayerId].plrlevel);
+    // The human player to follow: the first OTHER active player (not us). In the
+    // old sidecar model MyPlayer was the human; now MyPlayer IS the AI, so we scan
+    // for another player. PLYR/PF are omitted if we're the only one in the game.
+    for (size_t i = 0; i < Players.size(); i++) {
+        if (static_cast<int>(i) == MyPlayerId || !Players[i].plractive)
+            continue;
+        Point otherPos = Players[i].position.tile;
+        dsl << " PLYR=" << otherPos.x << "," << otherPos.y;
+        dsl << " PF=" << static_cast<int>(Players[i].plrlevel);
+        break;
     }
 
     // Nearest stairs/level-transition tile in view: ST=type@x,y (omitted if none).
