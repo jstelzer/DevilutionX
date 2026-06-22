@@ -19,7 +19,8 @@
       "Bash(coredumpctl list:*)",
       "Bash(coredumpctl debug:*)",
       "Bash(export PYTHONPATH=/home/mental/projects/DevilutionX/tools/gap:$PYTHONPATH)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(uv run *)"
     ],
     "deny": [],
     "ask": [],
