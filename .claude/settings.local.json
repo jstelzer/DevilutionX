@@ -20,7 +20,10 @@
       "Bash(coredumpctl debug:*)",
       "Bash(export PYTHONPATH=/home/mental/projects/DevilutionX/tools/gap:$PYTHONPATH)",
       "Bash(sqlite3:*)",
-      "Bash(uv run *)"
+      "Bash(uv run *)",
+      "Read(//tmp/**)",
+      "Bash(tee /tmp/gap_agent.log)",
+      "Bash(./launch_agent.sh)"
     ],
     "deny": [],
     "ask": [],
