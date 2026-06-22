@@ -12,6 +12,11 @@
 
 namespace devilution::gap {
 
+// Find the nearest stairs/level-transition tile within `radius` of (cx,cy) on
+// the current level. Returns the stair type string ("down_next", "up_town", …)
+// and sets outX/outY, or "" if none. Shared by the JSON and DSL state encoders.
+std::string FindNearbyStairs(int cx, int cy, int radius, int &outX, int &outY);
+
 class GapStateExtractor {
 public:
     std::string ExtractState(uint32_t tick, uint32_t tick_rate);

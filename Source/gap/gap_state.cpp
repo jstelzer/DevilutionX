@@ -125,6 +125,27 @@ std::string DetectStairType(uint16_t pieceId, int currentLevel) {
 }
 } // anonymous namespace
 
+// Scan a square radius around (cx,cy) for the nearest stairs / level-transition
+// tile on the current level. Returns the stair type (see DetectStairType) and
+// sets outX/outY, or "" if none found. Exposed (external linkage) so the compact
+// DSL encoder can reuse the same detection as the JSON path.
+std::string FindNearbyStairs(int cx, int cy, int radius, int &outX, int &outY) {
+    for (int dy = -radius; dy <= radius; dy++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            Point p = { cx + dx, cy + dy };
+            if (!InDungeonBounds(p))
+                continue;
+            std::string type = DetectStairType(dPiece[p.x][p.y], static_cast<int>(currlevel));
+            if (!type.empty()) {
+                outX = p.x;
+                outY = p.y;
+                return type;
+            }
+        }
+    }
+    return "";
+}
+
 std::string GapStateExtractor::ExtractState(uint32_t tick, uint32_t tick_rate) {
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(

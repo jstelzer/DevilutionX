@@ -1,6 +1,7 @@
 #include "gap_dsl.h"
 #include <cstdint>
 #include "gap_stores.h"
+#include "gap_state.h"   // For FindNearbyStairs()
 #include "../player.h"
 #include "../monster.h"
 #include "../items.h"
@@ -44,11 +45,22 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
     // Town flag: TN=1 or TN=0
     dsl << " TN=" << (leveltype == DTYPE_TOWN ? 1 : 0);
 
-    // Main player position (for companion to follow)
-    // If this IS the main player, PLYR will equal ME
+    // Main player position + floor (for companion to follow / decide to transition)
+    // If this IS the main player, PLYR will equal ME and PF will equal F.
     if (MyPlayerId < MAX_PLRS && Players[MyPlayerId].plractive) {
         Point mainPlayerPos = Players[MyPlayerId].position.tile;
         dsl << " PLYR=" << mainPlayerPos.x << "," << mainPlayerPos.y;
+        dsl << " PF=" << static_cast<int>(Players[MyPlayerId].plrlevel);
+    }
+
+    // Nearest stairs/level-transition tile in view: ST=type@x,y (omitted if none).
+    // Lets the agent see and path to stairs for level transitions.
+    {
+        int stairX = 0, stairY = 0;
+        std::string stairType = FindNearbyStairs(playerPos.x, playerPos.y, 12, stairX, stairY);
+        if (!stairType.empty()) {
+            dsl << " ST=" << stairType << "@" << stairX << "," << stairY;
+        }
     }
 
     // Monsters: M=id@x,y,hp%,flags;...

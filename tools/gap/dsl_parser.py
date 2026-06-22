@@ -37,6 +37,8 @@ def parse_dsl_state(line: str) -> Dict:
         "floor": 0,
         "me": (0, 0, 100, 100),
         "player": None,  # Main player position (x, y) if companion
+        "player_floor": None,  # Main player's dungeon level (for follow decisions)
+        "stairs": None,  # Nearest stairs in view: {"type": "down_next", "x": .., "y": ..}
         "mobs": [],
         "loot": [],
         "objects": [],  # Objects: [{"id": 15, "x": 45, "y": 30, "type": "ch", "dist": 5}, ...]
@@ -58,8 +60,8 @@ def parse_dsl_state(line: str) -> Dict:
         if m := re.search(r'T=(\d+)', line):
             state["tick"] = int(m.group(1))
 
-        # Parse floor: F=2
-        if m := re.search(r'F=(\d+)', line):
+        # Parse floor: F=2 (lookbehind avoids matching the F in PF=)
+        if m := re.search(r'(?<![A-Za-z])F=(\d+)', line):
             state["floor"] = int(m.group(1))
 
         # Parse player: ME=x,y,hp%,mp%
@@ -69,6 +71,18 @@ def parse_dsl_state(line: str) -> Dict:
         # Parse main player position: PLYR=x,y
         if m := re.search(r'PLYR=(\d+),(\d+)', line):
             state["player"] = tuple(map(int, m.groups()))
+
+        # Parse main player floor: PF=2 (for deciding to follow across levels)
+        if m := re.search(r'PF=(\d+)', line):
+            state["player_floor"] = int(m.group(1))
+
+        # Parse nearest stairs: ST=type@x,y  (e.g. ST=down_next@45,30)
+        if m := re.search(r'ST=([a-z_]+)@(\d+),(\d+)', line):
+            state["stairs"] = {
+                "type": m.group(1),
+                "x": int(m.group(2)),
+                "y": int(m.group(3)),
+            }
 
         # Parse monsters: M=id@x,y,hp%,flags;...
         # Use negative lookbehind to avoid matching L= or E=
