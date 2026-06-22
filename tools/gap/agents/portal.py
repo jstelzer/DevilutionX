@@ -25,20 +25,46 @@ class PortalAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(name="Portal", **kwargs)
+        self._last_floor = None          # to detect when WE crossed a portal
+        self._waiting_for_player = False  # "I went first — holding for you to cross"
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
-        portals = state.get("portals") or []
+        theirs = [p for p in (state.get("portals") or []) if p.get("caster") == "them"]
         player_floor = state.get("player_floor")
         my_floor = state.get("floor")
-        # Only a portal cast by someone else, and only when the player is on a
-        # different floor (so stepping through catches us up to them).
-        theirs = [p for p in portals if p.get("caster") == "them"]
-        return (
-            len(theirs) > 0
-            and player_floor is not None
-            and my_floor is not None
-            and player_floor != my_floor
-        )
+        if my_floor is None or player_floor is None:
+            return False
+
+        # Waiting-state coordination: if WE just crossed a portal (our floor
+        # changed) and the player isn't here yet, we went first — HOLD on this
+        # side for them to follow instead of bouncing back through. Clear once
+        # they join us.
+        if self._last_floor is not None and my_floor != self._last_floor:
+            self._waiting_for_player = (player_floor != my_floor)
+        self._last_floor = my_floor
+        if player_floor == my_floor:
+            self._waiting_for_player = False
+        if self._waiting_for_player:
+            return False
+
+        if not theirs:
+            return False
+
+        # Case A — already separated: the player is on a different floor and
+        # their portal here leads to them. Step through to catch up.
+        if player_floor != my_floor:
+            return True
+
+        # Case B — together and the player is about to cross their OWN portal.
+        # It closes the instant they step through, so she must go FIRST. Trigger
+        # when the player is close to their portal (i.e. about to use it).
+        player_pos = state.get("player")
+        if player_pos:
+            px, py = player_pos
+            for p in theirs:
+                if max(abs(p["x"] - px), abs(p["y"] - py)) <= 6:
+                    return True
+        return False
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         portals = state.get("portals") or []
