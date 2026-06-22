@@ -5,25 +5,46 @@
 
 ## Quick Reference
 
-**Start Game + AI Companion:**
+**Start Game + AI Companion** (two terminals; use the helper scripts):
 ```bash
-# Terminal 1: Start game with companion
-cd /home/mental/projects/DevilutionX/build
-./devilutionx --companion-save multi_1.sv --companion-slot 1
+# Terminal 1: launch the game (you = slot 0, AI = slot 1 from multi_1.sv).
+# Then host a multiplayer game from the menu, password "foo".
+cd /home/mental/Projects/DevilutionX/tools/gap
+./launch_game.sh
 
-# Terminal 2: Start AI agent
-cd /home/mental/projects/DevilutionX/tools/gap
-python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b --password "foo"
+# Terminal 2: launch the agent (waits for the game socket, then connects)
+cd /home/mental/Projects/DevilutionX/tools/gap
+./launch_agent.sh
 ```
 
-**Recommended Models**:
-- `qwen2.5:3b` - Fast (200-300ms), good for testing
-- `llama3.2:latest` - Balanced (400-500ms)
-- `llama3.1:8b` - Best reasoning (800-1200ms), slower
+`launch_agent.sh` runs `uv run orchestrator.py --model qwen2.5:3b --chat-model
+gemma3:12b --password foo` under the hood. Override models/password via env, e.g.
+`CHAT_MODEL=gemma3:27b ./launch_agent.sh`. Note: **the orchestrator has no
+`--companion-slot` flag** — the slot is set on the *game* side only.
+
+**Recommended Models** (dev box has a 32GB RTX 5090, so it's split-config by default):
+- `qwen2.5:3b` - fast tactical/dungeon loop (the `--model`)
+- `gemma3:12b` - chat/personality (the `--chat-model`); `gemma3:27b` for richer chat
+
+**Build** (see Development Environment for why the pinned-deps flags are needed):
+```bash
+cmake -S . -B build -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+  -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF
+cmake --build build --target devilutionx
+```
+
+> Canonical agent entry point is **`orchestrator.py`** (multi-agent council).
+> `dsl_agent.py` is the older single-loop agent, kept for reference only.
 
 ---
 
-## Project Status (November 4, 2025)
+## Project Status (June 22, 2026)
+
+> Revived on a fresh CachyOS box after sitting since Nov 2025. Build + full
+> game↔agent loop confirmed working. See the June 2026 change-log entry below
+> for the toolchain fixes, logic-bug fixes, commitment/hysteresis, and the
+> personality-memory wiring added during the revival.
 
 ### ✅ Production-Ready Features
 
@@ -69,6 +90,49 @@ See [GAP-PROJECT-SUMMARY.md - TODO Section](./GAP-PROJECT-SUMMARY.md#todo-featur
 ---
 
 ## Recent Changes Log
+
+### June 22, 2026: Revival + Agency/Memory Pass ✅
+
+Dusted off on a fresh CachyOS box (GCC 16 / fmt 12 / Lua 5.5) and pushed the
+companion toward being a first-class peer.
+
+**Build revival (toolchain was newer than the pinned deps):**
+- `BUILD_TESTING=OFF` (skips google-benchmark), `DEVILUTIONX_SYSTEM_LIBFMT=OFF`
+  (system fmt 12 dropped `fmt::format` from `<fmt/core.h>`), `DEVILUTIONX_SYSTEM_LUA=OFF`
+  (system Lua 5.5 breaks sol2). Added explicit `#include <cstdint>` to all
+  `Source/gap/*.cpp` (GCC 16 dropped the transitive include).
+- Documented `--companion-save`/`--companion-slot` in `--help`.
+
+**Tooling:**
+- `tools/gap/launch_game.sh` and `launch_agent.sh` helpers.
+- Python deps now tracked in `pyproject.toml` via **uv** (`uv sync`, `uv run`);
+  only real runtime dep is `requests`. `requirements.txt` removed.
+
+**Agent logic fixes (found while play-testing):**
+- ShoppingAgent: force the real store index (model was copying the prompt's
+  example `BUY hl 1`, buying the wrong/unaffordable item → infinite loop).
+- LootAgent: only count a pickup as failed after a real adjacent `PK`, not
+  while walking toward an item — premature blacklisting fixed.
+- Chat: 60s timeout + `keep_alive=30m` so the 12B chat model doesn't time out
+  or get evicted between messages.
+
+**Council commitment/hysteresis (`CommitmentTracker` in orchestrator.py):**
+- Boosts the committed goal and damps fallback agents during a transient gap,
+  so she finishes a goal instead of pacing. Avg goal-run went ~1-3 → ~9 ticks.
+- Graceful disconnect: agent detects a closed socket (EOF) and shuts down with
+  a session reflection instead of spinning on a dead socket.
+
+**Personality wired into behavior (roadmap item #2):**
+- `PersonalityStore.get_behavioral_context()` synthesizes a first-person
+  preamble (traits + emotional memories + proven strategy), injected into chat
+  and strategic-agent prompts (tactical agents opt out via `use_memory_context`).
+- Learning loop: combat win/loss records a per-floor strategy; `decide()` nudges
+  Combat's weight x1.1 where the approach has worked, x0.7 where it's been
+  getting her killed.
+
+**Next milestone:** autonomous level transitions (stairs + town portals to
+re-arm/sell/repair and rejoin) — the companion still can't change levels on its
+own; the engine is hacked to keep her with the player. See GAP-PROJECT-SUMMARY.
 
 ### November 4, 2025: Personality Persistence System ✅
 
@@ -471,36 +535,46 @@ See `Source/objects.cpp` for details.
 ### Setup (First Time)
 
 ```bash
-# 1. Build game with GAP enabled
-cd /home/mental/projects/DevilutionX
-mkdir build && cd build
-cmake .. -DENABLE_GAP=ON
-cmake --build . --target devilutionx -j4
+# 1. Build game with GAP enabled (top-level ./build; pinned-deps flags are
+#    required on bleeding-edge toolchains — see "Build prerequisites" below)
+cd /home/mental/Projects/DevilutionX
+cmake -S . -B build -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+  -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF
+cmake --build build --target devilutionx
 
-# 2. Setup Python environment
-cd ../tools/gap
-./setup.sh              # Auto-setup with uv or traditional venv
-source venv/bin/activate  # If using venv
+# 2. Setup Python environment (uv)
+cd tools/gap
+uv sync                 # creates .venv from pyproject.toml (only dep: requests)
 
 # 3. Install Ollama and models
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5:3b
-ollama pull llama3.1:8b
+ollama pull gemma3:12b   # (gemma3:27b optional, for richer chat)
+
+# 4. Game data: drop retail DIABDAT.MPQ where the game can find it (build/ or
+#    ~/.local/share/diasurgical/devilution/). GoG installer -> innoextract.
 ```
+
+#### Build prerequisites (why the extra flags)
+
+The dev box ships a toolchain newer than the pinned deps, so a bare
+`cmake -DENABLE_GAP=ON` fails. The flags force the project's bundled fmt (11)
+and Lua (5.4) and skip the test-only google-benchmark. The active game data dir
+is `~/.local/share/diasurgical/devilution/` (saves + `diablo.ini` live there;
+`multi_0.sv` = you, `multi_1.sv` = the AI companion).
 
 ### Daily Development
 
 ```bash
 # Quick rebuild after C++ changes
-cd /home/mental/projects/DevilutionX/build
-cmake --build . --target devilutionx -j4
+cd /home/mental/Projects/DevilutionX
+cmake --build build --target devilutionx
 
-# Run game + agent
-./devilutionx --companion-save multi_1.sv --companion-slot 1
-
-# In separate terminal
-cd ../tools/gap
-python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b --password "foo"
+# Run game + agent (two terminals)
+cd tools/gap
+./launch_game.sh         # then host a multiplayer game, password foo
+./launch_agent.sh        # in a second terminal
 ```
 
 ### Development Scripts
@@ -508,11 +582,12 @@ python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b --password "foo"
 ```bash
 cd tools/gap
 
-./dev.sh run [password]  # Run enhanced MCP server
-./dev.sh test           # Validate all systems
-./dev.sh format         # Format code with black
-./dev.sh lint           # Check code with ruff
-./dev.sh clean          # Clean logs and cache
+./dev.sh run      # Launch the AI companion agent (= launch_agent.sh)
+./dev.sh test     # Personality tests + DSL parser self-test
+./dev.sh format   # Format code with black (via uv)
+./dev.sh lint     # Check code with ruff (via uv)
+./dev.sh fix      # Auto-fix lint issues
+./dev.sh clean    # Clean logs and cache
 ```
 
 ---
@@ -521,7 +596,8 @@ cd tools/gap
 
 - **Line endings**: Always use `\n` (Unix), never `\r\n` (Windows)
 - **Platform**: Developed on Linux, uses Unix domain sockets
-- **Python version**: 3.9+ required
+- **Python version**: 3.8+ (pyproject `requires-python`); dev box runs 3.14
+- **Deps/run**: managed by **uv** (`uv sync`, `uv run`); only runtime dep is `requests`
 
 ---
 
@@ -545,21 +621,23 @@ Source/gap/              # C++ GAP integration
 └── gap_stores.cpp       # Store interaction helpers
 
 tools/gap/               # Python agent system
-├── orchestrator.py      # Multi-agent coordinator
+├── launch_game.sh       # Launch game with companion args (you=0, AI=1)
+├── launch_agent.sh      # Launch the orchestrator (waits for socket)
+├── orchestrator.py      # Multi-agent coordinator + CommitmentTracker
 ├── dsl_parser.py        # DSL state parser
-├── memory_store.py      # SQLite persistent memory
+├── memory_store.py      # SQLite persistent memory (spatial/goals)
+├── personality_store.py # Per-character traits/memories/strategies + reflection
 ├── character_profile.py # Class-aware behavior
 ├── item_comparator.py   # Equipment upgrade detection
-└── agents/              # Specialized agents
-    ├── base.py          # BaseAgent class
-    ├── combat.py        # Combat decisions
-    ├── healing.py       # Potion usage
-    ├── loot.py          # Item pickup
-    ├── chat.py          # Conversation
-    ├── spell.py         # Spell casting
-    ├── town.py          # Pepin, Adria
-    ├── griswold.py      # Selling, repair
-    └── cain.py          # Item identification
+├── dsl_agent.py         # Legacy single-loop agent (reference only)
+└── agents/              # Specialized agents (base.py = BaseAgent)
+    ├── combat.py        # Combat decisions      ├── chat.py     # Conversation
+    ├── healing.py       # Potion usage          ├── spell.py    # Spell casting
+    ├── loot.py          # Item pickup           ├── shopping.py # Buy potions/gear
+    ├── town.py          # NPC navigation        ├── griswold.py # Selling, repair
+    ├── cain.py          # Item identification   ├── adria.py    # Witch shop
+    ├── inventory.py     # Belt refills          ├── stats.py    # Stat allocation
+    ├── movement.py      # Follow/explore        └── exploration.py # Chests/doors
 ```
 
 ---
