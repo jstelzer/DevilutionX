@@ -39,6 +39,7 @@ def parse_dsl_state(line: str) -> Dict:
         "player": None,  # Main player position (x, y) if companion
         "player_floor": None,  # Main player's dungeon level (for follow decisions)
         "stairs": [],  # Level-transition triggers: [{"type": "down"|"up", "x": .., "y": ..}, ...]
+        "portals": [],  # Town portals: [{"x": .., "y": .., "caster": "me"|"them"}, ...]
         "mobs": [],
         "loot": [],
         "objects": [],  # Objects: [{"id": 15, "x": 45, "y": 30, "type": "ch", "dist": 5}, ...]
@@ -88,6 +89,18 @@ def parse_dsl_state(line: str) -> Dict:
                         "y": int(pm.group(3)),
                     })
             state["stairs"] = stairs
+
+        # Parse town portals: TP=25,29,them;40,50,me  (caster is "me" or "them")
+        if m := re.search(r'TP=(\d+,\d+,[a-z]+(?:;\d+,\d+,[a-z]+)*)', line):
+            portals = []
+            for part in m.group(1).split(';'):
+                if pm := re.match(r'(\d+),(\d+),([a-z]+)', part):
+                    portals.append({
+                        "x": int(pm.group(1)),
+                        "y": int(pm.group(2)),
+                        "caster": pm.group(3),  # "me" (our portal) or "them"
+                    })
+            state["portals"] = portals
 
         # Parse monsters: M=id@x,y,hp%,flags;...
         # Use negative lookbehind to avoid matching L= or E=

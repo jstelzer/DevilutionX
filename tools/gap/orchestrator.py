@@ -19,6 +19,7 @@ from agents.spell import SpellAgent
 from agents.healing import HealingAgent
 from agents.movement import MovementAgent
 from agents.transition import TransitionAgent
+from agents.portal import PortalAgent
 from agents.loot import LootAgent
 from agents.stats import StatsAgent
 from agents.town import TownAgent
@@ -110,7 +111,7 @@ class AgentOrchestrator:
         model: str = "qwen2.5:3b",
         chat_model: str = "llama3.1:8b",
         password: Optional[str] = None,
-        think_interval: float = 1.0,
+        think_interval: float = 0.6,
     ):
         self.socket_path = socket_path
         self.ollama_url = ollama_url
@@ -176,6 +177,7 @@ class AgentOrchestrator:
         self.exploration = ExplorationAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
         self.transition = TransitionAgent(model=model, ollama_url=ollama_url)
+        self.portal = PortalAgent(model=model, ollama_url=ollama_url)
         self.chat = ChatAgent(memory=self.memory, model=chat_model, ollama_url=ollama_url)
 
         # List of all agents for easy model switching
@@ -183,7 +185,7 @@ class AgentOrchestrator:
             self.combat, self.spell, self.healing, self.loot,
             self.stats, self.town, self.shopping,
             self.inventory, self.griswold, self.cain, self.adria, self.exploration,
-            self.transition, self.movement,
+            self.portal, self.transition, self.movement,
             self.chat
         ]
 
@@ -568,8 +570,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             # the ground, grab it before fixating on something she can't yet afford
             # (e.g. an unaffordable Griswold repair while ignoring dropped gold).
             gold_on_ground = any(item.get("type") == "go" for item in loot)
-            if gold_on_ground and state.get("gold", 0) < 200:
-                priority = max(priority, 7)  # beat town-service agents (Griswold=6)
+            if gold_on_ground:
+                # Gold is almost always worth grabbing — prioritize it over town
+                # chores and following (but still below active combat, priority 8).
+                priority = max(priority, 7)
 
             # Danger dampener: reduce looting priority when in danger (unless critical HP)
             danger_mult = 1.0 if hp_pct < 30 else (0.5 if danger > 0.5 else 1.0)
@@ -584,6 +588,13 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             danger_mult = 0.3 if danger > 0.6 else 1.0
             score = exploration_rec.weight * 4 * danger_mult
             recommendations.append(("Exploration", exploration_rec, score))
+
+        # PORTAL - follow through the player's town portal (preferred over stairs
+        # when one exists; she must rush before the caster closes it).
+        portal_rec = self.portal.evaluate(state)
+        if portal_rec and portal_rec.weight > 0.0:
+            score = portal_rec.weight * 7
+            recommendations.append(("Portal", portal_rec, score))
 
         # TRANSITION - follow the player across floors via stairs (beats town
         # chores/wandering, but not combat/healing).
@@ -988,7 +999,7 @@ def main():
     parser.add_argument("--model", "-m", default="qwen2.5:3b", help="Dungeon model (fast combat)")
     parser.add_argument("--chat-model", default="llama3.1:8b", help="Town/chat model (sophisticated)")
     parser.add_argument("--password", "-p", help="Game password")
-    parser.add_argument("--think-interval", type=float, default=1.0, help="Seconds between decisions")
+    parser.add_argument("--think-interval", type=float, default=0.6, help="Seconds between decisions")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()

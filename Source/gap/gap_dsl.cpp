@@ -12,6 +12,8 @@
 #include "../levels/gendung.h"  // For IsTileLit()
 #include "../levels/trigs.h"    // For trigs[] (real level-transition tiles)
 #include "../interfac.h"        // For WM_DIAB* interface_mode values
+#include "../missiles.h"        // For Missiles (town portal detection)
+#include "../misdat.h"          // For MissileID::TownPortal
 #include <sstream>
 #include <cmath>
 
@@ -94,6 +96,29 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         }
         if (!first)
             dsl << " ST=" << stairs.str();
+    }
+
+    // Active town portals: TP=x,y,caster;... A portal closes when its caster
+    // steps through, so we emit the caster slot — the agent uses it to decide
+    // who goes first (rush through someone else's portal; let them go first
+    // through ours).
+    {
+        std::ostringstream portals;
+        bool first = true;
+        for (auto &missile : Missiles) {
+            if (missile._mitype != MissileID::TownPortal)
+                continue;
+            if (!first)
+                portals << ";";
+            // Relative caster so the agent can apply the go-first rule without
+            // knowing slot numbers: "me" = our own portal, "them" = someone else's.
+            const char* who = (missile._misource == MyPlayerId) ? "me" : "them";
+            portals << static_cast<int>(missile.position.tile.x) << ","
+                    << static_cast<int>(missile.position.tile.y) << "," << who;
+            first = false;
+        }
+        if (!first)
+            dsl << " TP=" << portals.str();
     }
 
     // Monsters: M=id@x,y,hp%,flags;...

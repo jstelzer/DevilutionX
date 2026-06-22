@@ -61,13 +61,13 @@ class MovementAgent(BaseAgent):
                     reasoning="Movement: Near player in town"
                 )
 
-        # In dungeon: maintain 3-7 tile distance
-        if dist_to_player > 8:
-            # Too far - follow closely
+        # In dungeon: keep close so she stays in the fight instead of trailing.
+        # Follow once we're more than ~4 tiles back.
+        if dist_to_player > 4:
             return AgentResponse(
                 command=f"MV {plyr_x} {plyr_y}",
-                weight=0.8,
-                reasoning=f"Movement: Too far from player (dist={dist_to_player})"
+                weight=0.85,
+                reasoning=f"Movement: Following player (dist={dist_to_player})"
             )
         elif dist_to_player < 2:
             # Too close - give some space
