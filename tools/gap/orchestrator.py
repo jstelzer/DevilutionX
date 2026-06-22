@@ -529,6 +529,9 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             # Priority 8 for combat, reduced if low HP
             priority = 8 if hp_pct > 50 else 6
             score = combat_rec.weight * priority
+            # Learned-strategy nudge: lean in where this approach has worked,
+            # back off (let healing/retreat win) where it's been getting us killed.
+            score *= self._combat_confidence_mult(state)
             recommendations.append(("Combat", combat_rec, score))
 
         # SPELL CASTING - ranged magic attacks for casters
@@ -658,6 +661,36 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
         return response.command
 
+    def _combat_strategy_label(self) -> str:
+        """Coarse combat approach for strategy learning, from the class playstyle."""
+        ps = (self.profile.playstyle if self.profile else "") or ""
+        if "ranged" in ps:
+            return "ranged"
+        if "melee" in ps:
+            return "melee"
+        if "caster" in ps or "mage" in ps or "spell" in ps:
+            return "spell"
+        return ps or "engage"
+
+    def _combat_confidence_mult(self, state: dict) -> float:
+        """Weight multiplier for Combat based on how the class's approach has
+        fared on this floor. >1 where it's been winning, <1 where it's been
+        dying — so memory actually shifts behavior. Neutral until there's
+        enough evidence."""
+        if not self.personality or not self.profile:
+            return 1.0
+        floor = state.get("floor", 0)
+        confidence, attempts = self.personality.get_strategy_confidence(
+            f"combat_floor_{floor}", self._combat_strategy_label()
+        )
+        if confidence is None or attempts < 2:
+            return 1.0  # not enough evidence yet
+        if confidence >= 0.7:
+            return 1.1   # proven here — lean in
+        if confidence <= 0.34:
+            return 0.7   # been getting killed here — be cautious
+        return 1.0
+
     def _track_personality_events(self, state: dict, agent_name: str, command: str, hp_pct: int):
         """Track personality-relevant events (combat, near-deaths, victories, gifts)"""
         mobs = state.get("mobs", [])
@@ -691,6 +724,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                     actor="monster",
                     context={"hp_before": self.last_hp, "tick": tick}
                 )
+                # Learning: this approach failed on this floor.
+                self.personality.add_strategy(
+                    f"combat_floor_{floor}", self._combat_strategy_label(), success=False
+                )
                 logger.info(f"💀 Death recorded (floor {floor})")
 
             # Check for near-death experience (survived below 25% HP)
@@ -706,6 +743,11 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                 # Victory if we survived
                 if hp_pct > 5:
                     self.session_stats["victories"] += 1
+
+                    # Learning: this approach worked on this floor.
+                    self.personality.add_strategy(
+                        f"combat_floor_{floor}", self._combat_strategy_label(), success=True
+                    )
 
                     # Record memorable victories (either long fights or close calls)
                     if combat_duration > 100 or self.lowest_hp_in_combat < 40:

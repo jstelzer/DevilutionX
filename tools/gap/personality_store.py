@@ -148,6 +148,25 @@ class PersonalityStore:
 
         return strategies
 
+    def get_strategy_confidence(self, situation: str, strategy: str):
+        """Return (confidence, attempts) for one situation+strategy pair.
+
+        confidence is the success ratio 0.0-1.0; attempts is total recorded
+        outcomes. Returns (None, 0) when nothing is recorded yet so callers can
+        skip the nudge until there's evidence.
+        """
+        cursor = self.db.execute("""
+            SELECT success_count, failure_count,
+                   CAST(success_count AS REAL) / NULLIF(success_count + failure_count, 0) AS confidence
+            FROM learned_strategies
+            WHERE character_id = ? AND situation = ? AND strategy = ?
+        """, (self.character_id, situation, strategy))
+        row = cursor.fetchone()
+        if not row:
+            return (None, 0)
+        attempts = (row['success_count'] or 0) + (row['failure_count'] or 0)
+        return (row['confidence'], attempts)
+
     def update_trait(self, name: str, value: str, confidence: float, context: str):
         """
         Update or insert personality trait.
