@@ -15,6 +15,7 @@
 #include <iostream>
 
 #include "plrmsg.h"
+#include "msg.h"  // For NetSendCmdString (broadcast AI chat over the network)
 #include "DiabloUI/ui_flags.hpp"
 #include "utils/str_cat.hpp"
 #include "gap_core.h"
@@ -22,6 +23,8 @@
 #include "gap_state.h"  // For GAP_USE_DSL macro
 
 namespace devilution {
+
+extern bool gGapHeadless;  // defined in diablo.cpp
 
 namespace {
 
@@ -121,9 +124,16 @@ bool GAPChatHandler::ProcessChatMessage(std::string_view message) {
 
 void GAPChatHandler::SendAIResponse(std::string_view response, bool isError) {
     std::string fullMessage = StrCat("[GAP AI] ", response);
-    UiFlags color = isError ? UiFlags::ColorRed : UiFlags::ColorBlue;
-    EventPlrMsg(fullMessage, color);
-    
+    if (gGapHeadless) {
+        // True-MP: we're our own client, so broadcast over the network for the
+        // human's separate client to hear. EventPlrMsg only shows locally, which
+        // is invisible on a headless client (the sidecar-era assumption).
+        NetSendCmdString(0xFFFFFF, fullMessage.c_str());
+    } else {
+        UiFlags color = isError ? UiFlags::ColorRed : UiFlags::ColorBlue;
+        EventPlrMsg(fullMessage, color);
+    }
+
     // Log AI responses for GAP state tracking
     AddMessage(fullMessage, "ai");
 }

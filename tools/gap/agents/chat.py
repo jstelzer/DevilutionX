@@ -152,7 +152,10 @@ Examples:
 
         return AgentResponse(
             command=f"SAY {response}",
-            weight=0.6,  # High priority - player deserves immediate response
+            # A direct player question must win the council decisively (priority 11
+            # x 0.95 = 10.45 beats anything routine, e.g. a stuck Griswold repair at
+            # 7.30). Emergency Python reflexes still take precedence.
+            weight=0.95,
             reasoning=f"Chat: Answer '{message[:30]}...'"
         )
 
