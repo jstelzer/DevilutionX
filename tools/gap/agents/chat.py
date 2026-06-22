@@ -207,6 +207,15 @@ LOCATION:
 - {'Town (safe)' if in_town else f'Dungeon level {floor}'}
 """
 
+        # Weave in remembered personality so replies reflect who she's become.
+        if self.personality is not None:
+            try:
+                memory_ctx = self.personality.get_behavioral_context(self.name)
+                if memory_ctx:
+                    context += f"\n{memory_ctx}\n"
+            except Exception as e:
+                logger.debug(f"Chat: personality context unavailable: {e}")
+
         return context
 
     def _clean_response(self, response: str) -> str:

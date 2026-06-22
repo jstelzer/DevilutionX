@@ -288,6 +288,47 @@ class PersonalityStore:
         else:
             return ""
 
+    def get_behavioral_context(self, agent_name: str = "all", max_memories: int = 2) -> str:
+        """Synthesize a short first-person preamble from stored personality so it
+        actually shapes decisions and conversation (not just gets logged).
+
+        Pulls the highest-confidence traits, the most emotionally-significant
+        recent memories, and the single most-proven strategy, plus any explicit
+        prompt injections (forward-compat with that table). Returns "" when there
+        is nothing meaningful to say yet, so prompts stay lean early on.
+        """
+        lines = []
+
+        traits = self._load_traits()
+        if traits:
+            top_traits = sorted(
+                traits.items(), key=lambda kv: kv[1].get("confidence", 0), reverse=True
+            )[:2]
+            for name, t in top_traits:
+                if t.get("confidence", 0) >= 0.4:
+                    lines.append(f"- You are {t['value']} ({name.replace('_', ' ')}).")
+
+        memories = self._load_recent_memories(limit=5)
+        strong = sorted(memories, key=lambda m: abs(m.get("impact", 0)), reverse=True)
+        for m in strong[:max_memories]:
+            if abs(m.get("impact", 0)) >= 0.5:
+                lines.append(f"- You remember: {m['description']}.")
+
+        for s in self._load_top_strategies(limit=1):
+            if s["confidence"] >= 0.6 and (s["success_count"] + s["failure_count"]) >= 2:
+                lines.append(
+                    f"- When {s['situation'].replace('_', ' ')}, "
+                    f"{s['strategy'].replace('_', ' ')} has worked before."
+                )
+
+        injections = self.get_prompt_context(agent_name)
+        if injections:
+            lines.append(injections)
+
+        if not lines:
+            return ""
+        return "What you remember about yourself:\n" + "\n".join(lines)
+
     def save_session_reflection(self, reflection: str, stats: Dict):
         """
         Save end-of-session reflection.

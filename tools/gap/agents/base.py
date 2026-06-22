@@ -34,6 +34,20 @@ class BaseAgent:
         self.timeout = timeout
         self.dormant = False
         self.profile = None  # CharacterProfile (injected by orchestrator)
+        self.personality = None  # PersonalityStore (injected by orchestrator)
+        # Whether to prepend remembered personality context to LLM prompts.
+        # Tactical agents (combat/spell) turn this off to stay terse and fast.
+        self.use_memory_context = True
+
+    def _memory_preamble(self) -> str:
+        """Remembered-personality preamble for prompts, or '' if none/disabled."""
+        if not self.use_memory_context or self.personality is None:
+            return ""
+        try:
+            return self.personality.get_behavioral_context(self.name)
+        except Exception as e:  # never let memory lookup break a decision
+            logger.debug(f"{self.name}: personality context unavailable: {e}")
+            return ""
 
     def set_model(self, model: str):
         """Update model for context-based switching (town vs dungeon)"""
@@ -84,12 +98,17 @@ class BaseAgent:
             LLM response text (stripped)
         """
         try:
+            # Prepend remembered personality so stored experience shapes the
+            # decision (no-op for tactical agents / when nothing is remembered).
+            preamble = self._memory_preamble()
+            full_prompt = f"{preamble}\n\n{prompt}" if preamble else prompt
+
             request_payload = {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": full_prompt,
                 "stream": False,
                 "options": {
-                    "num_ctx": 512,
+                    "num_ctx": 768 if preamble else 512,
                     "temperature": 0.2,
                     "top_p": 0.8,
                     "repeat_penalty": 1.1,

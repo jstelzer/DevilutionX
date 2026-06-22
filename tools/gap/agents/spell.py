@@ -48,6 +48,7 @@ class SpellAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(name="Spell", **kwargs)
+        self.use_memory_context = False  # keep the tactical loop terse and fast
         self.last_cast_tick = 0
         self.cast_cooldown = 20  # Ticks between casts (prevent spam)
         self.last_staff_charges = None  # Track staff charges to detect when they hit zero

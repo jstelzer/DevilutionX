@@ -25,6 +25,7 @@ class CombatAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(name="Combat", **kwargs)
+        self.use_memory_context = False  # keep the tactical loop terse and fast
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Only activate if monsters nearby and not in town"""
