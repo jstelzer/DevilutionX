@@ -1,4 +1,5 @@
 #include "gap_ipc.h"
+#include <cstdint>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>

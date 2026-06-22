@@ -1,4 +1,5 @@
 #include "gap_network.h"
+#include <cstdint>
 #include "gap_core.h"
 #include "../player.h"
 #include "../monster.h"

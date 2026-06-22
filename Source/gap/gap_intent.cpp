@@ -1,4 +1,5 @@
 #include "gap_intent.h"
+#include <cstdint>
 #include "gap_json.h"
 #include "gap_core.h"
 #include "gap_network.h"

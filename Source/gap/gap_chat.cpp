@@ -4,6 +4,7 @@
  * Implementation of GAP AI chat integration for MCP agent communication.
  */
 #include "gap_chat.h"
+#include <cstdint>
 
 #ifdef ENABLE_GAP
 

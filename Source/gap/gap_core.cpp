@@ -1,4 +1,5 @@
 #include "gap_core.h"
+#include <cstdint>
 #include "gap_ipc.h"
 #include "gap_state.h"
 #include "gap_intent.h"

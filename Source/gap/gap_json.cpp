@@ -1,4 +1,5 @@
 #include "gap_json.h"
+#include <cstdint>
 #include <algorithm>
 
 namespace devilution::gap {

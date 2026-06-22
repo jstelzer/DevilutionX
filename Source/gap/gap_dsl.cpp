@@ -1,4 +1,5 @@
 #include "gap_dsl.h"
+#include <cstdint>
 #include "gap_stores.h"
 #include "../player.h"
 #include "../monster.h"
