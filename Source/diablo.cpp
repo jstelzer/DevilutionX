@@ -1215,9 +1215,12 @@ void DiabloParseFlags(int argc, char **argv)
 			}
 			gGapCompanionSlot = parsedParam.value();
 		} else if (arg == "--headless") {
-			// Run as the AI's own headless client (no window/graphics).
+			// Run as the AI's own client with no on-screen window (the launcher
+			// uses dummy SDL video/audio drivers). We deliberately do NOT set the
+			// unit-test HeadlessMode: that blanks every file load and would break
+			// level generation. We want real data + full simulation, just no
+			// visible rendering (it draws to a throwaway dummy surface).
 			gGapHeadless = true;
-			HeadlessMode = true;
 		} else if (arg == "--join") {
 			if (i + 1 == argc) {
 				PrintFlagRequiresArgument("--join");
@@ -2719,6 +2722,9 @@ bool StartGame(bool bNewGame, bool bSinglePlayer)
 {
 	gbSelectProvider = true;
 	ReturnToMainMenu = false;
+#ifdef ENABLE_GAP
+	if (gGapHeadless) SDL_Log("GAP-DBG: StartGame bSingle=%d", bSinglePlayer ? 1 : 0);
+#endif
 
 	do {
 		gbLoadGame = false;

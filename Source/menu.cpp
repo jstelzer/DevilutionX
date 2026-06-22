@@ -106,6 +106,12 @@ bool DummyGetHeroInfo(_uiheroinfo * /*pInfo*/)
 
 bool mainmenu_select_hero_dialog(GameData *gameData)
 {
+#ifdef ENABLE_GAP
+	// Headless AI client picks its hero non-interactively (gSaveNumber is set in
+	// InitMulti before the join), so skip the hero-selection UI entirely.
+	if (gGapHeadless)
+		return true;
+#endif
 	OptionEntryInt<uint32_t> *pSaveNumberFromOptions = nullptr;
 	_selhero_selections dlgresult = SELHERO_NEW_DUNGEON;
 	if (demo::IsRunning()) {
@@ -156,6 +162,9 @@ void mainmenu_loop()
 {
 	bool done;
 
+#ifdef ENABLE_GAP
+	if (gGapHeadless) SDL_Log("GAP-DBG: mainmenu_loop entered (headless)");
+#endif
 	RefreshMusic();
 	done = false;
 
@@ -163,6 +172,12 @@ void mainmenu_loop()
 		_mainmenu_selections menu = MAINMENU_NONE;
 		if (demo::IsRunning())
 			menu = MAINMENU_SINGLE_PLAYER;
+#ifdef ENABLE_GAP
+		else if (gGapHeadless) {
+			SDL_Log("GAP-DBG: headless forcing MULTIPLAYER -> join");
+			menu = MAINMENU_MULTIPLAYER;  // headless AI client joins a TCP game directly
+		}
+#endif
 		else if (!UiMainMenuDialog(gszProductName, &menu, 30))
 			app_fatal(_("Unable to display mainmenu"));
 

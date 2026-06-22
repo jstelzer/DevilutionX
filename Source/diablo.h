@@ -120,6 +120,10 @@ extern GameLogicStep gGameLogicStep;
 // GAP companion mode globals
 extern std::string gGapCompanionSave;
 extern int gGapCompanionSlot;
+// GAP-TRUE-MP headless-client globals
+extern bool gGapHeadless;
+extern std::string gGapJoinAddr;
+extern std::string gGapGamePassword;
 #endif
 
 #ifdef __UWP__

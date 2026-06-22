@@ -968,6 +968,12 @@ endif()
 
 if(ENABLE_GAP)
   target_compile_definitions(libdevilutionx PUBLIC ENABLE_GAP)
+  # multi.cpp lives in a separate object library that libdevilutionx *links*,
+  # so the PUBLIC define above does not reach it. The GAP headless-join /
+  # companion code in InitMulti needs ENABLE_GAP, so define it there too.
+  # NOTE: other object libraries with #ifdef ENABLE_GAP code may also have been
+  # compiled out the same way (e.g. missile-damage fix) — audit separately.
+  target_compile_definitions(libdevilutionx_multiplayer PUBLIC ENABLE_GAP)
 endif()
 
 if(SCREEN_READER_INTEGRATION)

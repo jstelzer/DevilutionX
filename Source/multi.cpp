@@ -39,15 +39,20 @@
 #include "utils/language.h"
 #include "utils/str_cat.hpp"
 
+namespace devilution {
+
 #ifdef ENABLE_GAP
-// Forward declaration for ParseSaveNumber function from diablo.cpp
+// These live in namespace devilution (defined in diablo.cpp). They must be
+// declared INSIDE the namespace so unqualified references here resolve to the
+// real symbols rather than ::ParseSaveNumber etc. (which caused link errors
+// once multi.cpp started compiling with ENABLE_GAP).
 extern uint32_t ParseSaveNumber(const std::string& savePath);
-// External GAP companion globals from diablo.cpp
 extern int gGapCompanionSlot;
 extern std::string gGapCompanionSave;
+extern bool gGapHeadless;
+extern std::string gGapJoinAddr;
+extern std::string gGapGamePassword;
 #endif
-
-namespace devilution {
 
 bool gbSomebodyWonGameKludge;
 uint16_t sgwPackPlrOffsetTbl[MAX_PLRS];
@@ -507,16 +512,49 @@ bool InitMulti(GameData *gameData)
 
 	int playerId;
 
-	while (true) {
-		if (gbSelectProvider && !UiSelectProvider(gameData)) {
-			return false;
+#ifdef ENABLE_GAP
+	if (gGapHeadless) {
+		// Headless AI client: join the human-hosted TCP game on localhost
+		// non-interactively (no provider/game-select UI). We are a real player.
+		// Retry once per second (the host may not be up yet) but THROTTLE so a
+		// missing host can never spin the CPU, and give up after maxAttempts.
+		gSaveNumber = ParseSaveNumber(gGapCompanionSave);  // our own hero save
+		const int maxAttempts = 60;  // ~1 minute waiting for the host
+		bool joined = false;
+		for (int attempt = 1; attempt <= maxAttempts && !joined; attempt++) {
+			// For TCP the "game name" is the host address (host:port).
+			std::string addr = gGapJoinAddr;
+			std::string pw = gGapGamePassword;
+			if (SNetInitializeProvider(SELCONN_TCP, gameData)) {
+				RegisterNetEventHandlers();
+				if (SNetJoinGame(addr.data(), pw.data(), &playerId)) {
+					joined = true;  // MyPlayerId assigned by the host handshake
+					break;
+				}
+			}
+			SDL_Log("GAP: join %s failed (attempt %d/%d); waiting for host, retry in 1s",
+			    gGapJoinAddr.c_str(), attempt, maxAttempts);
+			SDL_Delay(1000);  // throttle — never busy-spin
 		}
+		if (!joined) {
+			SDL_Log("GAP: could not join %s after %d attempts; exiting", gGapJoinAddr.c_str(), maxAttempts);
+			diablo_quit(1);
+		}
+		SDL_Log("GAP: headless joined %s as player %d", gGapJoinAddr.c_str(), playerId);
+	} else
+#endif
+	{
+		while (true) {
+			if (gbSelectProvider && !UiSelectProvider(gameData)) {
+				return false;
+			}
 
-		RegisterNetEventHandlers();
-		if (UiSelectGame(gameData, &playerId))
-			break;
+			RegisterNetEventHandlers();
+			if (UiSelectGame(gameData, &playerId))
+				break;
 
-		gbSelectProvider = true;
+			gbSelectProvider = true;
+		}
 	}
 
 	if (static_cast<size_t>(playerId) >= Players.size()) {
@@ -538,7 +576,7 @@ bool InitMulti(GameData *gameData)
 			  << " gGapCompanionSlot != MyPlayerId: " << (gGapCompanionSlot != MyPlayerId)
 			  << " !gGapCompanionSave.empty(): " << (!gGapCompanionSave.empty()) << std::endl;
 	
-	if (gGapCompanionSlot >= 0 && gGapCompanionSlot < MAX_PLRS && 
+	if (!gGapHeadless && gGapCompanionSlot >= 0 && gGapCompanionSlot < MAX_PLRS &&
 		gGapCompanionSlot != MyPlayerId && !gGapCompanionSave.empty()) {
 		
 		// Parse the companion save filename to get save number
@@ -550,8 +588,7 @@ bool InitMulti(GameData *gameData)
 			
 			// Mark the companion slot as active and connected
 			Players[gGapCompanionSlot].plractive = true;
-			Players[gGapCompanionSlot]._pGFXLoad = 0;  // Reset graphics load state
-			
+
 			// Mark as connected in multiplayer state - this is crucial!
 			player_state[gGapCompanionSlot] |= PS_CONNECTED;
 			player_state[gGapCompanionSlot] |= PS_ACTIVE;
@@ -844,7 +881,7 @@ void NetClose()
 bool NetInit(bool bSinglePlayer)
 {
 #ifdef ENABLE_GAP
-	std::cout << "GAP: NetInit called - bSinglePlayer=" << bSinglePlayer << std::endl;
+	SDL_Log("GAP-DBG: NetInit reached, gGapHeadless=%d bSingle=%d", gGapHeadless ? 1 : 0, bSinglePlayer ? 1 : 0);
 #endif
 	while (true) {
 		SetRndSeed(0);
