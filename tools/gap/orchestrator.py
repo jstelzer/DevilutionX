@@ -561,6 +561,13 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             else:
                 priority = 4  # MEDIUM - normal looting
 
+            # Gold-pickup boost: when she's gold-constrained and there's gold on
+            # the ground, grab it before fixating on something she can't yet afford
+            # (e.g. an unaffordable Griswold repair while ignoring dropped gold).
+            gold_on_ground = any(item.get("type") == "go" for item in loot)
+            if gold_on_ground and state.get("gold", 0) < 200:
+                priority = max(priority, 7)  # beat town-service agents (Griswold=6)
+
             # Danger dampener: reduce looting priority when in danger (unless critical HP)
             danger_mult = 1.0 if hp_pct < 30 else (0.5 if danger > 0.5 else 1.0)
             score = loot_rec.weight * priority * danger_mult
