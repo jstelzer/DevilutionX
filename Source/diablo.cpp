@@ -149,6 +149,12 @@ std::vector<std::string> DebugCmdsFromCommandLine;
 std::string gGapCompanionSave;
 int gGapCompanionSlot = -1;  // -1 means no companion, 0-3 for player slots
 
+// Headless-client mode (GAP-TRUE-MP): this process is the AI's own client that
+// joins a human-hosted TCP game on localhost as a real player (no graphics).
+bool gGapHeadless = false;
+std::string gGapJoinAddr = "127.0.0.1:6112";  // host:port of the TCP game to join
+std::string gGapGamePassword;                  // game password (matches the host)
+
 // Helper function to parse save filename and extract save number
 // Handles filenames like "multi_1.sv" -> 1, or "/path/to/multi_0.sv" -> 0
 uint32_t ParseSaveNumber(const std::string& savePath) {
@@ -1208,6 +1214,22 @@ void DiabloParseFlags(int argc, char **argv)
 				diablo_quit(64);
 			}
 			gGapCompanionSlot = parsedParam.value();
+		} else if (arg == "--headless") {
+			// Run as the AI's own headless client (no window/graphics).
+			gGapHeadless = true;
+			HeadlessMode = true;
+		} else if (arg == "--join") {
+			if (i + 1 == argc) {
+				PrintFlagRequiresArgument("--join");
+				diablo_quit(64);
+			}
+			gGapJoinAddr = argv[++i];  // host:port of the TCP game to join
+		} else if (arg == "--game-password") {
+			if (i + 1 == argc) {
+				PrintFlagRequiresArgument("--game-password");
+				diablo_quit(64);
+			}
+			gGapGamePassword = argv[++i];
 #endif
 #ifdef _DEBUG
 		} else if (arg == "-i") {
