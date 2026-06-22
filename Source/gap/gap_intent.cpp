@@ -782,7 +782,10 @@ bool GapIntentProcessor::ExecuteExplore() {
 bool GapIntentProcessor::ExecuteChat(const std::string& message) {
     // Send a chat message from the AI agent
 #ifdef ENABLE_GAP
-    const size_t MAX_CHAT_LENGTH = 150;  // Match Python's chat.py splitting (line 201)
+    // The network chat buffer is MAX_SEND_STR_LEN (80); SendAIResponse adds the
+    // "[GAP AI] " prefix (9) and chunking may add "..." markers (up to 6). Keep
+    // each chunk small enough that the final broadcast string isn't truncated.
+    const size_t MAX_CHAT_LENGTH = MAX_SEND_STR_LEN - 16;  // ~64 chars
     
     if (message.length() <= MAX_CHAT_LENGTH) {
         // Message fits in one line
