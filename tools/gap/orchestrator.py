@@ -44,6 +44,61 @@ SOCKET_PATH = "/tmp/devilutionx-gap.sock"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 
+class CommitmentTracker:
+    """Adds commitment/hysteresis to council voting so the companion finishes
+    what it started instead of flip-flopping between similar-priority goals.
+
+    Retains a short memory of the recent winner and nudges scores accordingly:
+
+    - The incumbent (currently-committed) agent gets a flat ``bonus`` to its
+      score, so small per-tick score wiggles can't flip the winner.
+    - If the incumbent is briefly *absent* (an agent that returns weight 0 for a
+      tick, e.g. the Town agent when it momentarily can't decide), low-priority
+      *fallback* agents (Movement/Exploration) are damped so a transient gap in
+      the committed goal doesn't make her wander off — that was the pacing bug.
+    - Commitment decays: after ``max_streak`` consecutive committed rounds the
+      bonus is dropped for a round so a stalled or genuinely-superseded goal can
+      be replaced. High-priority agents (Healing/Combat/Chat) still win because
+      ``bonus`` is smaller than their priority gap over town/movement work.
+    """
+
+    FALLBACK_AGENTS = {"Movement", "Exploration"}
+
+    def __init__(self, bonus: float = 2.5, fallback_damp: float = 0.2, max_streak: int = 12):
+        self.bonus = bonus
+        self.fallback_damp = fallback_damp
+        self.max_streak = max_streak
+        self.incumbent: Optional[str] = None
+        self.streak = 0
+
+    def apply(self, recommendations):
+        """Return recommendations with the incumbent boosted and, when the
+        incumbent is missing this round, fallback agents damped."""
+        if not self.incumbent or self.streak >= self.max_streak or not recommendations:
+            return recommendations
+
+        present = {name for name, _, _ in recommendations}
+        incumbent_present = self.incumbent in present
+
+        adjusted = []
+        for name, response, score in recommendations:
+            if name == self.incumbent:
+                score += self.bonus
+            elif not incumbent_present and name in self.FALLBACK_AGENTS:
+                score *= self.fallback_damp
+            adjusted.append((name, response, score))
+        return adjusted
+
+    def note_winner(self, agent_name: str):
+        """Record the chosen agent. Staying on the same goal extends the streak;
+        switching goals resets commitment to the new winner."""
+        if agent_name == self.incumbent and self.streak < self.max_streak:
+            self.streak += 1
+        else:
+            self.incumbent = agent_name
+            self.streak = 0
+
+
 class AgentOrchestrator:
     """Orchestrates specialist agents to make optimal decisions"""
 
@@ -64,6 +119,7 @@ class AgentOrchestrator:
         self.think_interval = think_interval
 
         self.sock = None
+        self.connection_closed = False  # set True when the game closes the socket (EOF)
         self.memory = MemoryStore()
         self.personality = None  # PersonalityStore (initialized after character profile is known)
         self.personality_data = {}  # Will be populated after character_id is known
@@ -96,6 +152,8 @@ class AgentOrchestrator:
         # Hysteresis tracking to prevent ping-ponging
         self.last_decision_agent = None
         self.last_decision_time = 0
+        # Commitment/hysteresis: keeps the council on one goal for several rounds
+        self.commitment = CommitmentTracker()
 
         # Track recently dropped items (for mutual support)
         self.recently_dropped_position = None
@@ -237,6 +295,11 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         """Receive length-prefixed message from socket"""
         try:
             length_bytes = self.sock.recv(4)
+            if len(length_bytes) == 0:
+                # recv() returned empty without timing out → peer (game) closed
+                # the socket cleanly. Signal the run loop to shut down.
+                self.connection_closed = True
+                return None
             if len(length_bytes) < 4:
                 return None
 
@@ -246,12 +309,17 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             while len(data) < length:
                 chunk = self.sock.recv(length - len(data))
                 if not chunk:
+                    self.connection_closed = True
                     return None
                 data += chunk
 
             return data.decode('utf-8')
 
         except socket.timeout:
+            return None
+        except (ConnectionResetError, BrokenPipeError):
+            # Game went away mid-stream (crash/quit) — treat as a disconnect.
+            self.connection_closed = True
             return None
         except Exception as e:
             logger.error(f"Error receiving message: {e}")
@@ -544,16 +612,11 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                 logger.info(f"🚨 EMERGENCY but NO POTIONS: HP={hp_pct}% - deferring to agents")
                 # Fall through to normal scoring (LootAgent or retreat will handle)
 
-        # Apply hysteresis: +0.15 bias to last agent if chosen within 1.5s
-        # This prevents ping-ponging between similar-scoring agents
+        # Apply commitment/hysteresis: boost the goal we're already committed to
+        # and damp fallback agents during a transient gap, so she finishes a goal
+        # instead of pacing between (e.g.) walking to Pepin and following you.
         current_time = time.time()
-        if self.last_decision_agent and (current_time - self.last_decision_time) < 1.5:
-            # Find the last agent in recommendations and boost its score
-            for i, (agent_name, response, score) in enumerate(recommendations):
-                if agent_name == self.last_decision_agent:
-                    recommendations[i] = (agent_name, response, score + 0.15)
-                    logger.debug(f"⏱️  Hysteresis: +0.15 bias to {agent_name} (continuity)")
-                    break
+        recommendations = self.commitment.apply(recommendations)
 
         # Pick highest score
         if not recommendations:
@@ -561,6 +624,9 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
         best = max(recommendations, key=lambda x: x[2])
         agent_name, response, score = best
+
+        # Record the winner so commitment persists to the next round
+        self.commitment.note_winner(agent_name)
 
         # Track DROP commands to avoid picking them back up
         if response.command.startswith("DROP ") and not response.command.startswith("DROP GOLD"):
@@ -726,6 +792,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             while True:
                 # Receive DSL message from game
                 dsl_line = self.recv_message()
+
+                if self.connection_closed:
+                    logger.info("🔌 Game closed the connection — shutting down gracefully.")
+                    self._shutdown_handler(None, None)  # saves reflection, then exits
 
                 if not dsl_line:
                     time.sleep(0.01)
