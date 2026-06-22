@@ -10,6 +10,8 @@
 #include "../towners.h"
 #include "../spelldat.h"  // For SpellID enum
 #include "../levels/gendung.h"  // For IsTileLit()
+#include "../levels/trigs.h"    // For trigs[] (real level-transition tiles)
+#include "../interfac.h"        // For WM_DIAB* interface_mode values
 #include <sstream>
 #include <cmath>
 
@@ -57,14 +59,41 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         break;
     }
 
-    // Nearest stairs/level-transition tile in view: ST=type@x,y (omitted if none).
-    // Lets the agent see and path to stairs for level transitions.
+    // Level-transition triggers: ST=<dir>@x,y;<dir>@x,y;... (omitted if none).
+    // These are the REAL trigger tiles from trigs[] (the engine fires the level
+    // change when MyPlayer stands on one), not the offset stair graphic. We emit
+    // all of them with a direction so the agent can pick the one matching where
+    // the player went.
     {
-        int stairX = 0, stairY = 0;
-        std::string stairType = FindNearbyStairs(playerPos.x, playerPos.y, 12, stairX, stairY);
-        if (!stairType.empty()) {
-            dsl << " ST=" << stairType << "@" << stairX << "," << stairY;
+        std::ostringstream stairs;
+        bool first = true;
+        for (int i = 0; i < numtrigs; i++) {
+            const char* dir = nullptr;
+            switch (trigs[i]._tmsg) {
+            case WM_DIABNEXTLVL:
+                dir = "down";  // normal step down one level
+                break;
+            case WM_DIABPREVLVL:
+            case WM_DIABRTNLVL:
+            case WM_DIABTWARPUP:
+                dir = "up";  // step up one level / return to town
+                break;
+            case WM_DIABTOWNWARP:
+                dir = "warp";  // town shortcut to a *specific* deeper dungeon
+                break;
+            default:
+                break;
+            }
+            if (dir == nullptr)
+                continue;
+            if (!first)
+                stairs << ";";
+            stairs << dir << "@" << static_cast<int>(trigs[i].position.x)
+                   << "," << static_cast<int>(trigs[i].position.y);
+            first = false;
         }
+        if (!first)
+            dsl << " ST=" << stairs.str();
     }
 
     // Monsters: M=id@x,y,hp%,flags;...

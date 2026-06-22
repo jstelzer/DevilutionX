@@ -38,7 +38,7 @@ def parse_dsl_state(line: str) -> Dict:
         "me": (0, 0, 100, 100),
         "player": None,  # Main player position (x, y) if companion
         "player_floor": None,  # Main player's dungeon level (for follow decisions)
-        "stairs": None,  # Nearest stairs in view: {"type": "down_next", "x": .., "y": ..}
+        "stairs": [],  # Level-transition triggers: [{"type": "down"|"up", "x": .., "y": ..}, ...]
         "mobs": [],
         "loot": [],
         "objects": [],  # Objects: [{"id": 15, "x": 45, "y": 30, "type": "ch", "dist": 5}, ...]
@@ -76,13 +76,18 @@ def parse_dsl_state(line: str) -> Dict:
         if m := re.search(r'PF=(\d+)', line):
             state["player_floor"] = int(m.group(1))
 
-        # Parse nearest stairs: ST=type@x,y  (e.g. ST=down_next@45,30)
-        if m := re.search(r'ST=([a-z_]+)@(\d+),(\d+)', line):
-            state["stairs"] = {
-                "type": m.group(1),
-                "x": int(m.group(2)),
-                "y": int(m.group(3)),
-            }
+        # Parse level-transition triggers: ST=down@25,29;up@49,21 (a list — the
+        # real trigger tiles the engine fires on when standing on them).
+        if m := re.search(r'ST=([a-z]+@\d+,\d+(?:;[a-z]+@\d+,\d+)*)', line):
+            stairs = []
+            for part in m.group(1).split(';'):
+                if pm := re.match(r'([a-z]+)@(\d+),(\d+)', part):
+                    stairs.append({
+                        "type": pm.group(1),  # "down" or "up"
+                        "x": int(pm.group(2)),
+                        "y": int(pm.group(3)),
+                    })
+            state["stairs"] = stairs
 
         # Parse monsters: M=id@x,y,hp%,flags;...
         # Use negative lookbehind to avoid matching L= or E=

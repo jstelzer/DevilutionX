@@ -18,6 +18,7 @@ from agents.combat import CombatAgent
 from agents.spell import SpellAgent
 from agents.healing import HealingAgent
 from agents.movement import MovementAgent
+from agents.transition import TransitionAgent
 from agents.loot import LootAgent
 from agents.stats import StatsAgent
 from agents.town import TownAgent
@@ -174,13 +175,15 @@ class AgentOrchestrator:
         self.adria = AdriaAgent(model=model, ollama_url=ollama_url)
         self.exploration = ExplorationAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
+        self.transition = TransitionAgent(model=model, ollama_url=ollama_url)
         self.chat = ChatAgent(memory=self.memory, model=chat_model, ollama_url=ollama_url)
 
         # List of all agents for easy model switching
         self.agents = [
             self.combat, self.spell, self.healing, self.loot,
             self.stats, self.town, self.shopping,
-            self.inventory, self.griswold, self.cain, self.adria, self.exploration, self.movement,
+            self.inventory, self.griswold, self.cain, self.adria, self.exploration,
+            self.transition, self.movement,
             self.chat
         ]
 
@@ -581,6 +584,13 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             danger_mult = 0.3 if danger > 0.6 else 1.0
             score = exploration_rec.weight * 4 * danger_mult
             recommendations.append(("Exploration", exploration_rec, score))
+
+        # TRANSITION - follow the player across floors via stairs (beats town
+        # chores/wandering, but not combat/healing).
+        transition_rec = self.transition.evaluate(state)
+        if transition_rec and transition_rec.weight > 0.0:
+            score = transition_rec.weight * 6
+            recommendations.append(("Transition", transition_rec, score))
 
         # MOVEMENT - fallback, always evaluates
         movement_rec = self.movement.evaluate(state)
