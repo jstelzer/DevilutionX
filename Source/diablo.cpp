@@ -1064,6 +1064,13 @@ void PrintHelpOption(std::string_view flags, std::string_view description)
 	PrintHelpOption("--hellfire", _(/* TRANSLATORS: Commandline Option */ "Force Hellfire mode"));
 	printInConsole(_(/* TRANSLATORS: Commandline Option */ "Hellfire options:"));
 	printNewlineInConsole();
+#ifdef ENABLE_GAP
+	printNewlineInConsole();
+	printInConsole(_(/* TRANSLATORS: Commandline Option */ "GAP AI companion options:"));
+	printNewlineInConsole();
+	PrintHelpOption("--companion-save <file>", _(/* TRANSLATORS: Commandline Option */ "Save file to load the AI companion hero from (e.g. multi_1.sv)"));
+	PrintHelpOption("--companion-slot <0-3>", _(/* TRANSLATORS: Commandline Option */ "Player slot the AI companion occupies"));
+#endif
 #ifdef _DEBUG
 	printNewlineInConsole();
 	printInConsole("Debug options:");
