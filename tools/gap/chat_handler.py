@@ -247,13 +247,14 @@ Reply naturally like you're chatting between fights. Keep it short (1-2 sentence
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
+                    "keep_alive": "30m",  # Keep chat model resident in VRAM between messages
                     "options": {
                         "temperature": 0.9,  # More creative/varied
                         "num_predict": 100,  # Room for personality
                         "top_p": 0.95,  # More diverse word choices
                     }
                 },
-                timeout=5.0  # Longer timeout for better model
+                timeout=60.0  # 12B chat can take >10s on cold load; chat is latency-tolerant
             )
 
             if resp.ok:

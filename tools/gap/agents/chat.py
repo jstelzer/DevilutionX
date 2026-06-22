@@ -32,6 +32,7 @@ class ChatAgent(BaseAgent):
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": "30m",  # Keep chat model resident in VRAM between messages
                 "options": {
                     "temperature": 0.7,  # More creative for chat
                     "top_p": 0.9,
@@ -40,7 +41,8 @@ class ChatAgent(BaseAgent):
                 }
             }
 
-            resp = requests.post(self.ollama_url, json=payload, timeout=10.0)
+            # Chat is latency-tolerant; a 12B may take >10s on cold load, so allow ample time.
+            resp = requests.post(self.ollama_url, json=payload, timeout=60.0)
             resp.raise_for_status()
             return resp.json().get("response", "")
         except Exception as e:
