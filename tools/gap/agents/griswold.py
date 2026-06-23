@@ -9,8 +9,10 @@ from item_comparator import ItemComparator
 
 logger = logging.getLogger(__name__)
 
-# Equipment we're willing to sell (everything else: potions/scrolls/misc — keep).
-SELLABLE_TYPES = ("sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st")
+# Equipment Griswold (the smith) will actually buy: weapons + armor + shields +
+# helms. NOT staves — the smith refuses them; those go to Adria. (Selling a staff
+# here silently no-ops and the staff clutters the pack forever.)
+SELLABLE_TYPES = ("sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl")
 
 # GBNF grammar for selling commands (SELL slot weight or NONE weight)
 GRISWOLD_GRAMMAR = r"""
@@ -179,7 +181,11 @@ class GriswoldAgent(BaseAgent):
             return None
 
         # Calculate urgency based on inventory fullness (Griswold already found above)
-        inv_fullness = inv_count / 40.0
+        # Fullness by GRID AREA (free cells), not item count — 15 big items can
+        # fill the 40-cell grid. This is what made her think she had room and
+        # never sell. Falls back to item count if inv_free is absent.
+        inv_free = state.get("inv_free", max(0, 40 - inv_count))
+        inv_fullness = (40 - inv_free) / 40.0
 
         # Check if Griswold's shop is currently open
         shop_is_open = "sm" in stores and len(stores.get("sm", [])) > 0

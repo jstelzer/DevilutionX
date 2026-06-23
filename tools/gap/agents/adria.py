@@ -28,47 +28,48 @@ class AdriaAgent(BaseAgent):
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """
-        Activate if:
-        1. In town
-        2. Character is a caster (sorcerer or has magic stat investment)
-        3. Need mana potions OR have staves/books to sell OR staff needs recharging
+        Activate (in town) if:
+        - We have staves/books to offload — ANY class, because Adria is the ONLY
+          vendor that buys them (Griswold refuses staves), or
+        - We're a caster who needs mana potions or has a low staff to recharge.
         """
         if not state.get("in_town", False):
             return False
-
         stats = state.get("stats")
         if not stats:
             return False
 
-        # Check if character is a caster
-        player_class = stats.get("class", 0)
-        is_sorcerer = (player_class == 2)
-        is_caster = is_sorcerer or stats.get("mag", 0) > 25  # High magic = caster
+        # Staves/books can only be sold here — universal, not caster-gated.
+        if self._sellable_items(state):
+            return True
 
+        # Buying mana / recharging is caster-only.
+        is_caster = stats.get("class", 0) == 2 or stats.get("mag", 0) > 25
         if not is_caster:
             return False
 
-        # Check if we need mana potions
-        belt = state.get("belt", [])
-        mp_potions = sum(1 for slot in belt if slot == "mp")
+        mp_potions = sum(1 for slot in state.get("belt", []) if slot == "mp")
         need_mana = mp_potions < 2
 
-        # Check if equipped staff has low charges
-        equipped = state.get("equipped", {})
-        hand_left = equipped.get("hand_left")
-        staff_low_charges = False
-        if hand_left and hand_left.get("type") == "st":
-            staff_charges = hand_left.get("charges", 0)
-            staff_low_charges = 0 < staff_charges <= 5  # Low but not empty
+        hand_left = state.get("equipped", {}).get("hand_left")
+        staff_low_charges = bool(
+            hand_left and hand_left.get("type") == "st" and 0 < hand_left.get("charges", 0) <= 5
+        )
+        return need_mana or staff_low_charges
 
-        # Check if we have staves/books to sell
-        inventory = state.get("inventory", [])
-        sellable_magic_items = [
-            item for item in inventory
-            if item["type"] in ["st", "bk"] and item["identified"]
-        ]
-
-        return need_mana or len(sellable_magic_items) > 0 or staff_low_charges
+    def _sellable_items(self, state: Dict[str, Any]) -> list:
+        """Identified staves/books worth offloading (profile doesn't want to keep)."""
+        items = []
+        for item in state.get("inventory", []):
+            if item.get("type") not in ("st", "bk"):
+                continue
+            if not item.get("identified"):
+                continue
+            if self.profile and item["type"] == "st":
+                if self.profile.should_keep_item("st", item.get("quality", "normal")).get("keep"):
+                    continue
+            items.append(item)
+        return items
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
@@ -161,8 +162,10 @@ class AdriaAgent(BaseAgent):
                 logger.warning(f"⚡ Adria: Equipped staff has NO charges! "
                               f"Recharging not yet implemented for GAP - staff is useless until recharged")
 
-        # Priority 1: Buy mana potions if low
-        if mp_potions_total < 4:
+        # Priority 1: Buy mana potions if low (casters only — a Warrior offloading
+        # a looted staff shouldn't stock mana).
+        is_caster = stats.get("class", 0) == 2 or stats.get("mag", 0) > 25
+        if is_caster and mp_potions_total < 4:
             mp_items = [item for item in witch_items if item["type"] == "mp"]
 
             if mp_items and gold >= mp_items[0]["price"]:
@@ -201,48 +204,25 @@ Example: BUY wt {item['id']} 0.8"""
                 else:
                     logger.warning(f"Adria: Failed to parse BUY command from LLM: {response}")
 
-        # Priority 2: Sell staves/books we can't use
-        sellable_items = [
-            item for item in inventory
-            if item["type"] in ["st", "bk"] and item["identified"]
-        ]
-
-        if sellable_items and inv_count / 40.0 > 0.4:
+        # Priority 2: Sell staves/books (deterministic — selling is mechanical, no
+        # LLM needed; one per tick clears them over ticks). Urgency scales with how
+        # full the GRID is (free cells), not item count.
+        sellable_items = self._sellable_items(state)
+        if sellable_items:
+            inv_free = state.get("inv_free", 40)
+            if inv_free <= 4:
+                weight = 0.7   # grid nearly full — offload now
+            elif inv_free <= 12:
+                weight = 0.5
+            else:
+                weight = 0.3   # shop's open anyway, might as well
             item = sellable_items[0]
-
-            # Use character profile to check if we should keep this staff/book
-            should_sell = True
-            if self.profile and item["type"] == "st":
-                eval_result = self.profile.should_keep_item("st", item["quality"])
-                if eval_result["keep"]:
-                    should_sell = False
-
-            if should_sell:
-                prompt = f"""You are the Adria specialist. Decide if we should sell this magic item.
-
-Item: {item['type']} ({item['quality']}) at slot {item['slot']}
-Inventory: {inv_count}/40 slots
-Current gold: {gold}
-
-Sell items we don't need to free inventory space.
-
-Output ONE line only:
-SELL {item['slot']} <weight>
-
-Weight (0.0-1.0):
-- 0.6 = Inventory 60%+ full
-- 0.4 = Inventory 40%+ full
-- 0.0 = Don't sell
-
-Example: SELL {item['slot']} 0.5"""
-
-                response = self.query_llm(prompt, grammar=ADRIA_GRAMMAR)
-
-                parsed = self.parse_weighted_response(response)
-                if parsed and parsed.command.startswith("SELL"):
-                    parsed.reasoning = f"Adria: Sell {item['type']} (free inventory space)"
-                    logger.info(f"Adria: Recommending SELL {item['slot']} ({item['type']})")
-                    return parsed
+            logger.info(f"Adria: SELL slot {item['slot']} ({item['quality']}/{item['type']}), inv_free={inv_free}")
+            return AgentResponse(
+                command=f"SELL {item['slot']}",
+                weight=weight,
+                reasoning=f"Adria: sell {item['quality']}/{item['type']} (free {inv_free} cells)"
+            )
 
         # Priority 3: Buy staves/books if we want them and can afford them
         if gold > 500 and self.profile:
