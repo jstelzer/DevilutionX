@@ -71,6 +71,20 @@ the `FIREBOLT=2`=Healing bug).
   what's equipped) via ItemComparator.find_redundant — the downgrade left after
   an upgrade no longer piles up.
 
+### A4. Hazard awareness — "see the fire" (⏳ prerequisite for combat smarts + Track D)
+Today she can't perceive ground hazards at all: the DSL emits monsters/loot/
+objects but **no danger layer** — Fire Wall, Inferno, Apocalypse rifts, Nova/
+arcane blasts, lava/hazard terrain. So "MOVE OUT OF THE FIRE" is literally a
+missing capability; she has the survival instincts of a houseplant because she's
+standing in an *invisible* fire.
+- **Emit a hazard layer in the DSL:** active hostile AoE/missile tiles + hazard
+  terrain near her, as `HZ=x,y,kind;...` (kind = fire/lightning/arcane/…).
+  Source from the missile list (like TP detection already does) + terrain flags.
+- **Use it:** combat/movement avoid standing in/ pathing through hazard tiles;
+  positioning prefers safe tiles. Helps every class regardless of personality.
+- This is the gate for Track D's *fire tolerance* — you can't tune how much fire
+  she'll stand in until she can see it.
+
 ---
 
 ## Track B — Coordination (write a small TLA+ spec just before each)
@@ -103,8 +117,8 @@ need extraction → can I create a portal? → have the resource? → place it �
   healing, no human portal). Pure Python — DSL already exposed the pieces.
   Honors ownership / no-stranding / liveness / no-yo-yo invariants (documented in
   the agent).
-- ⏳ **Spell provider:** cast Town Portal directly — needs known-spells in the DSL
-  (folds into A2's action enumeration).
+- ✅ **Spell provider:** casts Town Portal directly when known + affordable,
+  found by name from the engine spell menu (A2). Scroll preferred (saves mana).
 - ⏳ **Economic extraction:** open a portal to go *sell* when the pack is full
   (closes the sustained-run loop), and the **return trip** back to the dungeon.
 - ⏳ **Invite the human through her portal:** needs the go-first/hold dance
@@ -113,6 +127,51 @@ need extraction → can I create a portal? → have the resource? → place it �
 Designed as a reusable **PortalCapability** (provider-pluggable), not Rogue/Sorc-
 specific. The spell provider and economic/return legs depend on A2 (action
 system) and B2 (portal ownership).
+
+---
+
+## Track D — Character (personality & relationship)
+
+The layer that turns a competent bot into someone you tell stories about. The
+goal isn't a flawless tactical machine — it's a companion that gets it *wrong*
+in characterful, bounded ways. Players don't remember the clean runs; they
+remember "that time the rogue opened every barrel while Diablo was punching us."
+
+### D1. Personality sliders
+Per-character traits in `[0,1]` that bias the council's agent weights at
+`decide()` time (the council already scores `weight × priority`; sliders are just
+per-agent multipliers — the explicit version of the learning-loop nudge and
+`_combat_confidence_mult` we already have):
+
+| Slider | Scales |
+|---|---|
+| **Greed** | Loot/Upgrade weight, make-room aggressiveness, breaking off a fight for a shiny |
+| **Curiosity** | Exploration (barrels/chests/doors/shrines), wander-vs-follow |
+| **Obedience** | How hard a chat stance (HOLD/ENGAGE/RETREAT/FOLLOW) overrides her own judgment |
+| **Discipline** | Self-preservation: heal/extract thresholds, holding formation, **fire tolerance** (A4) |
+
+**Bounded imperfection is the whole point:** sliders bias *preferences*, but hard
+survival floors stay (emergency reflexes + a Discipline floor) so it reads as
+"yep, that's one of us," not "decorative houseplant." Low Discipline + high
+Greed/Curiosity = lingers in the fire "for science"; high Discipline = already at
+the rally point. Same engine, two personalities. Lives in `PersonalityStore`
+(traits + confidence already exist).
+
+### D2. Relationship-driven adaptation (emergent)
+Sliders aren't only authored or self-taught from deaths — they **adapt to THIS
+player**, via the memory system (`PersonalityStore` already records memories with
+emotional impact + a `player_relationship` trait):
+- **Observe the player:** do they share (drop potions/gold for her, help when
+  she's low, wait up) or hoard (grab every drop, leave her behind, let her die)?
+- **React over time:** a generous player earns loyalty → Obedience/▼Greed (she
+  shares back, sticks close); a greedy/abandoning player → ▲Greed/▼Obedience
+  (she looks out for herself, races you to drops). Recorded as memories, surfaced
+  in chat ("you always have my back" vs "last time I went down you kept walking").
+- Emergent: the same hero develops a different personality depending on who she
+  adventures with. That's the payoff.
+
+Depends on A4 (so "fire tolerance" means something) and a stable council
+(weights are the tuning surface).
 
 ---
 
@@ -137,11 +196,17 @@ A2 action system ✅ (self-describing spell menu; spell-id bug fixed).
    Warrior auto-Repair via skill, Rogue Disarm; offensive scroll use.
 3. **B4 finish** — economic extraction (portal to sell when full) + the return
    trip; later, invite-the-human-through.
-4. **B1 spec + build** — loot ownership, once multiple agents are contending for
+4. **A4 hazard awareness** — emit a danger layer (`HZ=`) so she can see and avoid
+   fire/AoE. Smarter combat now, and the prerequisite for Track D's fire tolerance.
+5. **D1 personality sliders** — weight biases over the council, with survival
+   floors. Small once A4 lands; high character-per-line-of-code.
+6. **D2 relationship adaptation** — feed observed player behavior (shares vs
+   hoards) into the sliders via the memory system. Emergent personality.
+7. **B1 spec + build** — loot ownership, once multiple agents are contending for
    the same drops hard enough to matter.
-5. **B2 / B3** — formalize portal/level ownership and stance arbitration (the
+8. **B2 / B3** — formalize portal/level ownership and stance arbitration (the
    place a small TLA+ spec earns its keep).
-6. **Track C cleanup** — `gGapCompanionSlot` / `Source/seat/` dead code; debug
+9. **Track C cleanup** — `gGapCompanionSlot` / `Source/seat/` dead code; debug
    markers; global `ENABLE_GAP`.
 
 Rule of thumb: Track A is "go build it." Track B is "spec it small, then build it."
