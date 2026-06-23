@@ -18,6 +18,7 @@ from agents.base import AgentResponse
 from agents.combat import CombatAgent
 from agents.spell import SpellAgent
 from agents.healing import HealingAgent
+from agents.mana import ManaAgent
 from agents.movement import MovementAgent
 from agents.transition import TransitionAgent
 from agents.portal import PortalAgent
@@ -187,6 +188,7 @@ class AgentOrchestrator:
         self.combat = CombatAgent(model=model, ollama_url=ollama_url)
         self.spell = SpellAgent(model=model, ollama_url=ollama_url)
         self.healing = HealingAgent(model=model, ollama_url=ollama_url)
+        self.mana = ManaAgent(model=model, ollama_url=ollama_url)
         self.loot = LootAgent(model=model, ollama_url=ollama_url)
         self.stats = StatsAgent(model=model, ollama_url=ollama_url)
         self.town = TownAgent(model=model, ollama_url=ollama_url)
@@ -204,7 +206,7 @@ class AgentOrchestrator:
 
         # List of all agents for easy model switching
         self.agents = [
-            self.combat, self.spell, self.healing, self.loot,
+            self.combat, self.spell, self.healing, self.mana, self.loot,
             self.stats, self.town, self.shopping,
             self.inventory, self.griswold, self.cain, self.adria, self.exploration,
             self.upgrade, self.portal, self.transition, self.movement,
@@ -580,6 +582,15 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             priority = 10 if hp_pct < 25 else 8
             score = healing_rec.weight * priority
             recommendations.append(("Healing", healing_rec, score))
+
+        # MANA - drink a mana potion so a low caster can keep casting (not melee)
+        mana_rec = self.mana.evaluate(state)
+        if mana_rec and mana_rec.weight > 0.0:
+            # Priority 8: a quick belt action that re-enables casting. Sits below
+            # HP healing (10) and spell-cast (9) so survival/attacking still win,
+            # but a critical refuel (0.7*8=5.6) beats routine wandering/loot.
+            score = mana_rec.weight * 8
+            recommendations.append(("Mana", mana_rec, score))
 
         # STATS - high priority when available (character progression)
         stats_rec = self.stats.evaluate(state)
