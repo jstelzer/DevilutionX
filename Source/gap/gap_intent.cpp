@@ -611,8 +611,11 @@ bool GapIntentProcessor::ExecuteCastSpell(int spell_id, int x, int y) {
     SpellType castType;
     if (player->_pMemSpells & mask) {
         castType = SpellType::Spell;
-        // Memorized spells cost mana (_pMana is fixed-point: value << 6).
-        if (player->_pMana < (GetManaAmount(*player, spellID) << 6)) {
+        // Memorized spells cost mana. GetManaAmount already returns fixed-point
+        // (it does `ma <<= 6` internally) and _pMana is fixed-point too, so
+        // compare directly — the old `<< 6` here double-shifted and made every
+        // memorized cast read "not enough mana."
+        if (player->_pMana < GetManaAmount(*player, spellID)) {
             std::cerr << "GAP: ExecuteCastSpell failed - not enough mana for spell " << spell_id << std::endl;
             return false;
         }

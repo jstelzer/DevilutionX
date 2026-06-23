@@ -720,7 +720,7 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
                 const SpellData &sd = GetSpellData(sid);
                 std::string name = sd.sNameText;
                 for (char &c : name) if (c == ' ') c = '_';
-                int mana = GetManaAmount(*player, sid);
+                int mana = GetManaAmount(*player, sid) >> 6;  // GetManaAmount is fixed-point; >>6 = points
                 std::string flags;
                 if (sd.isTargeted()) flags += 'o';
                 if (sd.isAllowedInTown()) flags += 't';
