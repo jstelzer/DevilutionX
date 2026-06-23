@@ -343,7 +343,7 @@ bool ExecuteDirectPickup(int player_id, int item_id) {
     // Find the item in the active items list
     for (uint8_t i = 0; i < ActiveItemCount; i++) {
         if (ActiveItems[i] == item_id) {
-            const auto& item = Items[item_id];
+            auto& item = Items[item_id];
 
             std::cerr << "GAP: ExecuteDirectPickup - Found item " << item_id
                       << " (" << item._iIName << ") at (" << item.position.x << "," << item.position.y << ")" << std::endl;
@@ -358,6 +358,19 @@ bool ExecuteDirectPickup(int player_id, int item_id) {
                       << "), distance dx=" << dx << " dy=" << dy << std::endl;
 
             if (dx <= 1 && dy <= 1) {
+                // Debounce exactly like a real player (player.cpp:1255): one request
+                // per item until the slot is reused. The Python loop re-issues PK
+                // every tick, but re-sending CMD_REQUESTAGITEM while a grant is in
+                // flight floods the host with duplicates that race the 6-second
+                // GetItemRecord lock — the first request records the item, the
+                // duplicates are ignored, and if the grant round-trip is even
+                // slightly delayed the item ends up locked-but-not-picked-up.
+                if (item._iRequest) {
+                    std::cerr << "GAP: ExecuteDirectPickup - Request already in flight for item "
+                              << item_id << ", not re-sending" << std::endl;
+                    return true;
+                }
+
                 std::cerr << "GAP: ExecuteDirectPickup - Item in range, requesting via network" << std::endl;
 
                 // Network-correct pickup: request an auto-get exactly like a real
@@ -371,6 +384,7 @@ bool ExecuteDirectPickup(int player_id, int item_id) {
                 // both this client and the host materialized the item, duplicating
                 // it (and AutoGetItem cursor-dropped copies when the pack was full).
                 NetSendCmdGItem(true, CMD_REQUESTAGITEM, player, static_cast<uint8_t>(item_id));
+                item._iRequest = true;  // latch: don't re-send until the slot is reused
 
                 return true;
             } else {
