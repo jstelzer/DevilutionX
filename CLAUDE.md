@@ -5,22 +5,33 @@
 
 ## Quick Reference
 
-**Start Game + AI Companion** (two terminals; use the helper scripts):
+**Start Game + AI Companion** — **true multiplayer**: the AI runs its OWN
+headless `devilutionx` client that joins your game as a real player 2. Three
+terminals (use the helper scripts):
 ```bash
-# Terminal 1: launch the game (you = slot 0, AI = slot 1 from multi_1.sv).
-# Then host a multiplayer game from the menu, password "foo".
+# Terminal 1 — YOUR client. Host a TCP multiplayer game, password "foo".
+#   You are the only human player; the AI is NOT a slot in your client.
 cd /home/mental/Projects/DevilutionX/tools/gap
 ./launch_game.sh
 
-# Terminal 2: launch the agent (waits for the game socket, then connects)
+# Terminal 2 — the AI's headless client. Joins 127.0.0.1:6112 as player 2,
+#   loads its own hero from multi_1.sv, and owns the GAP DSL socket.
+cd /home/mental/Projects/DevilutionX/tools/gap
+./launch_headless.sh
+
+# Terminal 3 — the orchestrator. Connects to the headless client's socket.
 cd /home/mental/Projects/DevilutionX/tools/gap
 ./launch_agent.sh
 ```
 
 `launch_agent.sh` runs `uv run orchestrator.py --model qwen2.5:3b --chat-model
 gemma3:12b --password foo` under the hood. Override models/password via env, e.g.
-`CHAT_MODEL=gemma3:27b ./launch_agent.sh`. Note: **the orchestrator has no
-`--companion-slot` flag** — the slot is set on the *game* side only.
+`CHAT_MODEL=gemma3:27b ./launch_agent.sh`.
+
+> **One client, one player.** Only the headless client serves the GAP socket
+> (gated on `gGapHeadless`); your client never does. The orchestrator can only
+> ever drive the AI's own player — never yours. The old `--companion-slot`
+> sidecar model is retired. See **MILESTONE-2026-06-22.md** for the full arc.
 
 **Recommended Models** (dev box has a 32GB RTX 5090, so it's split-config by default):
 - `qwen2.5:3b` - fast tactical/dungeon loop (the `--model`)
@@ -83,16 +94,23 @@ cmake --build build --target devilutionx
 See [GAP-PROJECT-SUMMARY.md - TODO Section](./GAP-PROJECT-SUMMARY.md#todo-feature-gaps) for prioritized feature roadmap.
 
 **High Priority Next Steps:**
-- [ ] UpgradeAgent (use ItemComparator to find upgrades)
-- [ ] EQUIP command (C++ - swap inventory to equipped slot)
+- [x] UpgradeAgent (use ItemComparator to find upgrades) — ✅ done 2026-06-22
+- [x] EQUIP command (C++ - swap inventory to equipped slot) — ✅ done 2026-06-22
 - [ ] Multi-item Cain identification loop
+- [ ] Finish retiring `gGapCompanionSlot` / `Source/seat/` dead code (inert)
 
 ---
 
-## GAP-TRUE-MP: Headless Client Architecture (active work, this branch)
+## GAP-TRUE-MP: Headless Client Architecture (✅ DONE — merged into `GAP`)
 
-> Branch `GAP-TRUE-MP`. The goal: make the AI a **true second player**, not a
-> local slot hack.
+> **Status (2026-06-22): shipped.** The spike branch `GAP-TRUE-MP` was
+> fast-forward-merged into `GAP` and deleted. All four increments below landed:
+> the AI runs its own headless client, joins over TCP as a real player, executes
+> through the network layer, and the leash + companion-slot injection are retired
+> (one client, one player). The design notes below are kept as reference for how
+> it works. See **MILESTONE-2026-06-22.md** for the full writeup.
+>
+> The goal was: make the AI a **true second player**, not a local slot hack.
 
 ### Why
 Today the companion is a local player slot in the single human client. The
@@ -140,20 +158,33 @@ the network command layer (`NetSendCmd*`) — i.e. actually honor the "companion
 as first-class players, no special cases" principle. The leash era let us cheat;
 this era makes us honest.
 
-### Increments
-1. **Headless boot stable** — `--headless` flag sets `HeadlessMode=true`; boot via
-   dummy SDL drivers; verify a clean startup (no window, no crash).
-2. **Non-interactive TCP join** — bypass menus, wire `SNetInitializeProvider` +
-   `SNetJoinGame`, load `multi_1` via `gSaveNumber`; confirm it joins a hosted
-   localhost game and runs the loop headless.
-3. **Network-correct GAP execution** — move command executors from direct calls
-   to `NetSendCmd*` so two clients stay in sync.
-4. **Retire** the leash + companion-slot injection; build stairs/portals the
-   normal way (the AI is just `MyPlayer` in its own client).
-
-Merge to `GAP` only when unbroken.
+### Increments (all ✅ landed 2026-06-22)
+1. ✅ **Headless boot stable** — `--headless` flag (sets `gGapHeadless`, NOT the
+   unit-test `HeadlessMode`, which blanks file loads); boot via dummy SDL drivers.
+2. ✅ **Non-interactive TCP join** — `SNetInitializeProvider` + `SNetJoinGame`,
+   load `multi_1` via `gSaveNumber`; joins a hosted localhost game headless.
+3. ✅ **Network-correct GAP execution** — pickup via `CMD_REQUESTAGITEM`, equip
+   via `AutoEquip`+`CMD_CHANGEPLRITEMS`, etc., so the two clients stay in sync.
+4. ✅ **Retired** the leash + companion-slot injection; `GetControlledPlayer()`
+   gutted to `MyPlayer`; GAP socket bound only on the headless client.
 
 ## Recent Changes Log
+
+### June 22, 2026 (PM): True-MP companion ✅ — see MILESTONE-2026-06-22.md
+
+The big push: sidecar POC → first-class second player, merged into `GAP`.
+- **Headless true-MP client** joins your TCP game as a real player 2 (own client,
+  own level, own `MyPlayer`).
+- **Follows you across levels** — `TransitionAgent` (stairs, via real `trigs[]`
+  tiles) and `PortalAgent` (town portals, with caster-aware go-first/hold).
+- **Tactical commands** over chat — hold / engage / retreat / follow stances.
+- **Upgrade loop** — `EQUIP` command + `UpgradeAgent` + `ItemComparator` (Loot →
+  Cain → equip; weapon-driven combat style so a Rogue isn't kiting with a sword).
+- **Bidirectional chat** over the network, word-chunked under the wire limit.
+- **The cleanup** — gated the GAP socket to the headless client (fixed a
+  "drove the human's character" bug from socket contention), retired the
+  `GetControlledPlayer` sidecar indirection. Inert `gGapCompanionSlot` /
+  `Source/seat/` dead code remains for a careful follow-up.
 
 ### June 22, 2026: Revival + Agency/Memory Pass ✅
 
@@ -194,9 +225,10 @@ companion toward being a first-class peer.
   Combat's weight x1.1 where the approach has worked, x0.7 where it's been
   getting her killed.
 
-**Next milestone:** autonomous level transitions (stairs + town portals to
-re-arm/sell/repair and rejoin) — the companion still can't change levels on its
-own; the engine is hacked to keep her with the player. See GAP-PROJECT-SUMMARY.
+**Next milestone (as of this entry):** autonomous level transitions — **since
+delivered** by the true-MP rewrite below (she changes levels herself via stairs
+and town portals as her own client). See the June 22 (PM) entry +
+MILESTONE-2026-06-22.md.
 
 ### November 4, 2025: Personality Persistence System ✅
 
@@ -538,6 +570,7 @@ AT id               # Attack monster ID (melee, paths to target)
 PK id               # Pick up item
 CAST spell_id x y   # Cast spell at position
 REPAIR slot         # Repair equipped item (0-6)
+EQUIP inv_slot      # Equip inventory item into its body slot (swaps current)
 DROP slot           # Drop inventory item
 DROP GOLD amount    # Drop gold
 IN npc_id           # Interact with NPC
@@ -547,6 +580,10 @@ BUY store item_idx  # Buy from store
 ID slot             # Identify item at Cain
 ```
 
+> The human can also steer her in combat via **chat** (not DSL commands): terse
+> stances like "hold here", "go in", "fall back", "on me" set HOLD / ENGAGE /
+> RETREAT / FOLLOW. Parsed in `orchestrator.py` (`_detect_tactical_intent`).
+
 ---
 
 ## Technical Debt & Known Issues
@@ -554,9 +591,10 @@ ID slot             # Identify item at Cain
 ### High Priority
 
 **Equipment Upgrade Workflow:**
-- [ ] Create UpgradeAgent to use ItemComparator.find_upgrades()
-- [ ] Implement EQUIP command (C++ side - swap inventory → equipped)
+- [x] Create UpgradeAgent to use ItemComparator.find_upgrades() — ✅ done
+- [x] Implement EQUIP command (C++ side - swap inventory → equipped) — ✅ done
 - [ ] Mark old equipment for selling after upgrade
+- [ ] Make room first (sell junk) when the pack is full so a find can be grabbed
 
 **Cain Multi-Identification:**
 - [ ] Loop through all unidentified items, not just first one
@@ -685,8 +723,9 @@ Source/gap/              # C++ GAP integration
 └── gap_stores.cpp       # Store interaction helpers
 
 tools/gap/               # Python agent system
-├── launch_game.sh       # Launch game with companion args (you=0, AI=1)
-├── launch_agent.sh      # Launch the orchestrator (waits for socket)
+├── launch_game.sh       # Launch YOUR client; host a TCP MP game
+├── launch_headless.sh   # Launch the AI's headless client (joins as player 2)
+├── launch_agent.sh      # Launch the orchestrator (connects to headless socket)
 ├── orchestrator.py      # Multi-agent coordinator + CommitmentTracker
 ├── dsl_parser.py        # DSL state parser
 ├── memory_store.py      # SQLite persistent memory (spatial/goals)
@@ -701,10 +740,12 @@ tools/gap/               # Python agent system
     ├── town.py          # NPC navigation        ├── griswold.py # Selling, repair
     ├── cain.py          # Item identification   ├── adria.py    # Witch shop
     ├── inventory.py     # Belt refills          ├── stats.py    # Stat allocation
-    ├── movement.py      # Follow/explore        └── exploration.py # Chests/doors
+    ├── movement.py      # Follow/explore        ├── exploration.py # Chests/doors
+    ├── transition.py    # Follow via stairs     ├── portal.py   # Follow via town portals
+    └── upgrade.py       # Equip better gear (EQUIP via ItemComparator)
 ```
 
 ---
 
-*Last Updated: November 4, 2025*
+*Last Updated: June 22, 2026 (true-MP companion shipped; see MILESTONE-2026-06-22.md)*
 *For architecture overview, see [GAP-PROJECT-SUMMARY.md](./GAP-PROJECT-SUMMARY.md)*
