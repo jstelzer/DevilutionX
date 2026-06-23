@@ -53,6 +53,7 @@ private:
     bool ExecuteCastSpell(int spell_id, int x, int y);
     bool ExecutePickup(int item_id);
     bool ExecuteUsePotion(const std::string& kind, int slot = -1);
+    bool ExecuteUseInvItem(int inv_slot);
     bool ExecuteInteract(int object_id);
     bool ExecutePath(int x, int y);
     bool ExecuteExplore();

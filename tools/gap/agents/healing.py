@@ -67,8 +67,21 @@ class HealingAgent(BaseAgent):
         healing_slots = [(slot, item_type) for slot, item_type in enumerate(belt)
                         if item_type in ["hp", "rj", "sh"]]  # sh = healing scroll
 
-        # No healing items available - coordinate with LootAgent
+        # No healing in the belt - but we may have potions in the PACK. Drinking
+        # straight from inventory is a legal move (right-click → UI command), so
+        # quaff one directly rather than waiting on a belt refill that can't happen
+        # when the belt is full of scrolls/mana. (This is exactly the "26% HP, 6
+        # potions in my pack, can't use them" situation.)
         if not healing_slots:
+            inv_hp = next((it for it in state.get("inventory", [])
+                           if it.get("type") in ("hp", "rj")), None)
+            if inv_hp is not None:
+                return AgentResponse(
+                    command=f"UI {inv_hp['slot']}",
+                    weight=weight,
+                    reasoning=f"Healing: {reasoning} ({hp_pct}%) - drink {inv_hp['type']} from pack (belt has none)"
+                )
+
             # If HP critical and potions on ground, let LootAgent handle it
             loot = state.get("loot", [])
             if hp_pct < 30 and loot:
@@ -78,8 +91,11 @@ class HealingAgent(BaseAgent):
                     reasoning=f"Healing: {reasoning} ({hp_pct}%) NO POTIONS - let LootAgent pickup"
                 )
 
-            # If HP critical with no potions and no loot, RETREAT to player
-            if hp_pct < 30:
+            # If HP critical with no potions and no loot, RETREAT to player — but
+            # ONLY in the dungeon. In town she's already safe, and retreating to
+            # the player every tick (weight 0.9) starves the agents that actually
+            # fix low HP in town: buying potions and the free Pepin heal-visit.
+            if hp_pct < 30 and not state.get("in_town"):
                 player = state.get("player")
                 if player:
                     plyr_x, plyr_y = player

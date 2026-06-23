@@ -189,6 +189,12 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         iss >> intent.param_slot;
         intent.param_kind = "hp";  // Default to health potion
 
+    } else if (cmd == "UI") {
+        // UI inv_slot — use/drink an item directly from inventory (right-click).
+        // Lets her quaff an HP potion from the pack when the belt is full/empty.
+        intent.action = "use_inv_item";
+        iss >> intent.param_inv_slot;
+
     } else if (cmd == "SAY") {
         // SAY text...
         intent.action = "chat";
@@ -316,6 +322,8 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteCastSpell(intent.param_id, intent.param_x, intent.param_y);
     } else if (intent.action == "use_potion") {
         return ExecuteUsePotion(intent.param_kind, intent.param_slot);
+    } else if (intent.action == "use_inv_item") {
+        return ExecuteUseInvItem(intent.param_inv_slot);
     } else if (intent.action == "pickup") {
         return ExecutePickup(intent.param_id);
     } else if (intent.action == "equip_item") {
@@ -728,6 +736,40 @@ bool GapIntentProcessor::ExecuteUsePotion(const std::string& kind, int slot) {
         std::cerr << "GAP: UseInvItem returned FALSE for slot " << slot << std::endl;
     }
 
+    return success;
+}
+
+bool GapIntentProcessor::ExecuteUseInvItem(int inv_slot) {
+    // Use/drink an item straight from the inventory grid (the right-click move) —
+    // e.g. quaff an HP potion from the pack when the belt is full or empty. The
+    // DSL inv slot is the InvList index; UseInvItem wants INVITEM_INV_FIRST + idx.
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP: ExecuteUseInvItem failed - no controlled player" << std::endl;
+        return false;
+    }
+    if (player->_pmode == PM_DEATH || player->_pmode == PM_QUIT || player->_pmode == PM_NEWLVL) {
+        std::cerr << "GAP: ExecuteUseInvItem failed - invalid player mode (" << player->_pmode << ")" << std::endl;
+        return false;
+    }
+    if (inv_slot < 0 || inv_slot >= player->_pNumInv) {
+        std::cerr << "GAP: ExecuteUseInvItem failed - invalid inv slot " << inv_slot
+                  << " (have " << player->_pNumInv << ")" << std::endl;
+        return false;
+    }
+    const Item& item = player->InvList[inv_slot];
+    if (item.isEmpty()) {
+        std::cerr << "GAP: ExecuteUseInvItem failed - inv slot " << inv_slot << " empty" << std::endl;
+        return false;
+    }
+
+    std::cout << "GAP: ExecuteUseInvItem - drinking/using '" << item._iIName
+              << "' from inv slot " << inv_slot << " (HP=" << (player->_pHitPoints >> 6)
+              << "/" << (player->_pMaxHP >> 6) << ")" << std::endl;
+
+    bool success = UseInvItem(*player, INVITEM_INV_FIRST + inv_slot);
+    if (!success)
+        std::cerr << "GAP: UseInvItem returned FALSE for inv slot " << inv_slot << std::endl;
     return success;
 }
 

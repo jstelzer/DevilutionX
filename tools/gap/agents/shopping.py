@@ -89,46 +89,23 @@ class ShoppingAgent(BaseAgent):
             hp_items = [item for item in healer_items if item["type"] == "hp"]
 
             if hp_items and gold >= hp_items[0]["price"]:
-                # Buy the first (cheapest) health potion
+                # Buy the cheapest health potion. DETERMINISTIC — buying when low
+                # is mechanical; the LLM here kept returning NONE (and small models
+                # copy the example index "BUY hl 1"), so just do it. Urgency scales
+                # with how few we have.
                 item = hp_items[0]
-
-                prompt = f"""You are the Shopping specialist. Decide if we should buy potions.
-
-Belt: {belt}
-HP Potions in belt: {hp_potions_belt}
-HP Potions in inventory: {hp_potions_inv}
-Total HP Potions: {hp_potions}
-Healer inventory: {len(healer_items)} items
-HP Potion available: {item['price']} gold
-Our gold: {gold}
-
-We need more health potions (have {hp_potions} total, want 4+).
-
-Output ONE line only:
-BUY hl {item['id']} <weight>
-
-Weight (0.0-1.0):
-- 1.0 = Critical need (0-1 potions)
-- 0.8 = Urgent need (2 potions)
-- 0.5 = Stock up (3-4 potions)
-- 0.0 = Don't buy
-
-Example: BUY hl 1 0.9"""
-
-                response = self.query_llm(prompt, grammar=SHOPPING_GRAMMAR)
-
-                # Parse response
-                parsed = self.parse_weighted_response(response)
-                if parsed and parsed.command.startswith("BUY"):
-                    # Small models copy the example index ("BUY hl 1") instead of
-                    # substituting the real one, which buys the wrong (unaffordable)
-                    # store item and stalls. We already know the correct index.
-                    parsed.command = f"BUY hl {item['id']}"
-                    parsed.reasoning = f"Shopping: Buy health potion ({item['price']}g, have {gold}g)"
-                    logger.info(f"Shopping: Recommending BUY hl {item['id']} (price={item['price']}, gold={gold}, belt_hp={hp_potions})")
-                    return parsed
+                if hp_potions <= 1:
+                    weight = 1.0
+                elif hp_potions == 2:
+                    weight = 0.8
                 else:
-                    logger.warning(f"Shopping: Failed to parse BUY command from LLM: {response}")
+                    weight = 0.5
+                logger.info(f"Shopping: BUY hl {item['id']} health potion (price={item['price']}, gold={gold}, have={hp_potions})")
+                return AgentResponse(
+                    command=f"BUY hl {item['id']}",
+                    weight=weight,
+                    reasoning=f"Shopping: Buy health potion ({item['price']}g, have {hp_potions})"
+                )
 
         # Check for mana potions (if we're a caster)
         stats = state.get("stats")
