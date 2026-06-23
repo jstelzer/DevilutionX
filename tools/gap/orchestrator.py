@@ -1119,9 +1119,12 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                     else:
                         stats_str = "no_stats"
                     town_str = "TOWN" if state.get("in_town") else f"floor={state['floor']}"
+                    _hl = (state.get("equipped", {}) or {}).get("hand_left") or {}
+                    _wpn = f"{_hl.get('type','-')}" + (f"^{_hl.get('charges')}c/sp{_hl.get('spell_id')}" if _hl.get('type') == 'st' else "")
                     logger.info(
                         f"📥 State: tick={state['tick']} {town_str} {stats_str} "
-                        f"pos=({me_x},{me_y}) hp={hp_pct}% mobs={len(state['mobs'])} loot={len(state['loot'])} belt=[{belt_str}]"
+                        f"pos=({me_x},{me_y}) hp={hp_pct}% mobs={len(state['mobs'])} loot={len(state['loot'])} "
+                        f"inv={state.get('inv_count', 0)}/40 wpn={_wpn} belt=[{belt_str}]"
                     )
 
                 # Update memory (for future agents)

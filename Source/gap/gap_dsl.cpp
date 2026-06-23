@@ -713,8 +713,10 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             uint64_t known = player->_pMemSpells | player->_pAblSpells;
             int curMana = player->_pMana >> 6;  // _pMana is fixed-point (>>6 = points)
             for (int s = 1; s < 64; s++) {
-                if (!((known >> s) & 1)) continue;
                 SpellID sid = static_cast<SpellID>(s);
+                // Test with the engine's own bitmask (1 << (id-1)) — NOT (known>>s),
+                // which is off by one and skips Firebolt (id 1 -> bit 0) entirely.
+                if (!(known & GetSpellBitmask(sid))) continue;
                 const SpellData &sd = GetSpellData(sid);
                 std::string name = sd.sNameText;
                 for (char &c : name) if (c == ' ') c = '_';
