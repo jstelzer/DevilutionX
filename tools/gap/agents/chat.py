@@ -13,12 +13,19 @@ logger = logging.getLogger(__name__)
 class ChatAgent(BaseAgent):
     """Specialist for bidirectional communication with player"""
 
+    # Even URGENT proactive warnings must not repeat every tick: a state like a
+    # Sorcerer carrying zero healing potions is permanent, not a per-tick event,
+    # and would otherwise win the council forever (blocking movement/follow).
+    URGENT_COOLDOWN = 400  # 20s @ 20 ticks/sec — min gap between any urgent warning
+    REPEAT_SUPPRESS = 2400  # 2min — don't re-send the identical line within this window
+
     def __init__(self, memory, **kwargs):
         super().__init__(name="Chat", **kwargs)
         self.memory = memory  # MemoryStore instance
         self.message_queue = queue.Queue()  # Player messages
         self.pending_responses = queue.Queue()  # Multi-part responses
         self.last_proactive_message = 0  # Tick of last proactive message
+        self.last_proactive_text = None  # Text of last proactive message (for de-dup)
 
     def query_llm_chat(self, prompt: str) -> str:
         """
@@ -373,14 +380,18 @@ LOCATION:
 
     def _has_proactive_trigger(self, state: Dict[str, Any]) -> bool:
         """Check if something is worth mentioning proactively"""
-        # Urgent triggers (always communicate)
-        if self._no_belt_potions_low_hp(state):
-            return True
-        if self._completely_out_of_potions(state):
-            return True
+        tick = state.get("tick", 0)
+
+        # Urgent triggers — important, but still rate-limited so a permanent
+        # condition (e.g. a Sorcerer with no healing potions) doesn't spam every
+        # tick and starve the rest of the council.
+        if tick - self.last_proactive_message >= self.URGENT_COOLDOWN:
+            if self._no_belt_potions_low_hp(state):
+                return True
+            if self._completely_out_of_potions(state):
+                return True
 
         # Important triggers (30s cooldown)
-        tick = state.get("tick", 0)
         if tick - self.last_proactive_message >= 600:  # 30 seconds at 20 ticks/sec
             if self._low_on_potions(state):
                 return True
@@ -394,31 +405,36 @@ LOCATION:
 
         return False
 
+    def _emit_proactive(self, tick: int, message: Optional[str], weight: float, reasoning: str) -> Optional[AgentResponse]:
+        """Build a proactive SAY, recording it for cooldown/de-dup. Returns None
+        (so the council picks another agent) if the identical line was sent within
+        REPEAT_SUPPRESS — prevents nagging the same sentence over and over."""
+        if not message:
+            return None
+        if message == self.last_proactive_text and tick - self.last_proactive_message < self.REPEAT_SUPPRESS:
+            return None
+        self.last_proactive_message = tick
+        self.last_proactive_text = message
+        return AgentResponse(command=f"SAY {message}", weight=weight, reasoning=reasoning)
+
     def _generate_proactive_message(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """Generate appropriate proactive message based on triggers"""
         tick = state.get("tick", 0)
 
-        # URGENT: No belt potions + low HP (weight 0.8, no cooldown)
-        if self._no_belt_potions_low_hp(state):
-            message = self._generate_belt_warning(state)
-            if message:
-                self.last_proactive_message = tick
-                return AgentResponse(
-                    command=f"SAY {message}",
-                    weight=0.8,  # High priority - urgent warning
-                    reasoning="Chat: URGENT - No belt potions + low HP"
-                )
+        # URGENT: No belt potions + low HP (weight 0.8, URGENT_COOLDOWN)
+        if tick - self.last_proactive_message >= self.URGENT_COOLDOWN:
+            if self._no_belt_potions_low_hp(state):
+                resp = self._emit_proactive(tick, self._generate_belt_warning(state), 0.8,
+                                            "Chat: URGENT - No belt potions + low HP")
+                if resp:
+                    return resp
 
-        # URGENT: Completely out of potions (weight 0.8, no cooldown)
-        if self._completely_out_of_potions(state):
-            message = self._generate_out_of_potions_warning(state)
-            if message:
-                self.last_proactive_message = tick
-                return AgentResponse(
-                    command=f"SAY {message}",
-                    weight=0.8,
-                    reasoning="Chat: URGENT - Out of HP potions"
-                )
+            # URGENT: Completely out of potions
+            if self._completely_out_of_potions(state):
+                resp = self._emit_proactive(tick, self._generate_out_of_potions_warning(state), 0.8,
+                                            "Chat: URGENT - Out of HP potions")
+                if resp:
+                    return resp
 
         # Check cooldown for non-urgent messages
         if tick - self.last_proactive_message < 600:  # 30s cooldown
@@ -426,25 +442,18 @@ LOCATION:
 
         # IMPORTANT: Low on potions (weight 0.5, 30s cooldown)
         if self._low_on_potions(state):
-            message = self._generate_low_potions_warning(state)
-            if message:
-                self.last_proactive_message = tick
-                return AgentResponse(
-                    command=f"SAY {message}",
-                    weight=0.5,
-                    reasoning="Chat: Low on potions warning"
-                )
+            resp = self._emit_proactive(tick, self._generate_low_potions_warning(state), 0.5,
+                                        "Chat: Low on potions warning")
+            if resp:
+                return resp
 
         # IMPORTANT: Inventory full (weight 0.5, 30s cooldown)
         if self._inventory_full(state):
             inv_count = state.get("inv_count", 0)
             message = f"My pack's completely full ({inv_count}/40). Can't pick up any more loot!"
-            self.last_proactive_message = tick
-            return AgentResponse(
-                command=f"SAY {message}",
-                weight=0.5,
-                reasoning="Chat: Inventory full warning"
-            )
+            resp = self._emit_proactive(tick, message, 0.5, "Chat: Inventory full warning")
+            if resp:
+                return resp
 
         # Check 60s cooldown for FYI messages
         if tick - self.last_proactive_message < 1200:
@@ -457,12 +466,7 @@ LOCATION:
                 level = companion_state['level']
                 stat_points = companion_state['stat_points']
                 message = f"Hey! Just hit level {level}. Got {stat_points} stat points to spend!"
-                self.last_proactive_message = tick
-                return AgentResponse(
-                    command=f"SAY {message}",
-                    weight=0.2,
-                    reasoning="Chat: Level up notification"
-                )
+                return self._emit_proactive(tick, message, 0.2, "Chat: Level up notification")
 
         return None
 
