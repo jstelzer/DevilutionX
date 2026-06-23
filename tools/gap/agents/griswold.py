@@ -5,8 +5,12 @@ Griswold Agent - Selling items for gold
 import logging
 from typing import Dict, Any, Optional
 from .base import BaseAgent, AgentResponse
+from item_comparator import ItemComparator
 
 logger = logging.getLogger(__name__)
+
+# Equipment we're willing to sell (everything else: potions/scrolls/misc — keep).
+SELLABLE_TYPES = ("sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st")
 
 # GBNF grammar for selling commands (SELL slot weight or NONE weight)
 GRISWOLD_GRAMMAR = r"""
@@ -46,31 +50,48 @@ class GriswoldAgent(BaseAgent):
             return True
 
         # Check if we have sellable items (must be identified first!)
-        inventory = state.get("inventory", [])
-        sellable_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
+        return len(self._sellable_items(state)) > 0
 
-        # Only sell identified items (avoid selling good unidentified gear)
-        # Use character profile if available to filter out items we want to keep
-        sellable_items = []
+    def _sellable_items(self, state: Dict[str, Any]) -> list:
+        """Identified inventory equipment worth selling.
+
+        Two sources: (1) junk the profile doesn't want, and (2) gear that's
+        redundant — worse than what we already have equipped in that slot, i.e.
+        the downgrade left behind after an upgrade. Redundant gear sells even if
+        its quality (magic/unique) would normally make us keep it.
+        """
+        inventory = state.get("inventory", [])
+
+        # Slots of inventory items that are strictly worse than what's worn.
+        redundant_slots = set()
+        try:
+            for r in ItemComparator(self.profile).find_redundant(state):
+                redundant_slots.add(r["candidate"].get("slot"))
+        except Exception as e:  # comparator is best-effort; never block selling
+            logger.debug(f"Griswold: redundancy check failed: {e}")
+
+        sellable = []
         for item in inventory:
-            if item["type"] not in sellable_types:
+            if item["type"] not in SELLABLE_TYPES:
                 continue
-            if not item["identified"]:
+            if not item.get("identified"):
                 continue  # Don't sell unidentified items!
 
-            # Use profile to check if we should keep this item
+            # Redundant gear is always sellable, regardless of quality.
+            if item.get("slot") in redundant_slots:
+                sellable.append(item)
+                continue
+
+            # Otherwise: only sell what the profile doesn't want to keep.
             if self.profile:
-                eval_result = self.profile.should_keep_item(item["type"], item["quality"])
-                if eval_result["keep"]:
-                    continue  # Profile says keep it
-            else:
-                # No profile - only sell normal quality
-                if item["quality"] != "normal":
+                if self.profile.should_keep_item(item["type"], item["quality"])["keep"]:
                     continue
+            elif item["quality"] != "normal":
+                continue
 
-            sellable_items.append(item)
+            sellable.append(item)
 
-        return len(sellable_items) > 0
+        return sellable
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
@@ -150,26 +171,9 @@ class GriswoldAgent(BaseAgent):
                 reasoning=f"Griswold: Repair {slot_name} ({dur_pct:.0f}% durability)"
             )
 
-        # Find sellable items (must match should_activate logic!)
-        sellable_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
-        potential_sells = []
-        for item in inventory:
-            if item["type"] not in sellable_types:
-                continue
-            if not item["identified"]:
-                continue  # Don't sell unidentified!
-
-            # Use profile to check if we should keep this item
-            if self.profile:
-                eval_result = self.profile.should_keep_item(item["type"], item["quality"])
-                if eval_result["keep"]:
-                    continue  # Profile says keep it
-            else:
-                # No profile - only sell normal quality
-                if item["quality"] != "normal":
-                    continue
-
-            potential_sells.append(item)
+        # Find sellable items (shared with should_activate; includes redundant
+        # gear that's worse than what we have equipped).
+        potential_sells = self._sellable_items(state)
 
         if not potential_sells:
             return None

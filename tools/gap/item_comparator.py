@@ -343,3 +343,42 @@ class ItemComparator:
         upgrades.sort(key=lambda x: x["upgrade_info"]["score_diff"], reverse=True)
 
         return upgrades
+
+    def find_redundant(self, state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Find inventory equipment that's worse than what's already worn.
+
+        The inverse of find_upgrades: identified gear in a slot where we have
+        something strictly better equipped. These are the downgrades left behind
+        after an upgrade swap — safe to sell even if their quality would
+        otherwise make us keep them. A slot with nothing equipped yields nothing
+        (we won't sell our only weapon/armor).
+
+        Returns: [{"slot": str, "candidate": {...}, "compare": {...}}, ...]
+        """
+        redundant = []
+        equipped = state.get("equipped", {})
+        inventory = state.get("inventory", [])
+
+        def consider(candidates, current, slot, compare):
+            if not current or not current.get("stats"):
+                return  # nothing equipped here — the inventory item isn't redundant
+            for cand in candidates:
+                if not cand.get("identified") or not cand.get("stats"):
+                    continue
+                info = compare(current, cand)
+                # Worse-or-equal to what's worn (and not an upgrade) -> redundant.
+                if not info["upgrade"] and info["score_diff"] <= 0:
+                    redundant.append({"slot": slot, "candidate": cand, "compare": info})
+
+        weapon_types = ["sw", "ax", "bw", "mc", "st"]
+        current_weapon = equipped.get("hand_left") or equipped.get("hand_right")
+        consider([i for i in inventory if i["type"] in weapon_types],
+                 current_weapon, "hand_left", self.compare_weapons)
+
+        consider([i for i in inventory if i["type"] in ("la", "ma", "ha")],
+                 equipped.get("chest"), "chest", self.compare_armor)
+
+        consider([i for i in inventory if i["type"] == "hl"],
+                 equipped.get("head"), "head", self.compare_armor)
+
+        return redundant
