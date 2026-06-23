@@ -110,17 +110,21 @@ class ItemComparator:
         # Base score
         score = avg_damage * tohit_mult
 
-        # Class-specific bonuses
+        # Class-specific bias: reward the class weapon AND penalize off-class
+        # weapons, so she keeps her bow (Rogue) / blade (Warrior) unless an
+        # off-class weapon is *dramatically* better. Without the penalty a plain
+        # higher-damage Scimitar out-scores a Rogue's bow and she ditches her
+        # whole ranged identity.
         if self.profile:
-            # Rogues value bows highly
-            if self.profile.is_ranged and weapon_type == "bw":
-                score *= 1.2
-            # Warriors value swords/axes/maces
-            elif self.profile.is_melee and weapon_type in ["sw", "ax", "mc"]:
-                score *= 1.1
-            # Sorcerers value staffs
+            if self.profile.is_ranged:
+                score *= 1.5 if weapon_type == "bw" else 0.6
+            elif self.profile.is_melee:
+                if weapon_type in ["sw", "ax", "mc"]:
+                    score *= 1.3
+                elif weapon_type == "bw":
+                    score *= 0.8  # warriors can use bows but prefer melee
             elif self.profile.is_caster and weapon_type == "st":
-                score *= 1.15
+                score *= 1.3
 
         return score
 
@@ -279,26 +283,26 @@ class ItemComparator:
         equipped = state.get("equipped", {})
         inventory = state.get("inventory", [])
 
-        # Check weapons (hand_left, hand_right)
-        for weapon_slot in ["hand_left", "hand_right"]:
-            current_weapon = equipped.get(weapon_slot)
-
-            # Find weapon candidates in inventory
-            weapon_types = ["sw", "ax", "bw", "mc", "st"]
-            candidates = [
-                item for item in inventory
-                if item["type"] in weapon_types and item.get("identified", False)
-            ]
-
-            for candidate in candidates:
-                comparison = self.compare_weapons(current_weapon, candidate)
-                if comparison["upgrade"]:
-                    upgrades.append({
-                        "slot": weapon_slot,
-                        "current": current_weapon,
-                        "candidate": candidate,
-                        "upgrade_info": comparison,
-                    })
+        # Weapons: treat as a SINGLE primary slot. Comparing hand_left and
+        # hand_right independently makes an empty off-hand — which a two-handed
+        # bow or a shield-less hand leaves open — look like it needs *any* weapon,
+        # so she flip-flops her gear every tick. Compare candidates against the
+        # one weapon she's actually wielding instead.
+        current_weapon = equipped.get("hand_left") or equipped.get("hand_right")
+        weapon_types = ["sw", "ax", "bw", "mc", "st"]
+        weapon_candidates = [
+            item for item in inventory
+            if item["type"] in weapon_types and item.get("identified", False)
+        ]
+        for candidate in weapon_candidates:
+            comparison = self.compare_weapons(current_weapon, candidate)
+            if comparison["upgrade"]:
+                upgrades.append({
+                    "slot": "hand_left",
+                    "current": current_weapon,
+                    "candidate": candidate,
+                    "upgrade_info": comparison,
+                })
 
         # Check armor (chest)
         current_armor = equipped.get("chest")

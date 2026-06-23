@@ -20,6 +20,7 @@ from agents.healing import HealingAgent
 from agents.movement import MovementAgent
 from agents.transition import TransitionAgent
 from agents.portal import PortalAgent
+from agents.upgrade import UpgradeAgent
 from agents.loot import LootAgent
 from agents.stats import StatsAgent
 from agents.town import TownAgent
@@ -182,6 +183,7 @@ class AgentOrchestrator:
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
         self.transition = TransitionAgent(model=model, ollama_url=ollama_url)
         self.portal = PortalAgent(model=model, ollama_url=ollama_url)
+        self.upgrade = UpgradeAgent(model=model, ollama_url=ollama_url)
         self.chat = ChatAgent(memory=self.memory, model=chat_model, ollama_url=ollama_url)
 
         # List of all agents for easy model switching
@@ -189,7 +191,7 @@ class AgentOrchestrator:
             self.combat, self.spell, self.healing, self.loot,
             self.stats, self.town, self.shopping,
             self.inventory, self.griswold, self.cain, self.adria, self.exploration,
-            self.portal, self.transition, self.movement,
+            self.upgrade, self.portal, self.transition, self.movement,
             self.chat
         ]
 
@@ -689,6 +691,13 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             score = exploration_rec.weight * 4 * danger_mult
             recommendations.append(("Exploration", exploration_rec, score))
 
+        # UPGRADE - swap in better gear when she's safe (priority 6, like town
+        # chores). One-shot: once equipped, find_upgrades stops returning it.
+        upgrade_rec = self.upgrade.evaluate(state)
+        if upgrade_rec and upgrade_rec.weight > 0.0:
+            score = upgrade_rec.weight * 6
+            recommendations.append(("Upgrade", upgrade_rec, score))
+
         # PORTAL - follow through the player's town portal (preferred over stairs
         # when one exists; she must rush before the caster closes it).
         portal_rec = self.portal.evaluate(state)
@@ -742,6 +751,17 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                 # NO potions - let LootAgent or retreat take priority
                 logger.info(f"🚨 EMERGENCY but NO POTIONS: HP={hp_pct}% - deferring to agents")
                 # Fall through to normal scoring (LootAgent or retreat will handle)
+
+        # Grab valuable loot before anything but survival: a strong Loot pick
+        # pre-empts town chores, following, transitions and portals so she
+        # actually picks up a magic find in front of her (commitment otherwise
+        # walks her right past it, and a Pepin visit out-scores it). Combat /
+        # Healing / Spell still win — survival first. Loot's 3-strike blacklist
+        # releases anything unreachable, so this can't deadlock.
+        loot_score = max((s for (n, _r, s) in recommendations if n == "Loot"), default=0)
+        if loot_score >= 5.0:
+            keep = {"Combat", "Healing", "Spell", "Loot"}
+            recommendations = [(n, r, s) for (n, r, s) in recommendations if n in keep]
 
         # Apply the player's tactical stance (hold/engage/retreat) before
         # hysteresis so the commanded behavior shapes the vote.

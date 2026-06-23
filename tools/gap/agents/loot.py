@@ -149,6 +149,7 @@ class LootAgent(BaseAgent):
         quality = item.get("quality", "n")
         value = item.get("value", 0)
         dist = item.get("dist", 999)
+        high_priority = False  # set for magic/unique class gear — those ignore distance
 
         # Quality multiplier
         quality_mult = {
@@ -191,6 +192,7 @@ class LootAgent(BaseAgent):
             if quality in ["m", "u"] and item_type in (self.profile.preferred_weapons + self.profile.preferred_armor):
                 logger.info(f"🎯 Loot: Unidentified {quality}/{item_type} for {self.profile.class_name} - HIGH PRIORITY")
                 quality_mult *= 1.5  # Extra boost for unidentified class gear
+                high_priority = True  # a real upgrade candidate — make it magnetic
 
         # Special case: potions in misc
         # If belt is full, lower potion priority
@@ -201,9 +203,12 @@ class LootAgent(BaseAgent):
         if item_type == "ms" and hp_pct < 50:
             type_score = 0.9  # boost potion value when low HP
 
-        # Distance penalty (closer = better)
-        dist_mult = 1.0
-        if dist <= 2:
+        # Distance penalty (closer = better) — EXCEPT for high-priority class gear
+        # (magic/unique weapons/armor), which stay magnetic so she'll cross the
+        # whole floor for a real upgrade instead of wandering off to town chores.
+        if high_priority:
+            dist_mult = 1.2
+        elif dist <= 2:
             dist_mult = 1.2
         elif dist <= 5:
             dist_mult = 1.0
