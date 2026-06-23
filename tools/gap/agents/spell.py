@@ -47,13 +47,22 @@ class SpellAgent(BaseAgent):
         if not state.get("mobs"):
             return False
         tick = state.get("tick", 0)
-        if tick - self.last_cast_tick < self.cast_cooldown:
+        on_cd = (tick - self.last_cast_tick) < self.cast_cooldown
+        has_off = self._has_offensive_spell(state)
+        has_staff = self._has_staff_charges(state)
+        # TEMP DEBUG: capture exactly why casting does/doesn't engage in combat.
+        logger.info(
+            f"Spell.should_activate: mobs={len(state.get('mobs', []))} on_cd={on_cd} "
+            f"(tick={tick} last={self.last_cast_tick}) has_off={has_off} has_staff={has_staff} "
+            f"nspells={len(state.get('spells', []))} mp%={state.get('me',[0,0,0,0])[3]}"
+        )
+        if on_cd:
             return False
         # Active if she can attack at range at all: a known offensive spell (the
         # engine already told us what she knows) or a charged staff. No magic-stat
         # guess — knowing an offensive spell IS the qualification, so a Warrior who
         # pumped Magic and learned Firebolt casts it too.
-        return self._has_offensive_spell(state) or self._has_staff_charges(state)
+        return has_off or has_staff
 
     def _has_offensive_spell(self, state: Dict[str, Any]) -> bool:
         return any(s.get("offensive") for s in state.get("spells", []))
@@ -94,6 +103,8 @@ class SpellAgent(BaseAgent):
             staff.get("spell_id") if staff_charges > 0 else None,
             staff_charges, state.get("spells", []),
         )
+        # TEMP DEBUG: what did selection actually decide this tick?
+        logger.info(f"Spell._select_spell -> id={spell_id} reason='{reasoning}'")
         if spell_id is None:
             return None
 

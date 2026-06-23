@@ -27,6 +27,14 @@ class LootAgent(BaseAgent):
         self.last_pk_attempt = None  # item_id we actually issued PK for last tick
         self.recently_dropped = {}  # item_position -> tick_when_dropped (avoid picking up what we just dropped)
         self._made_room_tick = -999  # last tick we dropped junk to make room
+        # Unreachable-loot detection: if we keep issuing MV toward the same item
+        # but our position doesn't change, the tile can't be pathed to — give up
+        # on it (a high-value magic item in a walled-off spot otherwise freezes us).
+        self._mv_target = None   # item id we're walking toward
+        self._mv_last_pos = None  # our pos when we started walking to it
+        self._mv_stuck = 0       # ticks with no progress toward it
+
+    STUCK_GIVEUP = 8  # MV ticks with zero movement before blacklisting the item
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Only activate if items nearby and not in combat"""
@@ -131,6 +139,25 @@ class LootAgent(BaseAgent):
         # If item is far away, move toward it first (this is NOT a pickup attempt,
         # so it must not be recorded as one — see failure tracking above).
         if item_dist > 1:
+            here = (me_x, me_y)
+            if item_id == self._mv_target and here == self._mv_last_pos:
+                # Same target, didn't move since last MV → can't path there.
+                self._mv_stuck += 1
+                if self._mv_stuck >= self.STUCK_GIVEUP:
+                    self.failed_pickups[item_id] = 3  # blacklist as unreachable
+                    logger.warning(
+                        f"Loot: can't reach {item_desc} at ({item_x},{item_y}) from {here} "
+                        f"after {self._mv_stuck} ticks - blacklisting as unreachable"
+                    )
+                    self._mv_target = None
+                    self._mv_stuck = 0
+                    return AgentResponse(command="NONE", weight=0.0,
+                                         reasoning=f"Loot: {item_desc} unreachable - giving up")
+            else:
+                # New target or we made progress — reset the stuck counter.
+                self._mv_target = item_id
+                self._mv_stuck = 0
+            self._mv_last_pos = here
             return AgentResponse(
                 command=f"MV {item_x} {item_y}",
                 weight=min(best_score, 1.0),
