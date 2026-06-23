@@ -51,6 +51,10 @@ def parse_dsl_state(line: str) -> Dict:
         "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
         "stores": {},  # Store inventories: {"sm": [...], "hl": [...], ...}
         "gold": 0,  # Companion's gold
+        # Self-describing spell menu from the engine (KS=): list of
+        # {id, name, level, mana, offensive, town, affordable}. No hard-coded ids.
+        "spells": [],
+        "readied_spell": None,  # Readied/default action spell id (right-click)
     }
 
     if not line or not line.strip():
@@ -567,6 +571,32 @@ def parse_dsl_state(line: str) -> Dict:
         # Parse gold: GOLD=2500
         if m := re.search(r'GOLD=(\d+)', line):
             state["gold"] = int(m.group(1))
+
+        # Parse the self-describing spell menu: KS=id,name,lvl,mana,flags;...
+        # flags chars: o=offensive(aimed), t=town-castable, $=affordable now.
+        if m := re.search(r'KS=([^ ]+)', line):
+            for entry in m.group(1).split(';'):
+                parts = entry.split(',')
+                if len(parts) < 5:
+                    continue
+                try:
+                    sid, name, lvl, mana, flags = parts[0], parts[1], parts[2], parts[3], parts[4]
+                    state["spells"].append({
+                        "id": int(sid),
+                        "name": name.replace("_", " "),
+                        "level": int(lvl),
+                        "mana": int(mana),
+                        "offensive": "o" in flags,
+                        "town": "t" in flags,
+                        "affordable": "$" in flags,
+                    })
+                except ValueError:
+                    continue
+
+        # Parse readied/default action: RS=id
+        if m := re.search(r'RS=(-?\d+)', line):
+            rs = int(m.group(1))
+            state["readied_spell"] = rs if rs > 0 else None  # 0/Null = nothing readied
 
         # Could add E= (events) parsing here in future
 

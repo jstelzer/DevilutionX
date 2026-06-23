@@ -1,50 +1,35 @@
 """
-Spell Casting Agent - Ranged magic attacks for sorcerer/mage classes
+Spell Casting Agent - ranged magic attacks, driven by the engine's spell menu.
+
+The agent does NOT hard-code spell ids, names, mana costs, or ranges — those are
+the engine's metadata and live in the DSL's KS= list (id, name, level, mana cost,
+flags: offensive/town/affordable). The old hard-coded tables drifted from the
+engine (e.g. id 2 is Healing, not Firebolt) and silently broke casting. All that
+remains here is *tactics*: which known, affordable, offensive spell to prefer for
+the situation — referenced by the engine-provided name, never a magic number.
 """
 
 import logging
-from typing import Dict, Any, Optional, Tuple
+import math
+from typing import Dict, Any, Optional, List, Tuple
+
 from .base import BaseAgent, AgentResponse
 
 logger = logging.getLogger(__name__)
 
-# Spell ID constants (from Source/spelldat.h)
-SPELL_FIREBOLT = 2
-SPELL_CHARGED_BOLT = 3
-SPELL_FIREBALL = 15
-SPELL_LIGHTNING = 16
-SPELL_FLASH = 17
-SPELL_FIRE_WALL = 20
-SPELL_STONE_CURSE = 24
-SPELL_CHAIN_LIGHTNING = 26
-
-# Mana costs (approximate - actual costs vary by spell level)
-MANA_COSTS = {
-    SPELL_FIREBOLT: 6,
-    SPELL_CHARGED_BOLT: 6,
-    SPELL_FIREBALL: 16,
-    SPELL_LIGHTNING: 10,
-    SPELL_FLASH: 30,
-    SPELL_FIRE_WALL: 28,
-    SPELL_STONE_CURSE: 60,
-    SPELL_CHAIN_LIGHTNING: 30,
+# Tactics only (not engine data): spells worth aiming at a cluster, matched by the
+# engine's name (lower-cased). Everything else is treated as single-target.
+AOE_SPELL_NAMES = {
+    "fireball", "nova", "chain lightning", "flame wave",
+    "lightning wall", "apocalypse", "inferno",
 }
-
-# Spell ranges (tiles)
-SPELL_RANGES = {
-    SPELL_FIREBOLT: 15,
-    SPELL_CHARGED_BOLT: 15,
-    SPELL_FIREBALL: 15,
-    SPELL_LIGHTNING: 15,
-    SPELL_FLASH: 8,
-    SPELL_FIRE_WALL: 10,
-    SPELL_STONE_CURSE: 15,
-    SPELL_CHAIN_LIGHTNING: 15,
-}
+# A single generous cast range; the engine doesn't publish per-spell range and
+# most attack spells reach ~15 tiles. This is a behavior knob, not engine data.
+MAX_CAST_RANGE = 15
 
 
 class SpellAgent(BaseAgent):
-    """Specialist for spell casting combat"""
+    """Selects and casts the best known offensive spell for the situation."""
 
     def __init__(self, **kwargs):
         super().__init__(name="Spell", **kwargs)
@@ -54,51 +39,31 @@ class SpellAgent(BaseAgent):
         # leaving gaps for CombatAgent to fill with melee; the engine's own cast
         # animation gates the real rate, so this is just light anti-spam.
         self.cast_cooldown = 10
-        self.last_staff_charges = None  # Track staff charges to detect when they hit zero
+        self.last_staff_charges = None  # detect when staff charges hit zero
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
-        """Activate if we have monsters, mana, and sufficient magic stat"""
-        # Stat-based activation: any class can cast if Magic >= 20
-        # (Warriors can learn Town Portal, Healing, etc. at higher levels)
-        stats = state.get("stats", {})
-        magic_stat = stats.get("mag", 0)
-
-        if magic_stat < 20:  # Insufficient magic to cast effectively
-            return False
-
-        # Need mana — UNLESS we hold a charged staff, which casts for free at
-        # range. Without this exception a low-mana caster bails here and falls
-        # through to CombatAgent, which melees with that same staff. The staff is
-        # a ranged spell weapon; use its charges instead of clubbing things.
-        me = state.get("me", [0, 0, 100, 100])
-        mana_pct = me[3] if len(me) > 3 else 100
-        if mana_pct < 20 and not self._has_staff_charges(state):
-            return False
-
-        # Need monsters in range
-        monsters = state.get("mobs", [])
-        if not monsters:
-            return False
-
-        # In town = no casting
         if state.get("in_town"):
             return False
-
-        # Cooldown check
+        if not state.get("mobs"):
+            return False
         tick = state.get("tick", 0)
         if tick - self.last_cast_tick < self.cast_cooldown:
             return False
+        # Active if she can attack at range at all: a known offensive spell (the
+        # engine already told us what she knows) or a charged staff. No magic-stat
+        # guess — knowing an offensive spell IS the qualification, so a Warrior who
+        # pumped Magic and learned Firebolt casts it too.
+        return self._has_offensive_spell(state) or self._has_staff_charges(state)
 
-        return True
+    def _has_offensive_spell(self, state: Dict[str, Any]) -> bool:
+        return any(s.get("offensive") for s in state.get("spells", []))
 
     def _has_staff_charges(self, state: Dict[str, Any]) -> bool:
         """True if a charged staff is equipped (casts at range, no mana cost)."""
-        equipped = state.get("equipped", {})
-        staff = equipped.get("hand_left") or {}
+        staff = (state.get("equipped", {}) or {}).get("hand_left") or {}
         return staff.get("type") == "st" and staff.get("charges", 0) > 0
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
-        """Select and cast appropriate spell"""
         monsters = state.get("mobs", [])
         if not monsters:
             return None
@@ -106,70 +71,37 @@ class SpellAgent(BaseAgent):
         me = state.get("me", [0, 0, 100, 100])
         my_pos = (me[0], me[1]) if len(me) >= 2 else (0, 0)
         mana_pct = me[3] if len(me) > 3 else 100
-        stats = state.get("stats", {})
-        magic_stat = stats.get("mag", 0)
-        equipped = state.get("equipped", {})
 
-        # Get class context from profile if available
         class_context = ""
         if self.profile:
             class_context = f"{self.profile.class_name} " if not self.profile.is_caster else ""
 
-        # Check if we have a staff with charges equipped
-        hand_left = equipped.get("hand_left")
-        staff_spell_id = None
-        staff_charges = 0
-        if hand_left and hand_left.get("type") == "st":
-            staff_charges = hand_left.get("charges", 0)
-            staff_spell_id = hand_left.get("spell_id")
-
-            # Detect when staff charges hit zero
-            if self.last_staff_charges is not None and self.last_staff_charges > 0 and staff_charges == 0:
-                # Staff just ran out - notify via chat
-                spell_names = {
-                    SPELL_FIREBOLT: "Firebolt",
-                    SPELL_CHARGED_BOLT: "Charged Bolt",
-                    SPELL_FIREBALL: "Fireball",
-                    SPELL_LIGHTNING: "Lightning",
-                    SPELL_FLASH: "Flash",
-                    SPELL_FIRE_WALL: "Fire Wall",
-                    SPELL_STONE_CURSE: "Stone Curse",
-                    SPELL_CHAIN_LIGHTNING: "Chain Lightning",
-                }
-                spell_name = spell_names.get(staff_spell_id, f"spell {staff_spell_id}")
-
-                chat_msg = f"My staff of {spell_name} is out of charges. Time to find a new one or visit Adria for a recharge."
-                logger.info(f"⚡ Staff depleted: {chat_msg}")
-
-                # Return a SAY command to notify the player
+        # Staff with charges: track it, and announce when it runs dry.
+        staff = (state.get("equipped", {}) or {}).get("hand_left") or {}
+        staff_charges = staff.get("charges", 0) if staff.get("type") == "st" else 0
+        if staff.get("type") == "st":
+            if self.last_staff_charges and self.last_staff_charges > 0 and staff_charges == 0:
+                self.last_staff_charges = staff_charges
                 return AgentResponse(
-                    command=f"SAY {chat_msg}",
-                    weight=0.1,  # Low priority, just informational
-                    reasoning=f"Staff depleted notification"
+                    command="SAY My staff is out of charges — time for a new one or a recharge at Adria.",
+                    weight=0.1,
+                    reasoning="Spell: staff depleted notification",
                 )
-
-            # Track current charges for next tick
             self.last_staff_charges = staff_charges
 
-        # Select spell and target based on situation
         spell_id, target_pos, weight, reasoning = self._select_spell(
-            monsters, my_pos, mana_pct, magic_stat, class_context,
-            staff_spell_id, staff_charges
+            monsters, my_pos, mana_pct, class_context,
+            staff.get("spell_id") if staff_charges > 0 else None,
+            staff_charges, state.get("spells", []),
         )
-
         if spell_id is None:
             return None
 
-        # Build CAST command
-        command = f"CAST {spell_id} {target_pos[0]} {target_pos[1]}"
-
-        # Update last cast tick
         self.last_cast_tick = state.get("tick", 0)
-
         return AgentResponse(
-            command=command,
+            command=f"CAST {spell_id} {target_pos[0]} {target_pos[1]}",
             weight=weight,
-            reasoning=reasoning
+            reasoning=reasoning,
         )
 
     def _select_spell(
@@ -177,126 +109,73 @@ class SpellAgent(BaseAgent):
         monsters: list,
         my_pos: Tuple[int, int],
         mana_pct: int,
-        magic_stat: int,
-        class_context: str = "",
-        staff_spell_id: Optional[int] = None,
-        staff_charges: int = 0
+        class_context: str,
+        staff_spell_id: Optional[int],
+        staff_charges: int,
+        spells: List[Dict[str, Any]],
     ) -> Tuple[Optional[int], Optional[Tuple[int, int]], float, str]:
-        """
-        Select best spell for current situation.
-
-        Args:
-            class_context: Optional class prefix for logging (e.g., "Warrior ")
-            staff_spell_id: Spell ID available on equipped staff (if any)
-            staff_charges: Number of charges remaining on staff
-
-        Returns: (spell_id, target_pos, weight, reasoning)
-        """
-        import math
-
-        # Calculate distances and find best target
+        """Pick a spell for the current situation. Returns (id, target, weight, why)."""
+        # Find the best single target and any close-together cluster.
         best_target = None
-        min_distance = 999
+        min_distance = 999.0
         hostile_count = 0
-        grouped_monsters = []  # Monsters close together
+        grouped = 0
 
         for mob in monsters:
+            if not (mob.get("flags", 0) & 1):  # hostile only
+                continue
+            hostile_count += 1
             mob_pos = (mob.get("x", 0), mob.get("y", 0))
-            mob_hp = mob.get("hp%", 100)
-            mob_flags = mob.get("flags", 0)
-
-            dx = mob_pos[0] - my_pos[0]
-            dy = mob_pos[1] - my_pos[1]
-            distance = math.sqrt(dx * dx + dy * dy)
-
-            # Count hostile monsters
-            if mob_flags & 1:  # Hostile flag
-                hostile_count += 1
-
-            # Track best single target (closest, hostile, low HP)
-            if mob_flags & 1 and distance < min_distance:
+            distance = math.hypot(mob_pos[0] - my_pos[0], mob_pos[1] - my_pos[1])
+            if distance <= 10:
+                grouped += 1
+            if distance < min_distance:
                 min_distance = distance
-                best_target = {
-                    "mob": mob,
-                    "pos": mob_pos,
-                    "distance": distance,
-                    "hp": mob_hp
-                }
-
-            # Check for grouped monsters (for AoE spells)
-            if mob_flags & 1 and distance <= 10:
-                grouped_monsters.append((mob, mob_pos, distance))
+                best_target = {"pos": mob_pos, "distance": distance, "hp": mob.get("hp%", 100)}
 
         if not best_target:
             return None, None, 0.0, "No valid targets"
+        if best_target["distance"] > MAX_CAST_RANGE:
+            return None, None, 0.0, f"Target {best_target['distance']:.1f} > cast range {MAX_CAST_RANGE}"
 
-        # Spell selection logic based on situation
-        spell_id = None
         target_pos = best_target["pos"]
-        weight = 0.7  # Base weight
-        reasoning = ""
-        use_staff = False
+        is_group = grouped >= 3
 
-        # PRIORITY 1: Use staff charges if available (no mana cost!)
-        # Staff charges are precious - prefer them when mana is low
+        # PRIORITY 1: spend staff charges when mana is low (saves mana for free
+        # ranged damage). We don't know the staff spell's name (it's not in KS),
+        # so it's treated as single-target here.
+        if staff_spell_id and staff_charges > 0 and mana_pct < 40:
+            return staff_spell_id, target_pos, 0.85, \
+                f"{class_context}Staff spell (charges: {staff_charges}, saving mana)"
+
+        # PRIORITY 2: cast a known, affordable, offensive spell from the engine menu.
+        castable = [s for s in spells if s.get("offensive") and s.get("affordable")]
+        pick = None
+        if is_group:
+            aoe = [s for s in castable if s["name"].lower() in AOE_SPELL_NAMES]
+            if aoe:
+                pick = max(aoe, key=lambda s: s["mana"])  # strongest AoE we can afford
+        if pick is None and castable:
+            # Strongest single option ~ most expensive affordable spell.
+            pick = max(castable, key=lambda s: s["mana"])
+
+        if pick is not None:
+            is_aoe = pick["name"].lower() in AOE_SPELL_NAMES
+            weight = 0.9 if (is_group and is_aoe) else 0.8
+            tgt = f"group of {grouped}" if (is_group and is_aoe) else f"{best_target['distance']:.1f} tiles"
+            if hostile_count >= 4:
+                weight += 0.1
+            if best_target["hp"] <= 30:
+                weight += 0.05
+            return pick["id"], target_pos, weight, \
+                f"{class_context}Spell: {pick['name']} ({tgt}, mana {mana_pct}%)"
+
+        # PRIORITY 3: nothing affordable to cast, but the staff still has charges.
         if staff_spell_id and staff_charges > 0:
-            # Only use staff if mana is below 40% OR staff spell matches our preferred spell
-            if mana_pct < 40:
-                spell_id = staff_spell_id
-                weight = 0.85  # High priority - saves mana
-                reasoning = f"{class_context}Staff spell (charges: {staff_charges}, saving mana)"
-                use_staff = True
-            # Also prefer staff for grouped enemies if it's Fireball/Lightning/Chain Lightning
-            elif staff_spell_id in [SPELL_FIREBALL, SPELL_LIGHTNING, SPELL_CHAIN_LIGHTNING] and len(grouped_monsters) >= 3:
-                spell_id = staff_spell_id
-                weight = 0.9
-                reasoning = f"{class_context}Staff AoE spell (charges: {staff_charges})"
-                use_staff = True
+            return staff_spell_id, target_pos, 0.85, \
+                f"{class_context}Staff spell (no affordable known spell, charges: {staff_charges})"
 
-        # PRIORITY 2: Use memorized spells if staff not used
-        if not use_staff:
-            # High mana + grouped enemies = Fireball (AoE)
-            if mana_pct >= 40 and len(grouped_monsters) >= 3:
-                spell_id = SPELL_FIREBALL
-                weight = 0.9  # High priority for grouped targets
-                reasoning = f"{class_context}Spell: Fireball on group of {len(grouped_monsters)}"
-
-            # Mid-range combat with decent mana = Lightning (fast projectile)
-            elif mana_pct >= 30 and best_target["distance"] <= 12:
-                spell_id = SPELL_LIGHTNING
-                weight = 0.8
-                reasoning = f"{class_context}Spell: Lightning at {best_target['distance']:.1f} tiles"
-
-            # Low mana or long range = Firebolt (cheap, long range)
-            elif mana_pct >= 20:
-                spell_id = SPELL_FIREBOLT
-                weight = 0.7
-                reasoning = f"{class_context}Spell: Firebolt (mana: {mana_pct}%)"
-
-            # Very low mana BUT we have staff charges = use staff!
-            elif staff_spell_id and staff_charges > 0:
-                spell_id = staff_spell_id
-                weight = 0.85
-                reasoning = f"{class_context}Staff spell (LOW MANA, charges: {staff_charges})"
-                use_staff = True
-
-            # Very low mana and no staff = conserve
-            else:
-                return None, None, 0.0, "Conserving mana (no staff charges)"
-
-        # Safety check: ensure spell in range
-        spell_range = SPELL_RANGES.get(spell_id, 15)
-        if best_target["distance"] > spell_range:
-            # Too far - move closer instead
-            return None, None, 0.0, f"Target {best_target['distance']:.1f} > range {spell_range}"
-
-        # Boost weight for dangerous situations
-        if hostile_count >= 4:
-            weight += 0.1  # Multiple threats
-        if best_target["hp"] <= 30:
-            weight += 0.05  # Almost dead target
-
-        return spell_id, target_pos, weight, reasoning
+        return None, None, 0.0, "Conserving (no known affordable spell, no staff charges)"
 
 
 # Export for agent system

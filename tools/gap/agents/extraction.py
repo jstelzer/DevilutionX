@@ -42,9 +42,12 @@ class ExtractionAgent(BaseAgent):
             return False
         if not self._needs_extraction(state):
             return False
-        # Active only if we can act on it: a portal already open, or a scroll to
-        # open one. (Spell provider would add: or we know Town Portal + have mana.)
-        return self._my_portal(state) is not None or self._portal_scroll_slot(state) is not None
+        # Active only if we can act on it: a portal already open, a scroll to open
+        # one, or the Town Portal spell known with enough mana.
+        tp = self._town_portal_spell(state)
+        return (self._my_portal(state) is not None
+                or self._portal_scroll_slot(state) is not None
+                or (tp is not None and tp.get("affordable")))
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         hp_pct = state.get("me", [0, 0, 100, 100])[2]
@@ -60,14 +63,26 @@ class ExtractionAgent(BaseAgent):
                 reasoning=f"Extraction: through my own portal to town (HP={hp_pct}%)",
             )
 
-        # No portal yet — open one from a Town Portal scroll (CS casts from belt).
+        # No portal yet — open one. Prefer a scroll (CS casts from belt) so we
+        # don't burn mana we might still need; fall back to the spell.
         slot = self._portal_scroll_slot(state)
         if slot is not None:
             logger.info(f"Extraction: doomed (HP={hp_pct}%, no healing) — casting Town Portal scroll (belt slot {slot})")
             return AgentResponse(
                 command=f"CS {slot}",
                 weight=0.9,
-                reasoning=f"Extraction: open town portal to escape (HP={hp_pct}%, no healing)",
+                reasoning=f"Extraction: open town portal via scroll (HP={hp_pct}%, no healing)",
+            )
+
+        tp = self._town_portal_spell(state)
+        if tp is not None and tp.get("affordable"):
+            me = state.get("me", [0, 0, 100, 100])
+            mx, my = me[0], me[1]
+            logger.info(f"Extraction: doomed (HP={hp_pct}%) — casting {tp['name']} (spell {tp['id']})")
+            return AgentResponse(
+                command=f"CAST {tp['id']} {mx} {my}",
+                weight=0.9,
+                reasoning=f"Extraction: open town portal via spell (HP={hp_pct}%, no healing)",
             )
 
         return None
@@ -87,6 +102,14 @@ class ExtractionAgent(BaseAgent):
         for i, item in enumerate(state.get("belt", [])):
             if item == "sp":
                 return i
+        return None
+
+    def _town_portal_spell(self, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Spell provider: the known Town Portal spell from the engine's menu
+        (matched by name, so no hard-coded id), or None."""
+        for s in state.get("spells", []):
+            if s.get("name", "").lower() == "town portal":
+                return s
         return None
 
     def _needs_extraction(self, state: Dict[str, Any]) -> bool:
