@@ -6,6 +6,45 @@ until we had a working framework* — it's the backlog, not bugs.
 
 ---
 
+## 🟢 SESSION HANDOFF — 2026-06-23 PM (read this first)
+
+**Sorcerer casting works now.** She threw Firebolts at the Butcher from range
+(verified: `Successfully queued spell 1 type 1`). Getting there took fixing a
+*chain* of bugs — DON'T reintroduce any of these:
+- **`KS=`/`RS=` were emitted only inside `if(DTYPE_TOWN)`** in `gap_dsl.cpp` →
+  `state["spells"]` was empty underground (`nspells=0`) → caster meleed. Now
+  emitted unconditionally (must stay outside the town block).
+- **Spell-id bitmask is `1<<(id-1)`** (`GetSpellBitmask`), not `1<<id`. The KS
+  encoder must test `known & GetSpellBitmask(sid)`, not `(known>>s)&1`.
+- **`spell.py` ids must be real `SpellID` enum values** (Firebolt=1, Lightning=3,
+  Fireball=12, ChargedBolt=30, TownPortal=7…). The old 2/15/16 values were wrong.
+- **`ExecuteCastSpell` picks the source** (mem→Spell / staff→Charges / scroll /
+  ability) and sends **`CMD_SPELLXY` as Param3** `(id,type,spellFrom=0)` — NOT
+  Param4 (level goes in spellFrom slot → rejected). `GetManaAmount` is fixed-point.
+- **SpellAgent targets ANY visible mob**, not just `flags&1` (hostile is only set
+  when goal==Attack; approaching/human-targeting mobs read as non-hostile).
+- **left-click = attack (`AT`), right-click = cast (`CAST`→CMD_SPELLXY)** — the two
+  paths are distinct; don't cross them.
+
+**Pending live-test (Python-only, just need an agent restart):**
+- cast-kite (caster MVs toward a mob >15 tiles to close into cast range),
+- belt-refill give-up (stop looping on an unbeltable scroll/book),
+- town restock-stickiness (low HP-pots in town → Pepin trip beats follow),
+- inventory-drink heal (`UI <slot>`), faster cast cadence (cooldown 5).
+
+**Known-good run flow** (host must be IN the game world, not the menu, or joins
+get connection-refused): start each client, **wait for "headless joined as player
+N"** before launching its agent. Launch steps must be SEPARATE bash calls — a
+`pkill` in the same command as a launch races and kills the new client. There are
+**12 unpushed commits** on `GAP`.
+
+**Still-open / next:** push GAP; strip the temp `inv=`/`wpn=` debug from the
+orchestrator state log; cleaner C++ "beltable" flag (like the loot `fits` flag);
+the Rogue makes ~1200 Loot decisions *in town* (item churn — investigate);
+cast-range cast-kite could place at range instead of walking onto the mob.
+
+---
+
 ## The model: two tracks (this is the whole point)
 
 Remaining work splits cleanly, and the split decides where formal modeling helps.
