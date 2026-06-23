@@ -8,16 +8,6 @@ from .base import BaseAgent, AgentResponse
 
 logger = logging.getLogger(__name__)
 
-# GBNF grammar for identify commands (ID slot weight or NONE weight)
-CAIN_GRAMMAR = r"""
-root   ::= (identify | none) "\n"?
-identify ::= "ID " int " " weight
-none   ::= "NONE " weight
-weight ::= "0." digit+ | "1.0" | "1" | "0"
-int    ::= digit+
-digit  ::= [0-9]
-"""
-
 
 class CainAgent(BaseAgent):
     """Specialist for identifying unidentified magic/unique items"""
@@ -94,62 +84,57 @@ class CainAgent(BaseAgent):
                 reasoning=reasoning
             )
 
-        # Adjacent to Cain - identify items!
+        # Adjacent to Cain - identify the highest-priority unidentified item.
+        # Deterministic (no LLM): IDing is purely mechanical, and an LLM here just
+        # risks echoing the wrong slot (cf. the old shopping-agent misfire). One ID
+        # per tick naturally loops through the whole pack over successive ticks.
+        item = self._best_unidentified(unidentified)
 
-        # Prioritize weapon/armor over jewelry
-        priority_types = ["sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st"]
-        priority_items = [item for item in unidentified if item["type"] in priority_types]
-
-        # Choose item to identify
-        if priority_items:
-            item = priority_items[0]
-        else:
-            item = unidentified[0]
-
-        # Calculate urgency
         inv_fullness = inv_count / 40.0
         unid_count = len(unidentified)
-
-        # Higher weight if more unidentified items or inventory filling up
         if unid_count >= 5 or inv_fullness > 0.7:
             weight = 0.8
-            urgency = "URGENT"
         elif unid_count >= 3 or inv_fullness > 0.5:
             weight = 0.6
-            urgency = "RECOMMENDED"
         else:
             weight = 0.4
-            urgency = "OPTIONAL"
 
-        prompt = f"""You are the Cain specialist. Decide if we should identify items.
+        logger.info(
+            f"Cain: ID slot {item['slot']} ({item['quality']}/{item['type']}), "
+            f"{unid_count} unidentified remaining"
+        )
+        return AgentResponse(
+            command=f"ID {item['slot']}",
+            weight=weight,
+            reasoning=f"Cain: Identify {item['quality']}/{item['type']} ({unid_count} unid left)"
+        )
 
-Unidentified items: {unid_count}
-Inventory: {inv_count}/40 slots ({inv_fullness*100:.0f}% full)
-First unidentified: {item['type']} ({item['quality']}) at slot {item['slot']}
-Current gold: {gold}
+    def _best_unidentified(self, unidentified: list) -> Dict[str, Any]:
+        """Pick which unidentified item to ID next.
 
-Priority: {urgency}
+        Class-appropriate gear first (a Rogue's magic bow before a random magic
+        sword) so the items most likely to be kept/equipped get IDed before she
+        leaves town; then jewelry (often valuable), then other equipment, then
+        the rest. Unique before magic within a tier.
+        """
+        preferred = set()
+        if self.profile:
+            preferred = set(self.profile.preferred_weapons) | set(self.profile.preferred_armor)
+        jewelry = ("rg", "am")
+        equipment = ("sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st")
+        quality_rank = {"unique": 0, "u": 0, "magic": 1, "m": 1}
 
-Output ONE line only:
-ID {item['slot']} <weight>
+        def type_rank(item):
+            t = item.get("type")
+            if t in preferred:
+                return 0
+            if t in jewelry:
+                return 1
+            if t in equipment:
+                return 2
+            return 3
 
-Weight (0.0-1.0):
-- 1.0 = Critical (many unidentified items blocking inventory)
-- 0.8 = Urgent (5+ unidentified or inventory 70%+ full)
-- 0.6 = Recommended (3+ unidentified or inventory 50%+ full)
-- 0.0 = Don't identify
-
-Example: ID {item['slot']} {weight}"""
-
-        response = self.query_llm(prompt, grammar=CAIN_GRAMMAR)
-
-        # Parse response
-        parsed = self.parse_weighted_response(response)
-        if parsed and parsed.command.startswith("ID"):
-            parsed.reasoning = f"Cain: Identify {item['type']} ({item['quality']}, {unid_count} unid items)"
-            logger.info(f"Cain: Recommending ID slot {item['slot']} ({item['type']}, unid_count={unid_count})")
-            return parsed
-        else:
-            logger.warning(f"Cain: Failed to parse ID command from LLM: {response}")
-
-        return None
+        return sorted(
+            unidentified,
+            key=lambda it: (type_rank(it), quality_rank.get(it.get("quality"), 2))
+        )[0]
