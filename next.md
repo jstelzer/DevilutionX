@@ -55,14 +55,17 @@ not bolted on piecemeal.
   but nothing budgets mana or **drinks a mana potion** when low (mirror the HP-
   potion logic in `healing.py`/belt refill). Confirm and add.
 
-### A3. Inventory lifecycle (the "still-open" items fold in here)
-- **Make room before grabbing:** sell/drop junk when the pack is full so a find
-  isn't left on the floor. (Currently she just can't pick it up.)
-- **Sell-loot loop:** the actual "offload old loot at Griswold" loop isn't
-  implemented — needed for sustained dungeon runs.
-- **Cain multi-item ID loop:** identify *all* unidentified items, prioritizing
-  class-appropriate gear (not just the first).
-- **Mark old gear for sale** after an upgrade swaps it out.
+### A3. Inventory lifecycle — ✅ DONE (2026-06-23)
+- ✅ **Make room before grabbing:** LootAgent drops the least-valuable junk when
+  the pack is full so a magic/unique find isn't left behind.
+- ✅ **Sell-loot:** GriswoldAgent already sells identified junk in town (one/tick).
+  The only un-closed bit is *returning* to town when full — see B4 economic
+  extraction below.
+- ✅ **Cain multi-item ID:** deterministic, class-appropriate first (loops the
+  whole pack over ticks).
+- ✅ **Mark old gear for sale:** GriswoldAgent sells redundant gear (worse than
+  what's equipped) via ItemComparator.find_redundant — the downgrade left after
+  an upgrade no longer piles up.
 
 ---
 
@@ -86,16 +89,26 @@ support actions can't violate survival constraints; role assignment can't become
 contradictory. (Stances exist — HOLD/ENGAGE/RETREAT/FOLLOW — but the guarantees
 aren't formalized.)
 
-### B4. Adria / portal *production* (consumer → producer)
+### B4. Adria / portal *production* (consumer → producer) — 🟡 PARTIAL (2026-06-23)
 The step from *using* your portals to *making* its own:
 ```
 need extraction → can I create a portal? → have the resource? → place it → coordinate party
 ```
-Two providers behind one capability: **scroll-based** (buy a Town Portal scroll
-from Adria — universal, any class) and **spell-based** (cast it — caster/mana).
-Design it as a reusable **PortalCapability** an agent *possesses*, not a Rogue- or
-Sorc-specific behavior — the same shape will serve any class. Depends on A2 (mana/
-action system) and B2 (portal ownership).
+- ✅ **Survival extraction, scroll provider:** ExtractionAgent opens her own town
+  portal from a scroll (`sp`, via `CS`) and steps to town when doomed (low HP, no
+  healing, no human portal). Pure Python — DSL already exposed the pieces.
+  Honors ownership / no-stranding / liveness / no-yo-yo invariants (documented in
+  the agent).
+- ⏳ **Spell provider:** cast Town Portal directly — needs known-spells in the DSL
+  (folds into A2's action enumeration).
+- ⏳ **Economic extraction:** open a portal to go *sell* when the pack is full
+  (closes the sustained-run loop), and the **return trip** back to the dungeon.
+- ⏳ **Invite the human through her portal:** needs the go-first/hold dance
+  PortalAgent already does for the consumer side.
+
+Designed as a reusable **PortalCapability** (provider-pluggable), not Rogue/Sorc-
+specific. The spell provider and economic/return legs depend on A2 (action
+system) and B2 (portal ownership).
 
 ---
 
@@ -107,15 +120,24 @@ action system) and B2 (portal ownership).
 
 ---
 
-## Suggested sequence
-1. **A2 mana awareness** — small, high-value, confirms the gap (drink mana potions).
-2. **A1 world interaction** — verify the MyPlayer-guard unlock; add operate command.
-3. **A3 make-room + sell-loot** — unblocks sustained runs (and fixes the "left on
-   floor" symptom at the source).
-4. **A2 full action system** — spells/scrolls/default-action selection.
-5. **B1 spec + build** — loot ownership, once multiple agents are actually looting
-   the same floors hard enough to contend.
-6. **B4 portal production** — the marquee coordination feature, after A2 + B2.
+## Progress (2026-06-23)
+Done this run: A2 mana awareness ✅, Sorc ranged casting ✅, A1 doors ✅,
+A3 inventory lifecycle ✅ (make-room, redundant-sell, Cain multi-ID),
+B4 survival extraction ✅ (scroll provider).
+
+## Suggested sequence (remaining)
+1. **A2 full action system** — known-spells + scrolls + default-action in the DSL,
+   and a selection policy. Unblocks B4's spell provider and richer casting.
+2. **A1 finish** — verify chests/barrels/shrines actually operate now that the AI
+   is `MyPlayer` (the old companion guards should be moot); decide shrine policy.
+3. **B4 finish** — economic extraction (portal to sell when full) + the return
+   trip; later, invite-the-human-through.
+4. **B1 spec + build** — loot ownership, once multiple agents are contending for
+   the same drops hard enough to matter.
+5. **B2 / B3** — formalize portal/level ownership and stance arbitration (the
+   place a small TLA+ spec earns its keep).
+6. **Track C cleanup** — `gGapCompanionSlot` / `Source/seat/` dead code; debug
+   markers; global `ENABLE_GAP`.
 
 Rule of thumb: Track A is "go build it." Track B is "spec it small, then build it."
 Don't pay for TLA+ on the framework while the framework is still moving — pay for
