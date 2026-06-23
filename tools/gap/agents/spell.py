@@ -50,7 +50,10 @@ class SpellAgent(BaseAgent):
         super().__init__(name="Spell", **kwargs)
         self.use_memory_context = False  # keep the tactical loop terse and fast
         self.last_cast_tick = 0
-        self.cast_cooldown = 20  # Ticks between casts (prevent spam)
+        # Ticks between casts. Kept short so a caster keeps casting rather than
+        # leaving gaps for CombatAgent to fill with melee; the engine's own cast
+        # animation gates the real rate, so this is just light anti-spam.
+        self.cast_cooldown = 10
         self.last_staff_charges = None  # Track staff charges to detect when they hit zero
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
@@ -63,10 +66,13 @@ class SpellAgent(BaseAgent):
         if magic_stat < 20:  # Insufficient magic to cast effectively
             return False
 
-        # Need mana
+        # Need mana — UNLESS we hold a charged staff, which casts for free at
+        # range. Without this exception a low-mana caster bails here and falls
+        # through to CombatAgent, which melees with that same staff. The staff is
+        # a ranged spell weapon; use its charges instead of clubbing things.
         me = state.get("me", [0, 0, 100, 100])
         mana_pct = me[3] if len(me) > 3 else 100
-        if mana_pct < 20:  # Save mana for emergencies
+        if mana_pct < 20 and not self._has_staff_charges(state):
             return False
 
         # Need monsters in range
@@ -84,6 +90,12 @@ class SpellAgent(BaseAgent):
             return False
 
         return True
+
+    def _has_staff_charges(self, state: Dict[str, Any]) -> bool:
+        """True if a charged staff is equipped (casts at range, no mana cost)."""
+        equipped = state.get("equipped", {})
+        staff = equipped.get("hand_left") or {}
+        return staff.get("type") == "st" and staff.get("charges", 0) > 0
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """Select and cast appropriate spell"""

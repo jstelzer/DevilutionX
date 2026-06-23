@@ -257,6 +257,16 @@ Example: AT {mobs[0].get('id', 27)} 0.85"""
                 logger.error(f"Combat: Failed to parse monster ID from ranged attack: {e}")
                 # Fall through to regular melee attack
 
+        # Casters fight at range via SpellAgent (memorized spells or staff
+        # charges). If Combat is even being consulted for a caster, spells are
+        # currently unavailable (no mana, depleted staff, mid-cooldown) and the
+        # only attack here is a melee path-to-target (AT id). Don't let a squishy
+        # mage suicide-rush: make melee a weak last resort so repositioning,
+        # healing, or retreat win, and SpellAgent reclaims the fight next tick.
+        if combat_style == "caster":
+            parsed.weight *= 0.35
+            logger.debug(f"Combat: caster melee de-prioritized to {parsed.weight:.2f}")
+
         # Apply bootstrap mode modifier (reduce combat aggression for low-level chars)
         if self.profile and self.profile.bootstrap_mode:
             parsed.weight *= 0.6  # Reduce combat priority by 40%
