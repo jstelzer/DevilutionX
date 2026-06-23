@@ -52,22 +52,29 @@ class CombatAgent(BaseAgent):
         stats = state.get("stats", {})
         equipped = state.get("equipped", {})
 
-        # Determine combat style from character profile
+        # Combat style follows the EQUIPPED WEAPON, not just the class. A Rogue
+        # holding a sword must close to melee — kiting with a melee weapon means
+        # swinging at enemies she can't reach. Casters are the exception: they
+        # fight with spells, so class wins there regardless of weapon.
         combat_style = "melee"  # Default
         playstyle_context = ""
 
-        if self.profile:
+        weapon = equipped.get("hand_left") or equipped.get("hand_right") or {}
+        weapon_type = weapon.get("type")
+
+        if self.profile and self.profile.is_caster:
+            combat_style = "caster"
+            playstyle_context = self.profile.get_combat_context()
+        elif weapon_type == "bw":
+            combat_style = "ranged"
+            playstyle_context = "RANGED FIGHTER - Use bow, keep distance, kite enemies"
+        elif weapon_type in ("sw", "ax", "mc"):
+            combat_style = "melee"
+            playstyle_context = "MELEE FIGHTER - Close to melee range and attack"
+        elif self.profile:
+            # No decisive weapon signal (unarmed, off-type) — fall back to class.
             combat_style = self.profile.get_combat_style()
             playstyle_context = self.profile.get_combat_context()
-        else:
-            # Fallback: check equipped weapon
-            weapon = equipped.get("hand_left", {})
-            if weapon and weapon.get("type") == "bw":
-                combat_style = "ranged"
-                playstyle_context = "RANGED FIGHTER - Use bow, keep distance, kite enemies"
-            elif stats.get("class") == 2:  # Sorcerer
-                combat_style = "caster"
-                playstyle_context = "CASTER - Keep distance, prioritize dangerous targets"
 
         # Build prompt for LLM with class-specific tactics
         mob_list = []
