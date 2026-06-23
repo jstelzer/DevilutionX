@@ -203,12 +203,8 @@ class LootAgent(BaseAgent):
         if item_type == "ms" and hp_pct < 50:
             type_score = 0.9  # boost potion value when low HP
 
-        # Distance penalty (closer = better) — EXCEPT for high-priority class gear
-        # (magic/unique weapons/armor), which stay magnetic so she'll cross the
-        # whole floor for a real upgrade instead of wandering off to town chores.
-        if high_priority:
-            dist_mult = 1.2
-        elif dist <= 2:
+        # Distance penalty (closer = better).
+        if dist <= 2:
             dist_mult = 1.2
         elif dist <= 5:
             dist_mult = 1.0
@@ -216,6 +212,13 @@ class LootAgent(BaseAgent):
             dist_mult = 0.8
         else:
             dist_mult = 0.5
+
+        # High-priority class gear (a real upgrade) stays worth walking over for at
+        # range — floor the penalty so a distant magic bow doesn't get abandoned —
+        # but DON'T boost it. No extra pull means she won't snap to a drop the
+        # instant it leaves your hand; she just won't forget it's there.
+        if high_priority:
+            dist_mult = max(dist_mult, 0.8)
 
         # Value contribution (normalized)
         # Gold: value is gold amount
