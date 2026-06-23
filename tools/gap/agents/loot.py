@@ -12,12 +12,22 @@ logger = logging.getLogger(__name__)
 class LootAgent(BaseAgent):
     """Specialist for item evaluation and pickup decisions"""
 
+    # Make-room: when the pack is this full (of 40 cells) and a magic/unique
+    # find is in front of us, drop the least-valuable junk so the find isn't
+    # left behind. Drop at most once per cooldown so the pickup has time to land.
+    FULL_THRESHOLD = 38
+    MAKE_ROOM_COOLDOWN = 20
+    # Equipment types we're willing to drop as junk to make room (same set the
+    # Griswold agent treats as sellable). Never potions/scrolls/misc.
+    SELLABLE_TYPES = ("sw", "ax", "bw", "mc", "sh", "la", "ma", "ha", "hl", "st")
+
     def __init__(self, **kwargs):
         super().__init__(name="Loot", **kwargs)
         self.failed_pickups = {}  # item_id -> attempt_count
         self.last_loot_state = []  # Track items from last tick
         self.last_pk_attempt = None  # item_id we actually issued PK for last tick
         self.recently_dropped = {}  # item_position -> tick_when_dropped (avoid picking up what we just dropped)
+        self._made_room_tick = -999  # last tick we dropped junk to make room
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Only activate if items nearby and not in combat"""
@@ -128,6 +138,30 @@ class LootAgent(BaseAgent):
                 reasoning=f"Loot: Moving to {item_desc} value={best_item.get('value', 0)} dist={item_dist}"
             )
 
+        # MAKE ROOM: if the pack is near-full and this is a magic/unique find,
+        # it likely won't fit — drop the least-valuable junk so we can grab it
+        # instead of leaving it on the floor. Gold never needs a slot, and we
+        # only sacrifice junk for a genuinely worthwhile find (not normal gear).
+        inv_count = state.get("inv_count", 0)
+        valuable_find = best_item.get("quality") in ("m", "u")
+        if (best_item.get("type") != "go" and valuable_find
+                and inv_count >= self.FULL_THRESHOLD
+                and current_tick - self._made_room_tick >= self.MAKE_ROOM_COOLDOWN):
+            junk = self._pick_junk_to_drop(state)
+            if junk is not None:
+                junk_slot, junk_desc = junk
+                self._made_room_tick = current_tick
+                logger.info(
+                    f"Loot: pack {inv_count}/40 full - dropping junk {junk_desc} "
+                    f"(slot {junk_slot}) to make room for {item_desc}"
+                )
+                return AgentResponse(
+                    command=f"DROP {junk_slot}",
+                    weight=min(best_score, 1.0),
+                    reasoning=f"Loot: make room (drop {junk_desc}) for {item_desc}"
+                )
+            # No junk to sacrifice — fall through and try anyway (may not fit).
+
         # Item is adjacent - pick it up. Record the real attempt so we can tell
         # next tick whether the PK actually worked.
         self.last_pk_attempt = item_id
@@ -136,6 +170,36 @@ class LootAgent(BaseAgent):
             weight=min(best_score, 1.0),
             reasoning=f"Loot: Pickup {item_desc} value={best_item.get('value', 0)} dist={item_dist}"
         )
+
+    def _pick_junk_to_drop(self, state: Dict[str, Any]) -> Optional[tuple]:
+        """Pick the least-valuable droppable junk to free a slot for a find.
+
+        Junk = identified equipment the profile doesn't want (or, with no
+        profile, normal quality). Never drops potions, scrolls, misc, or
+        unidentified items (could be good once IDed). Prefers to sacrifice the
+        lowest quality first. Returns (inv_slot, desc) or None.
+        """
+        quality_rank = {"normal": 0, "n": 0, "magic": 1, "m": 1, "unique": 2, "u": 2}
+        candidates = []
+        for item in state.get("inventory", []):
+            if item.get("type") not in self.SELLABLE_TYPES:
+                continue
+            if not item.get("identified"):
+                continue  # don't toss something we haven't IDed yet
+            quality = item.get("quality", "normal")
+            if self.profile:
+                if self.profile.should_keep_item(item["type"], quality).get("keep"):
+                    continue  # class-appropriate gear we'd want — keep it
+            elif quality not in ("normal", "n"):
+                continue  # no profile: only ever drop plain normal gear
+            candidates.append(item)
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda it: quality_rank.get(it.get("quality", "normal"), 0))
+        junk = candidates[0]
+        return junk.get("slot"), f"{junk.get('quality', 'n')}/{junk.get('type')}"
 
     def _score_item(self, item: Dict[str, Any], empty_belt_slots: int, hp_pct: int) -> float:
         """
