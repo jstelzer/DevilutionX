@@ -46,7 +46,7 @@ def parse_dsl_state(line: str) -> Dict:
         "belt": [],  # Belt slots: ["hp", "mp", "em", ...]
         "inventory": [],  # Inventory items: [{"type": "hp", "slot": 5, "quality": "normal", "identified": True}, ...]
         "inv_count": 0,  # Total items in inventory
-        "stats": None,  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}
+        "stats": {},  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}; {} until an S= field arrives (consumers use truthiness, and .get("mag",0) on a stats-less early state must not crash)
         "in_town": False,  # Town flag
         "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
         "stores": {},  # Store inventories: {"sm": [...], "hl": [...], ...}
@@ -348,18 +348,22 @@ def parse_dsl_state(line: str) -> Dict:
                 # Format: type:stats or type^charges:spell or type:stats^charges:spell
                 stats = None
 
-                # First handle charges (for staves)
+                # First handle charges (for staves). The C++ encoder emits a staff
+                # as  type^charges:spellID[:weaponstats]  e.g. "st^40:30:2-4:0:25/25"
+                # (40 charges, spell 30, 2-4 dmg, +0 ToHit, 25/25 dur). So peel the
+                # charges and spell ID as the first two colon fields, then fold any
+                # remaining fields back onto item_type so the stats parser below
+                # handles them just like a normal weapon.
                 charges = 0
                 spell_id = None
                 if '^' in item_data:
                     item_type, charge_data = item_data.split('^', 1)
-                    # charge_data could be "12:2" (charges:spell_id) or just "12"
-                    if ':' in charge_data:
-                        charges_str, spell_str = charge_data.split(':', 1)
-                        charges = int(charges_str)
-                        spell_id = int(spell_str)
-                    else:
-                        charges = int(charge_data)
+                    charge_parts = charge_data.split(':')
+                    charges = int(charge_parts[0])
+                    if len(charge_parts) >= 2:
+                        spell_id = int(charge_parts[1])
+                    if len(charge_parts) >= 3:  # leftover = equipment stats
+                        item_type = item_type + ':' + ':'.join(charge_parts[2:])
                 else:
                     item_type = item_data
 
