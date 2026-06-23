@@ -602,41 +602,52 @@ bool GapIntentProcessor::ExecuteCastSpell(int spell_id, int x, int y) {
         return false;
     }
 
-    // Check if player knows this spell
-    if (!(player->_pMemSpells & GetSpellBitmask(spellID))) {
-        std::cerr << "GAP: ExecuteCastSpell failed - player doesn't know spell " << spell_id << std::endl;
-        return false;
-    }
-
-    // Check mana requirement
-    if (player->_pMana < GetManaAmount(*player, spellID) << 6) {
-        std::cerr << "GAP: ExecuteCastSpell failed - not enough mana for spell " << spell_id << std::endl;
+    // Determine the spell SOURCE the way the engine does: a spell may come from
+    // memory (costs mana), the equipped staff/items (charges, no mana), a scroll,
+    // or be a class ability. CAST must use the matching SpellType or the engine
+    // rejects it as "doesn't know spell" — a staff's spell lives in _pISpells,
+    // NOT _pMemSpells (this is why the Sorc's staff ChargedBolt kept failing).
+    const uint64_t mask = GetSpellBitmask(spellID);
+    SpellType castType;
+    if (player->_pMemSpells & mask) {
+        castType = SpellType::Spell;
+        // Memorized spells cost mana (_pMana is fixed-point: value << 6).
+        if (player->_pMana < (GetManaAmount(*player, spellID) << 6)) {
+            std::cerr << "GAP: ExecuteCastSpell failed - not enough mana for spell " << spell_id << std::endl;
+            return false;
+        }
+    } else if (player->_pISpells & mask) {
+        castType = SpellType::Charges;  // equipped staff/item — uses charges, no mana
+    } else if (player->_pScrlSpells & mask) {
+        castType = SpellType::Scroll;   // a carried scroll
+    } else if (player->_pAblSpells & mask) {
+        castType = SpellType::Skill;    // class ability (Repair/Disarm/Recharge)
+    } else {
+        std::cerr << "GAP: ExecuteCastSpell failed - player can't cast spell " << spell_id << std::endl;
         return false;
     }
 
     std::cout << "GAP: ExecuteCastSpell - spell_id=" << spell_id
+              << " type=" << static_cast<int>(castType)
               << " target=(" << x << "," << y << ")" << std::endl;
 
-    // Set the readied spell (like pressing 's' and selecting the spell)
-    // This ensures the spell is "equipped" before casting
+    // Ready the spell (mirrors selecting it on the panel).
     player->_pRSpell = spellID;
-    player->_pRSplType = SpellType::Spell;
+    player->_pRSplType = castType;
 
-    // Set up the queued spell for network sync
-    player->queuedSpell.spellId = spellID;
-    player->queuedSpell.spellType = SpellType::Spell;
-    player->queuedSpell.spellFrom = 0;  // From memory
-
-    // Send network command (follows multiplayer protocol like right-clicking to cast)
-    // This ensures proper network sync and validation
+    // CMD_SPELLXY is a THREE-param command (spellID, spellType, spellFrom); the
+    // engine computes the spell level itself on receipt. spellFrom=0 means
+    // memory / equipped staff / ability. The previous Param4 form shoved the
+    // level into the spellFrom slot, which IsValidSpellFrom rejected — so every
+    // cast silently failed InitNewSpell.
     const int spellFrom = 0;
-    NetSendCmdLocParam4(true, CMD_SPELLXY, Point{x, y},
+    NetSendCmdLocParam3(true, CMD_SPELLXY, Point{x, y},
                         static_cast<int8_t>(spellID),
-                        static_cast<uint8_t>(SpellType::Spell),
-                        player->GetSpellLevel(spellID),
+                        static_cast<uint8_t>(castType),
                         spellFrom);
 
-    std::cout << "GAP: Successfully queued spell " << spell_id << " at (" << x << "," << y << ")" << std::endl;
+    std::cout << "GAP: Successfully queued spell " << spell_id << " (type "
+              << static_cast<int>(castType) << ") at (" << x << "," << y << ")" << std::endl;
     return true;
 }
 
