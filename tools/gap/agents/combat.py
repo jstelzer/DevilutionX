@@ -6,6 +6,7 @@ import logging
 import math
 from typing import Dict, Any, Optional
 from .base import BaseAgent, AgentResponse
+from llm_view import llm_view
 
 logger = logging.getLogger(__name__)
 
@@ -76,34 +77,16 @@ class CombatAgent(BaseAgent):
             combat_style = self.profile.get_combat_style()
             playstyle_context = self.profile.get_combat_context()
 
-        # Build prompt for LLM with class-specific tactics
-        mob_list = []
-        ranged_count = 0
-        melee_count = 0
-
-        for mob in mobs[:8]:  # Top 8 for better context
-            mob_id = mob.get("id", 0)
-            mob_x = mob.get("x", 0)
-            mob_y = mob.get("y", 0)
-            mob_hp = mob.get("hp_pct", 100)
-            mob_dist = mob.get("dist", 999)
-            mob_flags = mob.get("flags", 0)
-
-            # Flag decoding
-            is_hostile = (mob_flags & 1) > 0
-            is_unique = (mob_flags & 2) > 0
-            is_ranged = (mob_flags & 4) > 0
-
-            if is_ranged:
-                ranged_count += 1
-            else:
-                melee_count += 1
-
-            threat_marker = "BOSS" if is_unique else ("ARCHER" if is_ranged else "MELEE")
-
-            mob_list.append(
-                f"{mob_id}@{mob_x},{mob_y} HP={mob_hp}% Dist={mob_dist} {threat_marker}"
-            )
+        # Build the LLM context through the bouncer (llm_view) — a lean, whitelisted
+        # threat list, never the raw state. The Python kiting math below still reads
+        # raw `mobs`; only the PROMPT goes through the projection.
+        threats = llm_view(state, "threats")["threats"]
+        mob_list = [
+            f"{t['id']}@{t['pos'][0]},{t['pos'][1]} HP={t['hp_pct']}% Dist={t['dist']} {t['kind'].upper()}"
+            for t in threats
+        ]
+        ranged_count = sum(1 for t in threats if t["kind"] == "archer")
+        melee_count = sum(1 for t in threats if t["kind"] != "archer")
 
         # Build class-specific tactical guidance
         if combat_style == "ranged":
