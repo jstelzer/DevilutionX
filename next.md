@@ -40,20 +40,24 @@ pickup grant-race was a preview). First candidate spec: **item ownership** (belo
 - Open questions to decide per object: shrines (many have downsides — opt in?),
   fountains (resource limit?), barrels (break for loot/spawns?).
 
-### A2. Action system — default action, spells, skills, scrolls, mana
-This is the biggest capability gap and deserves to be designed as one subsystem,
-not bolted on piecemeal.
-- **Model the readied-action mechanic.** The game has a selected "default action"
-  (right-click) plus the full menu of anything you *know*, have *mana* for, or
-  hold a *scroll/staff-charge* for. A Warrior starts with **Repair** as default.
-- **Enumerate available actions** into the DSL: known spells, scroll inventory,
-  staff charges (we already parse `st^charges:spellID`), default skill.
-- **Selection policy:** which action for the situation (attack spell vs utility vs
-  scroll). Today `spell.py` is stat-gated (Magic≥20) with a hardcoded priority —
-  generalize it.
-- **Mana awareness (likely missing entirely):** the DSL exposes `mp%` in `ME=`,
-  but nothing budgets mana or **drinks a mana potion** when low (mirror the HP-
-  potion logic in `healing.py`/belt refill). Confirm and add.
+### A2. Action system — 🟡 MOSTLY DONE (2026-06-23)
+The principle that emerged: **the engine owns the metadata; the DSL publishes it;
+Python only does tactics.** No parallel id/name/mana tables (those drifted into
+the `FIREBOLT=2`=Healing bug).
+- ✅ **Self-describing spell menu in the DSL** (`KS=id,name,lvl,mana,flags` +
+  `RS=id` readied), sourced from `_pMemSpells|_pAblSpells` + `GetSpellData` +
+  `GetManaAmount`. Includes the class skill (Warrior Repair) and exact mana cost;
+  per-client (only her own spells).
+- ✅ **Selection policy:** SpellAgent casts only known/affordable/offensive spells
+  (strongest affordable; AoE for clusters), referenced by engine name. Activation
+  is "knows an offensive spell or has staff charges" — not a Magic-stat guess.
+- ✅ **Mana awareness:** ManaAgent drinks mana potions when a caster runs low.
+- ✅ **Staff charges:** parsed (`st^charges:spellID`) and preferred to save mana.
+- ⏳ **Use the readied default action / class skills** (e.g. auto-Repair via the
+  Warrior skill instead of a Griswold trip; Rogue Disarm on traps). `RS=` is now
+  exposed — wire agents to it.
+- ⏳ **Offensive scroll use** (cast attack scrolls from belt/inventory) — the
+  scroll codes are in the DSL; no agent fires them yet.
 
 ### A3. Inventory lifecycle — ✅ DONE (2026-06-23)
 - ✅ **Make room before grabbing:** LootAgent drops the least-valuable junk when
@@ -123,13 +127,14 @@ system) and B2 (portal ownership).
 ## Progress (2026-06-23)
 Done this run: A2 mana awareness ✅, Sorc ranged casting ✅, A1 doors ✅,
 A3 inventory lifecycle ✅ (make-room, redundant-sell, Cain multi-ID),
-B4 survival extraction ✅ (scroll provider).
+B4 survival extraction ✅ (scroll + spell providers),
+A2 action system ✅ (self-describing spell menu; spell-id bug fixed).
 
 ## Suggested sequence (remaining)
-1. **A2 full action system** — known-spells + scrolls + default-action in the DSL,
-   and a selection policy. Unblocks B4's spell provider and richer casting.
-2. **A1 finish** — verify chests/barrels/shrines actually operate now that the AI
+1. **A1 finish** — verify chests/barrels/shrines actually operate now that the AI
    is `MyPlayer` (the old companion guards should be moot); decide shrine policy.
+2. **A2 tail** — wire the readied action / class skills (`RS=` is exposed): e.g.
+   Warrior auto-Repair via skill, Rogue Disarm; offensive scroll use.
 3. **B4 finish** — economic extraction (portal to sell when full) + the return
    trip; later, invite-the-human-through.
 4. **B1 spec + build** — loot ownership, once multiple agents are contending for
