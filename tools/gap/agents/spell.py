@@ -126,16 +126,20 @@ class SpellAgent(BaseAgent):
         spells: List[Dict[str, Any]],
     ) -> Tuple[Optional[int], Optional[Tuple[int, int]], float, str]:
         """Pick a spell for the current situation. Returns (id, target, weight, why)."""
-        # Find the best single target and any close-together cluster.
+        # Find the best single target and any close-together cluster. Target ANY
+        # visible monster — the DSL only lists monsters in light radius / line of
+        # sight, so they're all valid enemies. We deliberately do NOT require the
+        # `hostile` flag (bit 0): that's only set when goal==Attack, so a monster
+        # still approaching — or one locked onto the human — reads as non-hostile
+        # and used to give "No valid targets," leaving the caster to melee.
         best_target = None
         min_distance = 999.0
-        hostile_count = 0
+        attacking_count = 0
         grouped = 0
 
         for mob in monsters:
-            if not (mob.get("flags", 0) & 1):  # hostile only
-                continue
-            hostile_count += 1
+            if mob.get("flags", 0) & 1:  # actively attacking (a hint, not a gate)
+                attacking_count += 1
             mob_pos = (mob.get("x", 0), mob.get("y", 0))
             distance = math.hypot(mob_pos[0] - my_pos[0], mob_pos[1] - my_pos[1])
             if distance <= 10:
@@ -174,7 +178,7 @@ class SpellAgent(BaseAgent):
             is_aoe = pick["name"].lower() in AOE_SPELL_NAMES
             weight = 0.9 if (is_group and is_aoe) else 0.8
             tgt = f"group of {grouped}" if (is_group and is_aoe) else f"{best_target['distance']:.1f} tiles"
-            if hostile_count >= 4:
+            if attacking_count >= 4:
                 weight += 0.1
             if best_target["hp"] <= 30:
                 weight += 0.05
