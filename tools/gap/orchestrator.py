@@ -22,6 +22,7 @@ from agents.mana import ManaAgent
 from agents.movement import MovementAgent
 from agents.transition import TransitionAgent
 from agents.portal import PortalAgent
+from agents.extraction import ExtractionAgent
 from agents.upgrade import UpgradeAgent
 from agents.loot import LootAgent
 from agents.stats import StatsAgent
@@ -201,6 +202,7 @@ class AgentOrchestrator:
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
         self.transition = TransitionAgent(model=model, ollama_url=ollama_url)
         self.portal = PortalAgent(model=model, ollama_url=ollama_url)
+        self.extraction = ExtractionAgent(model=model, ollama_url=ollama_url)
         self.upgrade = UpgradeAgent(model=model, ollama_url=ollama_url)
         self.chat = ChatAgent(memory=self.memory, model=chat_model, ollama_url=ollama_url)
 
@@ -209,7 +211,7 @@ class AgentOrchestrator:
             self.combat, self.spell, self.healing, self.mana, self.loot,
             self.stats, self.town, self.shopping,
             self.inventory, self.griswold, self.cain, self.adria, self.exploration,
-            self.upgrade, self.portal, self.transition, self.movement,
+            self.upgrade, self.portal, self.extraction, self.transition, self.movement,
             self.chat
         ]
 
@@ -724,6 +726,13 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         if upgrade_rec and upgrade_rec.weight > 0.0:
             score = upgrade_rec.weight * 6
             recommendations.append(("Upgrade", upgrade_rec, score))
+
+        # EXTRACTION - open/use her OWN town portal to escape when doomed (low HP,
+        # no healing, no human portal to flee through). Survival-priority.
+        extraction_rec = self.extraction.evaluate(state)
+        if extraction_rec and extraction_rec.weight > 0.0:
+            score = extraction_rec.weight * 9
+            recommendations.append(("Extraction", extraction_rec, score))
 
         # PORTAL - follow through the player's town portal (preferred over stairs
         # when one exists; she must rush before the caster closes it).
