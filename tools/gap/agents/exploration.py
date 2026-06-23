@@ -85,8 +85,15 @@ class ExplorationAgent(BaseAgent):
                     score = 0.3  # Risky when low HP
                     reasoning = f"Exploration: Risky trapped chest (HP={hp_pct}%, dist={dist})"
             elif obj_type == "dr":  # Door
-                score = 0.7
-                reasoning = f"Exploration: Open door (dist={dist})"
+                # Only open CLOSED doors. Operating an already-open door toggles
+                # it shut — which blocks the party (and undoes a door the player
+                # just opened). Leave open doors alone.
+                if obj.get("door_open"):
+                    score = 0.0
+                    logger.debug(f"Exploration: Door {obj_id} already open at ({obj_x},{obj_y}) - leaving it")
+                else:
+                    score = 0.7
+                    reasoning = f"Exploration: Open door (dist={dist})"
             elif obj_type == "ba":  # Barrel
                 score = 0.5
                 reasoning = f"Exploration: Break barrel (dist={dist})"

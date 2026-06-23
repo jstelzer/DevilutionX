@@ -254,7 +254,10 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             if (obj.IsChest()) {
                 type_code = obj.IsTrappedChest() ? "tc" : "ch";
             } else if (obj.isDoor()) {
-                type_code = "dr";
+                // dr = closed (needs opening), do = already open. Without this the
+                // agent can't tell, issues IN on an open door, and toggles it shut
+                // (blocking the party). _oVar4: DOOR_CLOSED=0, DOOR_OPEN=1.
+                type_code = (obj._oVar4 == /*DOOR_OPEN*/ 1) ? "do" : "dr";
             } else if (obj.IsBarrel()) {
                 type_code = obj.isExplosive() ? "xb" : "ba";  // xb=explosive barrel
             } else if (obj.IsShrine()) {

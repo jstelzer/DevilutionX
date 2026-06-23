@@ -189,6 +189,14 @@ def parse_dsl_state(line: str) -> Dict:
                     x, y = int(parts[0]), int(parts[1])
                     obj_type = parts[2] if len(parts) > 2 else "unknown"
 
+                    # Doors carry open/closed state: "dr" = closed, "do" = open.
+                    # Normalize both to type "dr" with a door_open flag so agents
+                    # only operate closed doors (operating an open door re-closes
+                    # it, blocking the party).
+                    door_open = obj_type == "do"
+                    if obj_type in ("dr", "do"):
+                        obj_type = "dr"
+
                     # Calculate distance
                     me_x, me_y, _, _ = state["me"]
                     dist = abs(x - me_x) + abs(y - me_y)
@@ -199,6 +207,7 @@ def parse_dsl_state(line: str) -> Dict:
                         "y": y,
                         "type": obj_type,
                         "dist": dist,
+                        "door_open": door_open,
                     })
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse object: {obj_str} - {e}")
