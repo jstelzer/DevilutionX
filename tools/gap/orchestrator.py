@@ -601,13 +601,25 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             score = stats_rec.weight * 9
             recommendations.append(("Stats", stats_rec, score))
 
+        # RESTOCK STICKINESS: when in town and genuinely low on healing potions,
+        # the trip to Pepin (open shop -> buy) must outrank following the human
+        # back down (Transition 6 / Portal 7) — otherwise she gets yanked into the
+        # dungeon before the shop ever opens and never restocks. "Don't follow me
+        # in broke and potionless." Counts belt + pack HP/rejuv.
+        _hp_stock = (
+            sum(1 for s in state.get("belt", []) if s in ("hp", "rj"))
+            + sum(1 for it in state.get("inventory", []) if it.get("type") in ("hp", "rj"))
+        )
+        under_stocked = bool(state.get("in_town")) and _hp_stock < 3
+
         # TOWN - handle town activities
         town_rec = self.town.evaluate(state)
         if state.get("in_town") and (not town_rec or town_rec.weight == 0.0):
             logger.info(f"🏘️ Town agent: {town_rec.reasoning if town_rec else 'None'} (weight={town_rec.weight if town_rec else 'N/A'})")
         if town_rec and town_rec.weight > 0.0:
-            # Priority 5 for town (shopping, repair)
-            score = town_rec.weight * 5
+            # Priority 5 normally; 8 while restocking so the Pepin visit (to open
+            # the shop) beats follow/transition (6/7) and she stays to buy.
+            score = town_rec.weight * (8 if under_stocked else 5)
             recommendations.append(("Town", town_rec, score))
 
         # CAIN - identify unidentified items (in town only)
@@ -651,11 +663,11 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         if state.get("in_town") and (not shopping_rec or shopping_rec.weight == 0.0):
             logger.info(f"🛒 Shopping agent: {shopping_rec.reasoning if shopping_rec else 'None'} (weight={shopping_rec.weight if shopping_rec else 'N/A'})")
         if shopping_rec and shopping_rec.weight > 0.0:
-            # Priority 6 for shopping (buying potions is important)
-            # Boost priority if low on HP potions
+            # Priority 6 normally, 7 if low on belt HP; 8 while restocking so the
+            # actual buy (once the shop is open) also beats follow/transition.
             belt = state.get("belt", [])
             hp_potions = sum(1 for slot in belt if slot == "hp")
-            priority = 7 if hp_potions < 2 else 6
+            priority = 8 if under_stocked else (7 if hp_potions < 2 else 6)
             score = shopping_rec.weight * priority
             recommendations.append(("Shopping", shopping_rec, score))
 
