@@ -12,10 +12,9 @@ logger = logging.getLogger(__name__)
 class LootAgent(BaseAgent):
     """Specialist for item evaluation and pickup decisions"""
 
-    # Make-room: when the pack is this full (of 40 cells) and a magic/unique
-    # find is in front of us, drop the least-valuable junk so the find isn't
-    # left behind. Drop at most once per cooldown so the pickup has time to land.
-    FULL_THRESHOLD = 38
+    # Make-room: when a magic/unique find won't fit the grid (engine `fits`
+    # flag), drop junk to free space. Drop at most once per cooldown so the
+    # engine has time to recompute fit before we drop again.
     MAKE_ROOM_COOLDOWN = 20
     # Equipment types we're willing to drop as junk to make room (same set the
     # Griswold agent treats as sellable). Never potions/scrolls/misc.
@@ -138,32 +137,35 @@ class LootAgent(BaseAgent):
                 reasoning=f"Loot: Moving to {item_desc} value={best_item.get('value', 0)} dist={item_dist}"
             )
 
-        # MAKE ROOM: if the pack is near-full and this is a magic/unique find,
-        # it likely won't fit — drop the least-valuable junk so we can grab it
-        # instead of leaving it on the floor. Gold never needs a slot, and we
-        # only sacrifice junk for a genuinely worthwhile find (not normal gear).
-        inv_count = state.get("inv_count", 0)
-        valuable_find = best_item.get("quality") in ("m", "u")
-        if (best_item.get("type") != "go" and valuable_find
-                and inv_count >= self.FULL_THRESHOLD
-                and current_tick - self._made_room_tick >= self.MAKE_ROOM_COOLDOWN):
-            junk = self._pick_junk_to_drop(state)
-            if junk is not None:
-                junk_slot, junk_desc = junk
-                self._made_room_tick = current_tick
-                logger.info(
-                    f"Loot: pack {inv_count}/40 full - dropping junk {junk_desc} "
-                    f"(slot {junk_slot}) to make room for {item_desc}"
-                )
-                return AgentResponse(
-                    command=f"DROP {junk_slot}",
-                    weight=min(best_score, 1.0),
-                    reasoning=f"Loot: make room (drop {junk_desc}) for {item_desc}"
-                )
-            # No junk to sacrifice — fall through and try anyway (may not fit).
+        # MAKE ROOM: the engine tells us per-item whether it actually fits the
+        # grid right now (`fits`). If a wanted find doesn't fit, drop junk to free
+        # space instead of the pick-up-then-drop-back loop. We drop the bulkiest
+        # junk (most cells) and let the engine recompute `fits` next tick — no
+        # tetris guessing here. Gold/potions always fit (engine says so).
+        if not best_item.get("fits", True):
+            if current_tick - self._made_room_tick >= self.MAKE_ROOM_COOLDOWN:
+                junk = self._pick_junk_to_drop(state)
+                if junk is not None:
+                    junk_slot, junk_desc = junk
+                    self._made_room_tick = current_tick
+                    logger.info(
+                        f"Loot: {item_desc} doesn't fit (free={state.get('inv_free', '?')} cells) "
+                        f"- dropping junk {junk_desc} (slot {junk_slot}) to make room"
+                    )
+                    return AgentResponse(
+                        command=f"DROP {junk_slot}",
+                        weight=min(best_score, 1.0),
+                        reasoning=f"Loot: make room (drop {junk_desc}) for {item_desc}"
+                    )
+            # Doesn't fit and no junk to sacrifice (or on cooldown) — don't spam
+            # PK on something that can't be placed; let another agent act.
+            return AgentResponse(
+                command="NONE", weight=0.0,
+                reasoning=f"Loot: {item_desc} won't fit and no junk to drop"
+            )
 
-        # Item is adjacent - pick it up. Record the real attempt so we can tell
-        # next tick whether the PK actually worked.
+        # Item is adjacent and fits - pick it up. Record the real attempt so we
+        # can tell next tick whether the PK actually worked.
         self.last_pk_attempt = item_id
         return AgentResponse(
             command=f"PK {item_id}",
@@ -177,7 +179,8 @@ class LootAgent(BaseAgent):
         Junk = identified equipment the profile doesn't want (or, with no
         profile, normal quality). Never drops potions, scrolls, misc, or
         unidentified items (could be good once IDed). Prefers to sacrifice the
-        lowest quality first. Returns (inv_slot, desc) or None.
+        BULKIEST junk (most grid cells) so a single drop is most likely to open
+        room for the find, tie-broken by lowest quality. Returns (slot, desc).
         """
         quality_rank = {"normal": 0, "n": 0, "magic": 1, "m": 1, "unique": 2, "u": 2}
         candidates = []
@@ -197,7 +200,9 @@ class LootAgent(BaseAgent):
         if not candidates:
             return None
 
-        candidates.sort(key=lambda it: quality_rank.get(it.get("quality", "normal"), 0))
+        # Bulkiest first (most cells freed), then lowest quality.
+        candidates.sort(key=lambda it: (-it.get("cells", 1),
+                                        quality_rank.get(it.get("quality", "normal"), 0)))
         junk = candidates[0]
         return junk.get("slot"), f"{junk.get('quality', 'n')}/{junk.get('type')}"
 
@@ -214,6 +219,13 @@ class LootAgent(BaseAgent):
         value = item.get("value", 0)
         dist = item.get("dist", 999)
         high_priority = False  # set for magic/unique class gear — those ignore distance
+
+        # If the engine says it won't fit the grid, only a magic/unique find is
+        # worth dropping junk for — ignore non-fitting normal gear entirely so we
+        # don't loop trying to grab something we can't place (and would just
+        # drop back). Gold/potions always report fits=True.
+        if not item.get("fits", True) and quality not in ("m", "u"):
+            return 0.0
 
         # Quality multiplier
         quality_mult = {

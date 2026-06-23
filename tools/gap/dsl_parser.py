@@ -45,7 +45,8 @@ def parse_dsl_state(line: str) -> Dict:
         "objects": [],  # Objects: [{"id": 15, "x": 45, "y": 30, "type": "ch", "dist": 5}, ...]
         "belt": [],  # Belt slots: ["hp", "mp", "em", ...]
         "inventory": [],  # Inventory items: [{"type": "hp", "slot": 5, "quality": "normal", "identified": True}, ...]
-        "inv_count": 0,  # Total items in inventory
+        "inv_count": 0,  # Total items in inventory (NOT grid cells — see inv_free)
+        "inv_free": 40,  # Free inventory GRID cells of 40 (the real "fullness")
         "stats": {},  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}; {} until an S= field arrives (consumers use truthiness, and .get("mag",0) on a stats-less early state must not crash)
         "in_town": False,  # Town flag
         "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
@@ -160,6 +161,9 @@ def parse_dsl_state(line: str) -> Dict:
                     # Extract type and quality if available (backward compatible)
                     item_type = parts[3] if len(parts) > 3 else "ms"
                     item_qual = parts[4] if len(parts) > 4 else "n"
+                    # fits: engine-authoritative "can I pick this up and keep it
+                    # right now" (grid or belt has room). Default True if absent.
+                    fits = (parts[5] == "1") if len(parts) > 5 else True
 
                     # Calculate distance
                     me_x, me_y, _, _ = state["me"]
@@ -172,6 +176,7 @@ def parse_dsl_state(line: str) -> Dict:
                         "value": value,
                         "type": item_type,
                         "quality": item_qual,
+                        "fits": fits,
                         "dist": dist,
                     })
                 except (ValueError, IndexError) as e:
@@ -238,9 +243,18 @@ def parse_dsl_state(line: str) -> Dict:
                     continue
 
                 try:
-                    # Split by @ to get type_code and slot
-                    type_code, slot_str = inv_str.split('@')
+                    # Split by @ to get type_code and slot (slot may carry a
+                    # grid footprint suffix: "3#1x3" = slot 3, occupies 1x3 cells).
+                    type_code, slot_part = inv_str.split('@')
+                    slot_str, _, fp_str = slot_part.partition('#')
                     slot = int(slot_str)
+                    footprint = None
+                    if 'x' in fp_str:
+                        try:
+                            fw, fh = fp_str.split('x', 1)
+                            footprint = (int(fw), int(fh))
+                        except ValueError:
+                            footprint = None
 
                     # Parse stats if present (identified equipment has :stats before @slot)
                     stats = None
@@ -314,6 +328,9 @@ def parse_dsl_state(line: str) -> Dict:
                         "quality": quality,
                         "identified": identified,
                     }
+                    if footprint is not None:
+                        inv_item["footprint"] = footprint
+                        inv_item["cells"] = footprint[0] * footprint[1]
 
                     # Add stats if present
                     if stats:
@@ -324,9 +341,11 @@ def parse_dsl_state(line: str) -> Dict:
                     logger.warning(f"Failed to parse inventory item: {inv_str} - {e}")
                     continue
 
-        # Parse inventory count: INVC=15
+        # Parse inventory count: INVC=15 (item count) and INVFREE=4 (free grid cells)
         if m := re.search(r'INVC=(\d+)', line):
             state["inv_count"] = int(m.group(1))
+        if m := re.search(r'INVFREE=(\d+)', line):
+            state["inv_free"] = int(m.group(1))
 
         # Parse equipped gear: EQ=hd:hl_m,hl:sw_u,hr:sh,ch:la_m
         # Slots: hd=head, rl=ring_left, rr=ring_right, am=amulet, hl=hand_left, hr=hand_right, ch=chest

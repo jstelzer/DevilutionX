@@ -10,6 +10,7 @@
 #include "../towners.h"
 #include "../spelldat.h"  // For SpellID enum / GetSpellData
 #include "../spells.h"    // For GetManaAmount
+#include "../inv.h"       // For CanFitItemInInventory / CanBePlacedOnBelt / GetInventorySize
 #include "../levels/gendung.h"  // For IsTileLit()
 #include "../levels/trigs.h"    // For trigs[] (real level-transition tiles)
 #include "../interfac.h"        // For WM_DIAB* interface_mode values
@@ -223,10 +224,19 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
                 default:                  qual_code = 'n'; break; // normal
             }
 
+            // Whether this item can actually be picked up and kept right now:
+            // gold always; otherwise it must fit the inventory grid or the belt.
+            // Engine-authoritative (no tetris guessing in Python) — the loot agent
+            // uses it to avoid the pick-up-then-drop-back loop on a full pack.
+            bool fits = item._itype == ItemType::Gold
+                || CanFitItemInInventory(*player, item)
+                || CanBePlacedOnBelt(*player, item);
+
             // Cast to int to avoid uint8_t being treated as char
             items << static_cast<int>(ActiveItems[i]) << "@"
                   << itemPos.x << "," << itemPos.y << ","
-                  << value << "," << type_code << "," << qual_code;
+                  << value << "," << type_code << "," << qual_code
+                  << "," << (fits ? 1 : 0);
         }
     }
 
@@ -440,14 +450,24 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             }
         }
 
-        // Format: type@slot_index
-        inventory << type_code << "@" << i;
+        // Format: type@slot#WxH  (footprint = grid cells the item occupies, from
+        // the engine — so the agent reasons in grid AREA, not item count: a staff
+        // is 1x3, gloves 1x1, a book 2x2.)
+        Size fp = GetInventorySize(inv_item);
+        inventory << type_code << "@" << i << "#" << fp.width << "x" << fp.height;
     }
+
+    // Real grid occupancy: free vs used cells (of 40). This is what "full" means —
+    // 15 big items can fill the grid. Always emitted (even with an empty pack).
+    int freeCells = 0;
+    for (int gi = 0; gi < InventoryGridCells; gi++)
+        if (player->InvGrid[gi] == 0) freeCells++;
 
     if (!first_inv_item) {
         dsl << " INV=" << inventory.str();
         dsl << " INVC=" << inv_count;  // Total item count for quick reference
     }
+    dsl << " INVFREE=" << freeCells;  // free grid cells of 40 (the real "fullness")
 
     // Equipped gear: EQ=slot:type,slot:type,...
     // Slots: hd=head, rl=ring_left, rr=ring_right, am=amulet, hl=hand_left, hr=hand_right, ch=chest
