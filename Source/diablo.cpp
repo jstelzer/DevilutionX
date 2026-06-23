@@ -154,6 +154,7 @@ int gGapCompanionSlot = -1;  // -1 means no companion, 0-3 for player slots
 bool gGapHeadless = false;
 std::string gGapJoinAddr = "127.0.0.1:6112";  // host:port of the TCP game to join
 std::string gGapGamePassword;                  // game password (matches the host)
+std::string gGapSocketPath;                    // empty => derived from companion save stem
 
 // Helper function to parse save filename and extract save number
 // Handles filenames like "multi_1.sv" -> 1, or "/path/to/multi_0.sv" -> 0
@@ -1080,6 +1081,10 @@ void PrintHelpOption(std::string_view flags, std::string_view description)
 	printNewlineInConsole();
 	PrintHelpOption("--companion-save <file>", _(/* TRANSLATORS: Commandline Option */ "Save file to load the AI companion hero from (e.g. multi_1.sv)"));
 	PrintHelpOption("--companion-slot <0-3>", _(/* TRANSLATORS: Commandline Option */ "Player slot the AI companion occupies"));
+	PrintHelpOption("--headless", _(/* TRANSLATORS: Commandline Option */ "Run as the AI's own client with no on-screen window"));
+	PrintHelpOption("--join <host:port>", _(/* TRANSLATORS: Commandline Option */ "TCP game to join as a headless AI client (default 127.0.0.1:6112)"));
+	PrintHelpOption("--game-password <pw>", _(/* TRANSLATORS: Commandline Option */ "Password of the TCP game to join"));
+	PrintHelpOption("--gap-socket <path>", _(/* TRANSLATORS: Commandline Option */ "GAP DSL socket path (default derived from the companion save stem)"));
 #endif
 #ifdef _DEBUG
 	printNewlineInConsole();
@@ -1237,6 +1242,12 @@ void DiabloParseFlags(int argc, char **argv)
 				diablo_quit(64);
 			}
 			gGapGamePassword = argv[++i];
+		} else if (arg == "--gap-socket") {
+			if (i + 1 == argc) {
+				PrintFlagRequiresArgument("--gap-socket");
+				diablo_quit(64);
+			}
+			gGapSocketPath = argv[++i];  // override the auto-derived DSL socket path
 #endif
 #ifdef _DEBUG
 		} else if (arg == "-i") {

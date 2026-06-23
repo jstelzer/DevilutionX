@@ -473,5 +473,7 @@ tools/gap/gap_memory.db
 tools/gap/gap_memory.db-shm
 tools/gap/gap_memory.db-wal
 gap_memory.*
+# Per-client memory DBs (gap_memory_<socket-stem>.db) + SQLite WAL/SHM sidecars
+tools/gap/gap_memory_*
 *.MPQ
 tools/gap/*.db

@@ -13,14 +13,48 @@
 #include <poll.h>        // (optional) could use poll if you prefer
 #include <csignal>       // For signal handling
 
+// GAP socket configuration (defined in diablo.cpp). When gGapSocketPath is empty
+// we derive a per-client path from the companion save stem so multiple headless
+// clients each bind a unique socket.
+namespace devilution {
+extern std::string gGapSocketPath;
+extern std::string gGapCompanionSave;
+}
+
 namespace devilution::gap {
 
-static const char* SOCKET_PATH = "/tmp/devilutionx-gap.sock";
+using devilution::gGapCompanionSave;
+using devilution::gGapSocketPath;
+
+// Resolve the effective DSL socket path. Precedence:
+//   1. --gap-socket override (gGapSocketPath)
+//   2. derived from the companion save stem: multi_2.sv -> /tmp/devilutionx-gap-multi_2.sock
+//   3. legacy default /tmp/devilutionx-gap.sock
+static std::string ResolveSocketPath() {
+    if (!gGapSocketPath.empty())
+        return gGapSocketPath;
+
+    if (!gGapCompanionSave.empty()) {
+        // Strip any directory and the trailing extension to get the stem.
+        std::string base = gGapCompanionSave;
+        size_t slash = base.find_last_of("/\\");
+        if (slash != std::string::npos)
+            base = base.substr(slash + 1);
+        size_t dot = base.find_last_of('.');
+        if (dot != std::string::npos)
+            base = base.substr(0, dot);
+        if (!base.empty())
+            return "/tmp/devilutionx-gap-" + base + ".sock";
+    }
+
+    return "/tmp/devilutionx-gap.sock";
+}
 
 class GapIPC::Impl {
 public:
     int server_fd_ = -1;
     int client_fd_ = -1;
+    std::string socket_path_;
     std::vector<uint8_t> recv_buffer_;
 
     ~Impl() {
@@ -79,7 +113,9 @@ public:
         // Ignore SIGPIPE to prevent crashes when writing to closed sockets
         signal(SIGPIPE, SIG_IGN);
 
-        unlink(SOCKET_PATH);
+        socket_path_ = ResolveSocketPath();
+
+        unlink(socket_path_.c_str());
 
         server_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
         if (server_fd_ == -1) {
@@ -90,7 +126,7 @@ public:
         sockaddr_un addr;
         memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
-        strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+        strncpy(addr.sun_path, socket_path_.c_str(), sizeof(addr.sun_path) - 1);
 
         socklen_t len = sockaddr_len(addr);
         if (bind(server_fd_, (struct sockaddr*)&addr, len) == -1) {
@@ -100,7 +136,7 @@ public:
         }
 
         // Lock down perms for local agent only
-        chmod(SOCKET_PATH, 0600);
+        chmod(socket_path_.c_str(), 0600);
 
         if (listen(server_fd_, 1) == -1) {
             std::cerr << "GAP IPC: Failed to listen on socket: " << strerror(errno) << std::endl;
@@ -111,7 +147,7 @@ public:
         set_nonblock(server_fd_, true); // non-blocking accept()
         recv_buffer_.reserve(65536);
 
-        std::cout << "GAP IPC: Listening on " << SOCKET_PATH << std::endl;
+        std::cout << "GAP IPC: Listening on " << socket_path_ << std::endl;
         return true;
     }
 
@@ -124,7 +160,8 @@ public:
             close(server_fd_);
             server_fd_ = -1;
         }
-        unlink(SOCKET_PATH);
+        if (!socket_path_.empty())
+            unlink(socket_path_.c_str());
     }
 
     bool AcceptConnection() {

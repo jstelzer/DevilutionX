@@ -5,6 +5,7 @@ Agent Council Orchestrator for DevilutionX GAP
 Coordinates specialist agents to make optimal game decisions.
 """
 
+import os
 import socket
 import struct
 import logging
@@ -43,7 +44,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SOCKET_PATH = "/tmp/devilutionx-gap.sock"
+# Per-client GAP socket. The headless client derives its path from the hero save
+# stem (multi_1.sv -> /tmp/devilutionx-gap-multi_1.sock) so multiple AI players
+# don't collide; launch_agent.sh passes the matching --socket. The orchestrator
+# computes the same path from --hero, so the two stay in sync without a magic
+# literal. multi_1 is the standard player-2 hero, used when nothing is specified.
+DEFAULT_HERO = "multi_1.sv"
+
+
+def socket_path_for(hero: str) -> str:
+    """GAP socket path for a given hero save, derived from its filename stem."""
+    stem = os.path.splitext(os.path.basename(hero))[0]
+    return f"/tmp/devilutionx-gap-{stem}.sock"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 
@@ -107,7 +119,7 @@ class AgentOrchestrator:
 
     def __init__(
         self,
-        socket_path: str = SOCKET_PATH,
+        socket_path: str = socket_path_for(DEFAULT_HERO),
         ollama_url: str = OLLAMA_URL,
         model: str = "qwen2.5:3b",
         chat_model: str = "llama3.1:8b",
@@ -123,7 +135,11 @@ class AgentOrchestrator:
 
         self.sock = None
         self.connection_closed = False  # set True when the game closes the socket (EOF)
-        self.memory = MemoryStore()
+        # Key the memory DB per client so multiple AI players (each on its own
+        # socket, e.g. a Rogue on multi_1 and a Sorc on multi_2) don't clobber a
+        # shared gap_memory.db. The socket stem uniquely identifies this client.
+        sock_stem = os.path.splitext(os.path.basename(socket_path))[0]
+        self.memory = MemoryStore(db_path=f"gap_memory_{sock_stem}.db")
         self.personality = None  # PersonalityStore (initialized after character profile is known)
         self.personality_data = {}  # Will be populated after character_id is known
         self.last_think_time = 0
@@ -1126,7 +1142,8 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
 def main():
     parser = argparse.ArgumentParser(description="Agent Council Orchestrator for DevilutionX GAP")
-    parser.add_argument("--socket", "-s", default=SOCKET_PATH, help="GAP socket path")
+    parser.add_argument("--hero", default=DEFAULT_HERO, help="Hero save this agent drives (e.g. multi_2.sv); sets the default socket")
+    parser.add_argument("--socket", "-s", default=None, help="GAP socket path (default: derived from --hero)")
     parser.add_argument("--ollama-url", default=OLLAMA_URL, help="Ollama API URL")
     parser.add_argument("--model", "-m", default="qwen2.5:3b", help="Dungeon model (fast combat)")
     parser.add_argument("--chat-model", default="llama3.1:8b", help="Town/chat model (sophisticated)")
@@ -1139,8 +1156,12 @@ def main():
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    # An explicit --socket wins; otherwise derive it from --hero so the agent
+    # connects to the matching headless client's socket.
+    socket_path = args.socket or socket_path_for(args.hero)
+
     orchestrator = AgentOrchestrator(
-        socket_path=args.socket,
+        socket_path=socket_path,
         ollama_url=args.ollama_url,
         model=args.model,
         chat_model=args.chat_model,
@@ -1151,7 +1172,7 @@ def main():
     logger.info("=" * 60)
     logger.info("Agent Council Orchestrator")
     logger.info("=" * 60)
-    logger.info(f"Socket: {args.socket}")
+    logger.info(f"Socket: {socket_path}")
     logger.info(f"Dungeon model: {args.model}")
     logger.info(f"Town model: {args.chat_model}")
     logger.info(f"Think interval: {args.think_interval}s")

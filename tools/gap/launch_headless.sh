@@ -19,6 +19,11 @@
 #   ./launch_headless.sh                       # join 127.0.0.1:6112, password foo, hero multi_1.sv
 #   JOIN=127.0.0.1:6112 PASSWORD=foo HERO=multi_1.sv ./launch_headless.sh
 #
+# Multiple AI players: run one headless client per hero save. Each binds its own
+# GAP socket, derived from the save stem (multi_2.sv -> /tmp/devilutionx-gap-multi_2.sock),
+# so a second client never collides with the first. e.g. a Sorc as player 3:
+#   HERO=multi_2.sv ./launch_headless.sh       # then: HERO=multi_2.sv ./launch_agent.sh
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +42,8 @@ fi
 echo "🤖 Launching HEADLESS AI client"
 echo "   join:     $JOIN"
 echo "   hero:     $HERO"
-echo "   (host a TCP game from your normal client first; then run ./launch_agent.sh)"
+echo "   socket:   /tmp/devilutionx-gap-${HERO%.sv}.sock"
+echo "   (host a TCP game from your normal client first; then run HERO=$HERO ./launch_agent.sh)"
 echo
 
 # Dummy SDL drivers → no window, no GPU/audio. --headless makes rendering a no-op.

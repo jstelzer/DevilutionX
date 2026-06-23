@@ -25,7 +25,11 @@ cd "$SCRIPT_DIR"
 MODEL="${MODEL:-qwen2.5:3b}"
 CHAT_MODEL="${CHAT_MODEL:-gemma3:12b}"
 PASSWORD="${PASSWORD:-foo}"
-SOCKET="${SOCKET:-/tmp/devilutionx-gap.sock}"
+# Socket path is per-client, derived from the hero save stem so multiple headless
+# clients (e.g. a Rogue on multi_1 and a Sorc on multi_2) don't collide. Must
+# match what the headless client binds (see launch_headless.sh / --gap-socket).
+HERO="${HERO:-multi_1.sv}"
+SOCKET="${SOCKET:-/tmp/devilutionx-gap-${HERO%.sv}.sock}"
 
 # Anything after a literal `--` is forwarded verbatim to the orchestrator.
 EXTRA_ARGS=()
@@ -37,6 +41,22 @@ fi
 if ! command -v uv &> /dev/null; then
     echo "❌ uv not found. Install it, then run ./setup.sh to create the venv." >&2
     exit 1
+fi
+
+# Self-cleaning: kill any orchestrator already bound to THIS socket before we
+# start. Only one agent can hold the IPC socket; re-running this script would
+# otherwise stack a second agent that fights the first for the connection (and
+# silently runs stale code). Matches by the unique --socket path so a sibling
+# agent on a different client (e.g. multi_1 vs multi_2) is left untouched.
+if pgrep -f "orchestrator.py.*${SOCKET}" > /dev/null 2>&1; then
+    echo "♻️  Existing agent on $SOCKET — stopping it first"
+    pkill -f "orchestrator.py.*${SOCKET}"
+    # Wait for it to release the socket connection (up to ~3s).
+    for _ in $(seq 1 30); do
+        pgrep -f "orchestrator.py.*${SOCKET}" > /dev/null 2>&1 || break
+        sleep 0.1
+    done
+    pkill -9 -f "orchestrator.py.*${SOCKET}" 2>/dev/null || true
 fi
 
 # The game must be running and hosting first — that's what creates the socket.

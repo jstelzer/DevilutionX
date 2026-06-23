@@ -124,6 +124,10 @@ extern int gGapCompanionSlot;
 extern bool gGapHeadless;
 extern std::string gGapJoinAddr;
 extern std::string gGapGamePassword;
+// GAP DSL socket path. Empty => derived from the companion save stem
+// (e.g. multi_2.sv -> /tmp/devilutionx-gap-multi_2.sock) so multiple headless
+// clients each get a unique socket. Set explicitly via --gap-socket.
+extern std::string gGapSocketPath;
 #endif
 
 #ifdef __UWP__
