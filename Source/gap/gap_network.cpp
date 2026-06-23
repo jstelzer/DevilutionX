@@ -11,6 +11,7 @@
 #include "../items.h"
 #include "../inv.h"
 #include "../multi.h"
+#include "../msg.h"  // NetSendCmdGItem / CMD_REQUESTAGITEM (network-correct pickup)
 #include "../engine/direction.hpp"
 #include <iostream>
 #include <cmath>
@@ -260,7 +261,8 @@ bool ExecutePositionAttack(int player_id, int target_x, int target_y) {
         const auto& foundMonster = Monsters[targetMonsterId];
         std::cerr << "GAP: ExecutePositionAttack (" << target_x << "," << target_y
                   << ") → Found monster " << targetMonsterId << " at ("
-                  << foundMonster.position.tile.x << "," << foundMonster.position.tile.y
+                  << static_cast<int>(foundMonster.position.tile.x) << ","
+                  << static_cast<int>(foundMonster.position.tile.y)
                   << ") search_dist=" << minDistance << std::endl;
         return ExecuteDirectAttack(player_id, targetMonsterId);
     } else {
@@ -356,28 +358,19 @@ bool ExecuteDirectPickup(int player_id, int item_id) {
                       << "), distance dx=" << dx << " dy=" << dy << std::endl;
 
             if (dx <= 1 && dy <= 1) {
-                std::cerr << "GAP: ExecuteDirectPickup - Item within range, calling AutoGetItem" << std::endl;
+                std::cerr << "GAP: ExecuteDirectPickup - Item in range, requesting via network" << std::endl;
 
-                // Direct pickup with auto-placement - avoids cursor pollution
-                // AutoGetItem tries belt first (potions), then inventory, only cursor as fallback
-                AutoGetItem(player, &Items[item_id], item_id);
-
-                // Sync to network if multiplayer
-                if (gbIsMultiplayer) {
-                    // Notify other players about the pickup
-                    TCmdGItem cmd;
-                    cmd.bCmd = CMD_GETITEM;
-                    cmd.bPnum = player_id;  // Important: Use companion's ID, not MyPlayerId
-                    cmd.x = itemPos.x;
-                    cmd.y = itemPos.y;
-                    PrepareItemForNetwork(item, cmd.item);  // Use .item not .def (they're a union)
-
-                    multi_send_msg_packet(
-                        (1 << player_id),  // Send to all except the companion
-                        reinterpret_cast<std::byte*>(&cmd),
-                        sizeof(cmd)
-                    );
-                }
+                // Network-correct pickup: request an auto-get exactly like a real
+                // player (inv.cpp:2256 / player.cpp:1266). The host validates and
+                // broadcasts a single CMD_AGETITEM grant that every client applies,
+                // so the item is removed from the ground and placed once. A full
+                // pack just fails the request gracefully.
+                //
+                // The old path did a LOCAL AutoGetItem AND a manual CMD_GETITEM
+                // broadcast — fine for the sidecar's single client, but in true-MP
+                // both this client and the host materialized the item, duplicating
+                // it (and AutoGetItem cursor-dropped copies when the pack was full).
+                NetSendCmdGItem(true, CMD_REQUESTAGITEM, player, static_cast<uint8_t>(item_id));
 
                 return true;
             } else {

@@ -910,8 +910,12 @@ void RunGameLoop(interface_mode uMsg)
 	EventHandler previousHandler = SetEventHandler(GameEventHandler);
 	
 #ifdef ENABLE_GAP
-	gap::GapCore::Instance().Initialize();
-	
+	// Only the AI's own headless client serves the GAP socket. A plain (human)
+	// client must NOT bind it — otherwise the orchestrator can connect to the
+	// human's client and drive the human's own player. One client, one player.
+	if (gGapHeadless)
+		gap::GapCore::Instance().Initialize();
+
 	// Initialize seat system - register human player seat
 	auto& seatManager = SeatManager::Instance();
 	auto humanSeat = std::make_unique<HumanSeat>(MyPlayerId);

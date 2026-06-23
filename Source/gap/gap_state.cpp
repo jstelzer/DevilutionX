@@ -33,7 +33,7 @@ namespace {
 PlayerActor* GetControlledPlayerActor() {
     auto& store = ActorStore::Instance();
     
-    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    int controlled_slot = MyPlayerId;
     PlayerActor* actor = store.GetPlayerActor(controlled_slot);
     if (actor && actor->IsValid()) {
         return actor;
@@ -58,7 +58,7 @@ Player* GetControlledPlayer() {
     return (actor && actor->IsValid()) ? actor->GetPlayer() : nullptr;
 #else
     std::cout << "GAP: Using NON-ACTOR path (ENABLE_GAP not defined)" << std::endl;
-    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    int controlled_slot = MyPlayerId;
     if (controlled_slot >= 0 && controlled_slot < static_cast<int>(Players.size()) && Players[controlled_slot].plractive) {
         std::cout << "GAP: Non-actor path returning companion player" << std::endl;
         return &Players[controlled_slot];
@@ -285,7 +285,7 @@ std::string GapStateExtractor::ExtractNearbyEntities() {
     
     // IMPORTANT: For companions, we need to ensure they're on the same level as main player
     // and that monster data is available
-    int controlled_slot = GapCore::Instance().GetControlledPlayer();
+    int controlled_slot = MyPlayerId;
     if (controlled_slot != MyPlayerId && controlled_slot >= 0) {
         // Companion mode - ensure we're using proper game state
         std::cout << "GAP: Companion mode - checking level sync. Companion level=" 

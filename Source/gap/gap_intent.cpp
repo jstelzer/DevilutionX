@@ -30,40 +30,14 @@ namespace devilution::gap {
 
 namespace {
 // Get the controlled player for GAP operations
+// One client, one player: GAP always drives this client's own MyPlayer. (These
+// thin aliases remain only to avoid churning ~50 call sites; the sidecar
+// slot-lookup they used to do is gone.)
 Player* GetControlledPlayer() {
-    int controlled_slot = GapCore::Instance().GetControlledPlayer();
-    std::cerr << "GAP: GetControlledPlayer - controlled_slot=" << controlled_slot 
-              << " MyPlayerId=" << MyPlayerId << std::endl;
-    
-    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS) {
-        bool is_active = Players[controlled_slot].plractive;
-        std::cerr << "GAP: Checking slot " << controlled_slot 
-                  << " - plractive=" << is_active;
-        if (is_active) {
-            std::cerr << " name=" << Players[controlled_slot]._pName;
-        }
-        std::cerr << std::endl;
-        
-        if (is_active) {
-            return &Players[controlled_slot];
-        }
-    }
-    
-    // Fallback to MyPlayer if controlled player not available
-    std::cerr << "GAP: Falling back to MyPlayerId=" << MyPlayerId << std::endl;
-    if (MyPlayerId < MAX_PLRS) {
-        return &Players[MyPlayerId];
-    }
-    return nullptr;
+    return MyPlayer;
 }
 
-// Get the controlled player ID for GAP operations  
 int GetControlledPlayerId() {
-    int controlled_slot = GapCore::Instance().GetControlledPlayer();
-    if (controlled_slot >= 0 && controlled_slot < MAX_PLRS && Players[controlled_slot].plractive) {
-        return controlled_slot;
-    }
-    // Fallback to MyPlayerId
     return MyPlayerId;
 }
 } // namespace
@@ -272,6 +246,13 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         intent.action = "repair_item";
         iss >> intent.param_slot;
 
+    } else if (cmd == "EQUIP") {
+        // EQUIP inv_slot
+        // Example: EQUIP 3  (equip the item in inventory slot 3, swapping out the
+        // currently-worn item in that body slot)
+        intent.action = "equip_item";
+        iss >> intent.param_inv_slot;
+
     } else if (cmd == "DROP") {
         // DROP inv_slot OR DROP GOLD amount
         // Example: DROP 5  (drop item from inventory slot 5)
@@ -337,6 +318,8 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteUsePotion(intent.param_kind, intent.param_slot);
     } else if (intent.action == "pickup") {
         return ExecutePickup(intent.param_id);
+    } else if (intent.action == "equip_item") {
+        return ExecuteEquip(intent.param_inv_slot);
     } else if (intent.action == "interact") {
         return ExecuteInteract(intent.param_id);
     } else if (intent.action == "path") {
@@ -379,7 +362,8 @@ bool GapIntentProcessor::ExecuteMove(int x, int y) {
     int controlled_id = GetControlledPlayerId();
     std::cerr << "GAP: ExecuteMove - Controlling player " << controlled_id 
               << " (name: " << player->_pName << ")" 
-              << " at pos (" << player->position.tile.x << "," << player->position.tile.y << ")"
+              << " at pos (" << static_cast<int>(player->position.tile.x) << ","
+              << static_cast<int>(player->position.tile.y) << ")"
               << " to target (" << x << "," << y << ")" << std::endl;
     
     if (player->_pmode != PM_STAND) {
@@ -524,8 +508,8 @@ bool GapIntentProcessor::ExecuteAttack(int x, int y) {
             if (targetMonsterId >= 0) {
                 const auto& foundMonster = Monsters[targetMonsterId];
                 std::cerr << "GAP: Position attack (" << x << "," << y << ") → Found monster "
-                          << targetMonsterId << " at (" << foundMonster.position.tile.x << ","
-                          << foundMonster.position.tile.y << ") search_dist=" << minDistance << std::endl;
+                          << targetMonsterId << " at (" << static_cast<int>(foundMonster.position.tile.x) << ","
+                          << static_cast<int>(foundMonster.position.tile.y) << ") search_dist=" << minDistance << std::endl;
                 return ExecuteDirectAttack(controlled_id, targetMonsterId);
             } else {
                 std::cerr << "GAP: Position attack failed - no monster near (" << x << "," << y << ")" << std::endl;
@@ -840,10 +824,7 @@ bool GapIntentProcessor::ExecuteChat(const std::string& message) {
 
 #ifdef ENABLE_GAP
 void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
-    // Process GAP intents through the new Seat system instead of direct execution
     // NOTE: Chat intents are handled globally at the GAP protocol level and never reach here
-    auto& seatManager = devilution::SeatManager::Instance();
-    
     while (!intent_queue_.empty()) {
         const Intent& gap_intent = intent_queue_.front();
 
@@ -851,43 +832,11 @@ void GapIntentProcessor::ProcessPendingIntentsViaSeat(uint32_t current_tick) {
             break; // Wait for target tick
         }
 
-        // Some actions should be executed directly, not through the Seat system
-        // These include: stats, shopping, identification, inventory management, dropping items, etc.
-        bool use_direct_execution = (
-            gap_intent.action == "addstat" ||
-            gap_intent.action == "buy" ||
-            gap_intent.action == "sell" ||
-            gap_intent.action == "repair" ||
-            gap_intent.action == "identify" ||
-            gap_intent.action == "belt_refill" ||
-            gap_intent.action == "repair_item" ||
-            gap_intent.action == "drop_item" ||
-            gap_intent.action == "drop_gold"
-        );
-
-        if (use_direct_execution) {
-            // Execute directly without going through Seat system
-            if (ExecuteIntent(gap_intent)) {
-                std::cout << "GAP: Executed " << gap_intent.action << " intent directly" << std::endl;
-            } else {
-                std::cerr << "GAP: Failed to execute " << gap_intent.action << " intent" << std::endl;
-            }
-        } else {
-            // Convert GAP intent to Seat intent for movement/combat actions
-            devilution::Intent seat_intent = ConvertToSeatIntent(gap_intent, current_tick);
-
-            // Get the companion seat for the controlled player
-            int controlled_player = GapCore::Instance().GetControlledPlayer();
-            auto* seat = seatManager.GetSeat(controlled_player);
-
-            if (auto* companion_seat = dynamic_cast<devilution::CompanionSeat*>(seat)) {
-                companion_seat->EnqueueIntent(seat_intent);
-                std::cout << "GAP: Bridged " << gap_intent.action << " intent to CompanionSeat for player " << controlled_player << std::endl;
-            } else {
-                std::cerr << "GAP: No CompanionSeat found for player " << controlled_player << ", using direct execution" << std::endl;
-                // Fallback to direct execution
-                ExecuteIntent(gap_intent);
-            }
+        // One client, one player: every intent executes directly on MyPlayer.
+        // The sidecar Seat/CompanionSeat bridge is gone — in the true-MP client
+        // it always fell through to direct execution anyway.
+        if (!ExecuteIntent(gap_intent)) {
+            std::cerr << "GAP: Failed to execute " << gap_intent.action << " intent" << std::endl;
         }
 
         intent_queue_.pop();
@@ -1141,6 +1090,75 @@ bool GapIntentProcessor::ExecuteRepairItem(int bodySlot) {
 
     item._iDurability = item._iMaxDur;
     player->_pGold -= cost;
+
+    return true;
+}
+
+bool GapIntentProcessor::ExecuteEquip(int invSlot) {
+    Player* player = GetControlledPlayer();
+    if (player == nullptr) {
+        std::cerr << "GAP Equip: GetControlledPlayer() returned nullptr" << std::endl;
+        return false;
+    }
+
+    if (invSlot < 0 || invSlot >= player->_pNumInv) {
+        std::cerr << "GAP Equip: Invalid inventory slot: " << invSlot << std::endl;
+        return false;
+    }
+
+    const Item& invItem = player->InvList[invSlot];
+    if (invItem.isEmpty()) {
+        std::cerr << "GAP Equip: Inventory slot " << invSlot << " is empty" << std::endl;
+        return false;
+    }
+
+    // Map the item's equip type to a body slot.
+    inv_body_loc bodyLoc;
+    switch (invItem._iLoc) {
+    case ILOC_HELM:    bodyLoc = INVLOC_HEAD; break;
+    case ILOC_ARMOR:   bodyLoc = INVLOC_CHEST; break;
+    case ILOC_AMULET:  bodyLoc = INVLOC_AMULET; break;
+    case ILOC_RING:    bodyLoc = player->InvBody[INVLOC_RING_LEFT].isEmpty() ? INVLOC_RING_LEFT : INVLOC_RING_RIGHT; break;
+    case ILOC_ONEHAND: bodyLoc = INVLOC_HAND_LEFT; break;
+    case ILOC_TWOHAND: bodyLoc = INVLOC_HAND_LEFT; break;
+    default:
+        std::cerr << "GAP Equip: Item not equippable (iLoc=" << static_cast<int>(invItem._iLoc) << ")" << std::endl;
+        return false;
+    }
+
+    const bool sync = (GetControlledPlayerId() == MyPlayerId);
+
+    std::cout << "GAP Equip: Equipping " << invItem._iIName << " from slot " << invSlot
+              << " into body loc " << static_cast<int>(bodyLoc) << std::endl;
+
+    // Lift the currently-equipped item(s) so the target slot is free. AutoEquip's
+    // CMD_CHANGEPLRITEMS will overwrite the target slot on all clients, so we only
+    // need an explicit del-sync for the off-hand a two-hander (bow) also vacates.
+    std::vector<Item> displaced;
+    if (!player->InvBody[bodyLoc].isEmpty()) {
+        displaced.push_back(player->InvBody[bodyLoc]);
+        player->InvBody[bodyLoc].clear();
+    }
+    if (invItem._iLoc == ILOC_TWOHAND && !player->InvBody[INVLOC_HAND_RIGHT].isEmpty()) {
+        displaced.push_back(player->InvBody[INVLOC_HAND_RIGHT]);
+        player->InvBody[INVLOC_HAND_RIGHT].clear();
+        if (sync) NetSendCmdDelItem(false, INVLOC_HAND_RIGHT);
+    }
+
+    // Equip the new item the real-player way: AutoEquip copies it into the freed
+    // slot and (for MyPlayer) broadcasts CMD_CHANGEPLRITEMS.
+    if (!AutoEquip(*player, invItem, true, sync)) {
+        for (Item& it : displaced)  // restore on failure
+            AutoEquip(*player, it, true, sync);
+        std::cerr << "GAP Equip: AutoEquip failed (slot occupied / not wieldable)" << std::endl;
+        return false;
+    }
+
+    // Remove the now-equipped item from inventory (self-syncs CMD_DELINVITEMS),
+    // then stash the swapped-out item(s) back into the pack (CMD_CHANGEINVITEMS).
+    player->RemoveInvItem(invSlot, false);
+    for (Item& it : displaced)
+        AutoPlaceItemInInventory(*player, it, sync);
 
     return true;
 }

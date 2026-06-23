@@ -66,6 +66,7 @@ private:
     bool ExecuteRepairItem(int bodySlot);
     bool ExecuteDropItem(int invSlot);
     bool ExecuteDropGold(int amount);
+    bool ExecuteEquip(int invSlot);
 };
 
 } // namespace devilution::gap
