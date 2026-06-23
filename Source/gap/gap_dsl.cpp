@@ -699,45 +699,44 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             }
         }
 
-        // Known castable spells as a SELF-DESCRIBING action menu, sourced entirely
-        // from the engine's spell metadata so the agent never hard-codes (and
-        // drifts from) spell ids/names/mana costs:
-        //   KS=id,name,lvl,mana,flags;...   (name spaces -> '_')
-        //   flags: o=offensive(aimed), t=town-castable, $=affordable right now
-        // RS=id is the readied (right-click) action. = memorized spells plus the
-        // class ability/skill (e.g. Warrior Repair); scroll/staff-granted spells
-        // already show up via the belt/inventory/EQ item codes.
-        {
-            std::ostringstream spells;
-            bool first_spell = true;
-            uint64_t known = player->_pMemSpells | player->_pAblSpells;
-            int curMana = player->_pMana >> 6;  // _pMana is fixed-point (>>6 = points)
-            for (int s = 1; s < 64; s++) {
-                SpellID sid = static_cast<SpellID>(s);
-                // Test with the engine's own bitmask (1 << (id-1)) — NOT (known>>s),
-                // which is off by one and skips Firebolt (id 1 -> bit 0) entirely.
-                if (!(known & GetSpellBitmask(sid))) continue;
-                const SpellData &sd = GetSpellData(sid);
-                std::string name = sd.sNameText;
-                for (char &c : name) if (c == ' ') c = '_';
-                int mana = GetManaAmount(*player, sid) >> 6;  // GetManaAmount is fixed-point; >>6 = points
-                std::string flags;
-                if (sd.isTargeted()) flags += 'o';
-                if (sd.isAllowedInTown()) flags += 't';
-                if (mana <= curMana) flags += '$';
-                if (flags.empty()) flags = "-";
-                if (!first_spell) spells << ";";
-                first_spell = false;
-                spells << s << "," << name << "," << player->GetSpellLevel(sid)
-                       << "," << mana << "," << flags;
-            }
-            if (!first_spell)
-                dsl << " KS=" << spells.str();
-            dsl << " RS=" << static_cast<int>(player->_pRSpell);
-        }
-
         // Add companion's gold
         dsl << " GOLD=" << player->_pGold;
+    }
+
+    // Known castable spells — ALWAYS emitted (town AND dungeon). This was the bug:
+    // it lived inside the `if (DTYPE_TOWN)` block above, so underground the spell
+    // menu vanished (nspells=0) and a caster couldn't see her own Firebolt. Self-
+    // describing from engine metadata so the agent never hard-codes spell data:
+    //   KS=id,name,lvl,mana,flags;...   (name spaces -> '_')
+    //   flags: o=offensive(aimed), t=town-castable, $=affordable right now
+    // RS=id is the readied (right-click) action; = memorized + class ability.
+    {
+        std::ostringstream spells;
+        bool first_spell = true;
+        uint64_t known = player->_pMemSpells | player->_pAblSpells;
+        int curMana = player->_pMana >> 6;  // _pMana is fixed-point (>>6 = points)
+        for (int s = 1; s < 64; s++) {
+            SpellID sid = static_cast<SpellID>(s);
+            // Test with the engine's own bitmask (1 << (id-1)) — NOT (known>>s),
+            // which is off by one and skips Firebolt (id 1 -> bit 0) entirely.
+            if (!(known & GetSpellBitmask(sid))) continue;
+            const SpellData &sd = GetSpellData(sid);
+            std::string name = sd.sNameText;
+            for (char &c : name) if (c == ' ') c = '_';
+            int mana = GetManaAmount(*player, sid) >> 6;  // GetManaAmount is fixed-point; >>6 = points
+            std::string flags;
+            if (sd.isTargeted()) flags += 'o';
+            if (sd.isAllowedInTown()) flags += 't';
+            if (mana <= curMana) flags += '$';
+            if (flags.empty()) flags = "-";
+            if (!first_spell) spells << ";";
+            first_spell = false;
+            spells << s << "," << name << "," << player->GetSpellLevel(sid)
+                   << "," << mana << "," << flags;
+        }
+        if (!first_spell)
+            dsl << " KS=" << spells.str();
+        dsl << " RS=" << static_cast<int>(player->_pRSpell);
     }
 
     // Note: Could add E= (events) in the future for things like:
