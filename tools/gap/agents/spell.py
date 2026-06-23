@@ -95,13 +95,37 @@ class SpellAgent(BaseAgent):
             staff_charges, state.get("spells", []),
         )
         if spell_id is None:
-            return None
+            # Nothing castable right now. If it's only because the nearest enemy is
+            # out of cast range, CLOSE on it to get within range — a caster should
+            # advance to blast, not idle (which let belt-fiddling/movement win and
+            # made her look passive). Cast-kite: move toward, then fire when in range.
+            return self._approach_to_cast(monsters, my_pos)
 
         self.last_cast_tick = state.get("tick", 0)
         return AgentResponse(
             command=f"CAST {spell_id} {target_pos[0]} {target_pos[1]}",
             weight=weight,
             reasoning=reasoning,
+        )
+
+    def _approach_to_cast(self, monsters, my_pos):
+        """Move toward the nearest monster to get within cast range. Returns a MV
+        AgentResponse, or None if there's no monster worth approaching."""
+        nearest = None
+        nd = 999.0
+        for mob in monsters:
+            d = math.hypot(mob.get("x", 0) - my_pos[0], mob.get("y", 0) - my_pos[1])
+            if d < nd:
+                nd = d
+                nearest = mob
+        # Already in range (handled by _select_spell) or no one to chase across
+        # the whole level — don't.
+        if nearest is None or nd <= MAX_CAST_RANGE or nd > 40:
+            return None
+        return AgentResponse(
+            command=f"MV {nearest.get('x', 0)} {nearest.get('y', 0)}",
+            weight=0.7,  # beats belt-fiddle (~0.3) and damped caster-melee
+            reasoning=f"Spell: closing to cast range on monster at {nd:.0f} tiles",
         )
 
     def _select_spell(

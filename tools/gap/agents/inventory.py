@@ -14,6 +14,30 @@ class InventoryAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(name="Inventory", **kwargs)
+        # Give up on items the engine refuses to belt (e.g. a book/oversized item
+        # the DSL typed like a scroll). Without this she loops forever issuing the
+        # same failing BELT and never does anything else.
+        self._unbeltable = set()      # inv slots the engine won't accept on the belt
+        self._belt_try_slot = None    # inv slot we keep trying to belt
+        self._belt_try_count = 0      # consecutive identical belt attempts
+
+    def _belt_response(self, item, belt_slot, weight, reasoning):
+        """Issue a BELT refill, but stop fixating on an item the engine refuses.
+        If we pick the same inv slot 3 ticks running (a success would have changed
+        the inventory/belt and thus the pick), blacklist it and bail this tick."""
+        slot = item["slot"]
+        if slot == self._belt_try_slot:
+            self._belt_try_count += 1
+        else:
+            self._belt_try_slot = slot
+            self._belt_try_count = 1
+        if self._belt_try_count > 3:
+            self._unbeltable.add(slot)
+            self._belt_try_slot = None
+            self._belt_try_count = 0
+            logger.warning(f"Inventory: inv slot {slot} ({item['type']}) can't be belted - giving up")
+            return None
+        return AgentResponse(command=f"BELT {slot} {belt_slot}", weight=weight, reasoning=reasoning)
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """
@@ -61,10 +85,12 @@ class InventoryAgent(BaseAgent):
             return None
 
         # Categorize inventory items
-        hp_items = [item for item in inventory if item["type"] in ["hp", "rj"]]
-        mp_items = [item for item in inventory if item["type"] == "mp"]
-        heal_scrolls = [item for item in inventory if item["type"] == "sh"]
-        portal_scrolls = [item for item in inventory if item["type"] == "sp"]
+        def _ok(item):  # skip items the engine has refused to belt
+            return item["slot"] not in self._unbeltable
+        hp_items = [i for i in inventory if i["type"] in ["hp", "rj"] and _ok(i)]
+        mp_items = [i for i in inventory if i["type"] == "mp" and _ok(i)]
+        heal_scrolls = [i for i in inventory if i["type"] == "sh" and _ok(i)]
+        portal_scrolls = [i for i in inventory if i["type"] == "sp" and _ok(i)]
 
         # Count belt contents
         belt_hp = sum(1 for slot in belt if slot in ["hp", "rj"])
@@ -93,11 +119,7 @@ class InventoryAgent(BaseAgent):
                 reasoning = f"Inventory: Refilling belt with {item['type']}"
                 logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
-            return AgentResponse(
-                command=f"BELT {item['slot']} {belt_slot}",
-                weight=weight,
-                reasoning=reasoning
-            )
+            return self._belt_response(item, belt_slot, weight, reasoning)
 
         # Priority 2: Fill belt with mana potions (casters only, want 2-3 slots)
         player_class = stats.get("class", 0)
@@ -123,11 +145,7 @@ class InventoryAgent(BaseAgent):
                 reasoning = f"Inventory: Refilling belt with {item['type']}"
                 logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
-            return AgentResponse(
-                command=f"BELT {item['slot']} {belt_slot}",
-                weight=weight,
-                reasoning=reasoning
-            )
+            return self._belt_response(item, belt_slot, weight, reasoning)
 
         # Priority 3: Add healing scrolls as backup (if no HP potions available)
         if belt_hp < 2 and heal_scrolls:
@@ -144,11 +162,7 @@ class InventoryAgent(BaseAgent):
                 reasoning = f"Inventory: Refilling belt with {item['type']} scroll"
                 logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
-            return AgentResponse(
-                command=f"BELT {item['slot']} {belt_slot}",
-                weight=weight,
-                reasoning=reasoning
-            )
+            return self._belt_response(item, belt_slot, weight, reasoning)
 
         # Priority 4: Add town portal scrolls for convenience
         if len(empty_belt_slots) >= 2 and portal_scrolls:
@@ -157,11 +171,8 @@ class InventoryAgent(BaseAgent):
 
             logger.info(f"Inventory: Moving {item['type']} from inv slot {item['slot']} to belt slot {belt_slot}")
 
-            return AgentResponse(
-                command=f"BELT {item['slot']} {belt_slot}",
-                weight=0.2,  # Lowest priority
-                reasoning=f"Inventory: Adding {item['type']} scroll to belt"
-            )
+            return self._belt_response(item, belt_slot, 0.2,
+                                       f"Inventory: Adding {item['type']} scroll to belt")
 
         # No urgent refill needs
         return None
