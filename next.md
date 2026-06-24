@@ -110,19 +110,31 @@ the `FIREBOLT=2`=Healing bug).
   what's equipped) via ItemComparator.find_redundant — the downgrade left after
   an upgrade no longer piles up.
 
-### A4. Hazard awareness — "see the fire" (⏳ prerequisite for combat smarts + Track D)
-Today she can't perceive ground hazards at all: the DSL emits monsters/loot/
-objects but **no danger layer** — Fire Wall, Inferno, Apocalypse rifts, Nova/
-arcane blasts, lava/hazard terrain. So "MOVE OUT OF THE FIRE" is literally a
-missing capability; she has the survival instincts of a houseplant because she's
-standing in an *invisible* fire.
-- **Emit a hazard layer in the DSL:** active hostile AoE/missile tiles + hazard
-  terrain near her, as `HZ=x,y,kind;...` (kind = fire/lightning/arcane/…).
-  Source from the missile list (like TP detection already does) + terrain flags.
-- **Use it:** combat/movement avoid standing in/ pathing through hazard tiles;
-  positioning prefers safe tiles. Helps every class regardless of personality.
-- This is the gate for Track D's *fire tolerance* — you can't tune how much fire
-  she'll stand in until she can see it.
+### A4. Hazard awareness — "see the fire" — 🟢 MOSTLY DONE (2026-06-24)
+Before this she couldn't perceive ground hazards at all: the DSL emitted monsters/
+loot/objects but **no danger layer**, so standing in a Fire Wall / Inferno /
+incoming AoE was an *invisible* threat and she'd attack from inside it.
+- ✅ **Hazard layer in the DSL** (`HZ=x,y,kind;...`): hostile missiles/AoE near
+  her, sourced from the live `Missiles` list exactly like `TP=` portals. Only
+  `TARGET_PLAYERS`/`TARGET_BOTH` missiles count, so it never flags her own or the
+  human's offensive spells. `kind` = damage element (fire/lght/acid/arc/phys) via
+  `GetMissileData`, so Track D can scale per-element tolerance. Emitted
+  unconditionally (not town-gated — the `KS=` bug-chain lesson).
+- ✅ **Parser + helpers:** `state["hazards"]` in `dsl_parser.py`; `hazards.py`
+  (`is_tile_dangerous` / `nearest_safe_tile`, Chebyshev, safe-tile search biased
+  toward the player so she dodges *toward the party*).
+- ✅ **Use it — `HazardAgent`:** rule-based "step out of the fire" reflex at
+  priority 10 (matches critical healing). Strong when ON a hazard, weaker when
+  adjacent, damped by a `_fire_tolerance` hook (defaults low; the D1 slider wires
+  in later). Hazards also fold into `_compute_danger` so loot/exploration/movement
+  dampen near fire. Helps every class regardless of personality.
+- ⏳ **v2 — hazard terrain:** lava / hazard tiles via terrain flags (v1 is
+  missiles only; `gap_dsl.cpp` has a comment marking the spot).
+- ⏳ **Live-test (Step 4):** Sorc vs a fire-thrower — confirm `HZ=` shows in the
+  state log and she steps off the burning tile. The C++/parser/agent all build +
+  unit-test clean; only the in-game confirmation is outstanding.
+- This is the gate for Track D's *fire tolerance* — the `_fire_tolerance` hook is
+  already in `HazardAgent`, waiting for D1 to drive it.
 
 ---
 
@@ -222,6 +234,14 @@ Depends on A4 (so "fire tolerance" means something) and a stable council
 
 ---
 
+## Progress (2026-06-24)
+Done this run: **A4 hazard awareness** ✅ emit→parse→agent (`HZ=` danger layer,
+`HazardAgent` dodge reflex at priority 10, danger-fold) — live-test (Step 4) and
+v2 terrain hazards still pending. Also: loot never scavenges in town (item-churn
+fix). Fresh-install dep gotcha: only `sdl2_image` was missing (`pacman -S
+sdl2_image`); rebuild via `ninja -C build devilutionx` (cmake not on PATH but
+self-invokes).
+
 ## Progress (2026-06-23)
 Done this run: A2 mana awareness ✅, Sorc ranged casting ✅, A1 doors ✅,
 A3 inventory lifecycle ✅ (make-room, redundant-sell, Cain multi-ID),
@@ -235,8 +255,8 @@ A2 action system ✅ (self-describing spell menu; spell-id bug fixed).
    Warrior auto-Repair via skill, Rogue Disarm; offensive scroll use.
 3. **B4 finish** — economic extraction (portal to sell when full) + the return
    trip; later, invite-the-human-through.
-4. **A4 hazard awareness** — emit a danger layer (`HZ=`) so she can see and avoid
-   fire/AoE. Smarter combat now, and the prerequisite for Track D's fire tolerance.
+4. **A4 hazard awareness** — ✅ emit→parse→agent done (`HZ=` + `HazardAgent`).
+   Remaining: live-test the dodge (Step 4) and v2 terrain hazards (lava tiles).
 5. **D1 personality sliders** — weight biases over the council, with survival
    floors. Small once A4 lands; high character-per-line-of-code.
 6. **D2 relationship adaptation** — feed observed player behavior (shares vs
