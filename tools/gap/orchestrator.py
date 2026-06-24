@@ -34,7 +34,9 @@ from agents.cain import CainAgent
 from agents.adria import AdriaAgent
 from agents.chat import ChatAgent
 from agents.exploration import ExplorationAgent
+from agents.hazard import HazardAgent
 from dsl_parser import parse_dsl_state
+from hazards import is_tile_dangerous
 from memory_store import MemoryStore, prepare_companion_state_for_db
 from personality_store import PersonalityStore
 from chat_handler import ChatHandler
@@ -199,6 +201,7 @@ class AgentOrchestrator:
         self.cain = CainAgent(model=model, ollama_url=ollama_url)
         self.adria = AdriaAgent(model=model, ollama_url=ollama_url)
         self.exploration = ExplorationAgent(model=model, ollama_url=ollama_url)
+        self.hazard = HazardAgent(model=model, ollama_url=ollama_url)
         self.movement = MovementAgent(model=model, ollama_url=ollama_url)
         self.transition = TransitionAgent(model=model, ollama_url=ollama_url)
         self.portal = PortalAgent(model=model, ollama_url=ollama_url)
@@ -211,8 +214,8 @@ class AgentOrchestrator:
             self.combat, self.spell, self.healing, self.mana, self.loot,
             self.stats, self.town, self.shopping,
             self.inventory, self.griswold, self.cain, self.adria, self.exploration,
-            self.upgrade, self.portal, self.extraction, self.transition, self.movement,
-            self.chat
+            self.hazard, self.upgrade, self.portal, self.extraction, self.transition,
+            self.movement, self.chat
         ]
 
         # Note: Personality and profile will be injected after character_id is known (on first state)
@@ -520,6 +523,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         overwhelm_term = 0.25 if overwhelmed else 0.0
         no_pots_term = 0.2 if hp_potions == 0 else 0.0
         low_mana_term = 0.1 if mp_pct < 20 else 0.0
+        # Standing in/next to an active hazard (fire/AoE) is real danger even with
+        # full HP — fold it in so loot/exploration/movement get dampened near fire.
+        in_hazard = bool(state.get("hazards")) and is_tile_dangerous(state, me_x, me_y, radius=1)
+        hazard_term = 0.2 if in_hazard else 0.0
 
         # Weighted sum
         danger = (
@@ -528,7 +535,8 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             unique_term +
             overwhelm_term +
             no_pots_term +
-            low_mana_term
+            low_mana_term +
+            hazard_term
         )
 
         return max(0.0, min(1.0, danger))
@@ -584,6 +592,17 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             priority = 10 if hp_pct < 25 else 8
             score = healing_rec.weight * priority
             recommendations.append(("Healing", healing_rec, score))
+
+        # HAZARD - "step out of the fire" survival reflex. Priority 10 (matches
+        # critical healing): standing in an Inferno/Fire Wall/incoming AoE is as
+        # lethal as low HP, and dodging is a single MV. The agent's own weight is
+        # high when she's ON a hazard, lower when only adjacent, and damped by the
+        # (future) fire-tolerance slider — so the council still decides, but a clear
+        # "she's burning" reliably beats attacking/looting/following.
+        hazard_rec = self.hazard.evaluate(state)
+        if hazard_rec and hazard_rec.weight > 0.0:
+            score = hazard_rec.weight * 10
+            recommendations.append(("Hazard", hazard_rec, score))
 
         # MANA - drink a mana potion so a low caster can keep casting (not melee)
         mana_rec = self.mana.evaluate(state)
@@ -1131,12 +1150,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                     else:
                         stats_str = "no_stats"
                     town_str = "TOWN" if state.get("in_town") else f"floor={state['floor']}"
-                    _hl = (state.get("equipped", {}) or {}).get("hand_left") or {}
-                    _wpn = f"{_hl.get('type','-')}" + (f"^{_hl.get('charges')}c/sp{_hl.get('spell_id')}" if _hl.get('type') == 'st' else "")
                     logger.info(
                         f"📥 State: tick={state['tick']} {town_str} {stats_str} "
                         f"pos=({me_x},{me_y}) hp={hp_pct}% mobs={len(state['mobs'])} loot={len(state['loot'])} "
-                        f"inv={state.get('inv_count', 0)}/40 wpn={_wpn} belt=[{belt_str}]"
+                        f"belt=[{belt_str}]"
                     )
 
                 # Update memory (for future agents)

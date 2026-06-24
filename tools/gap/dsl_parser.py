@@ -40,6 +40,7 @@ def parse_dsl_state(line: str) -> Dict:
         "player_floor": None,  # Main player's dungeon level (for follow decisions)
         "stairs": [],  # Level-transition triggers: [{"type": "down"|"up", "x": .., "y": ..}, ...]
         "portals": [],  # Town portals: [{"x": .., "y": .., "caster": "me"|"them"}, ...]
+        "hazards": [],  # Hostile AoE/missile tiles: [{"x": .., "y": .., "kind": "fire"|"lght"|"acid"|"arc"|"phys", "dist": ..}, ...]
         "mobs": [],
         "loot": [],
         "objects": [],  # Objects: [{"id": 15, "x": 45, "y": 30, "type": "ch", "dist": 5}, ...]
@@ -106,6 +107,22 @@ def parse_dsl_state(line: str) -> Dict:
                         "caster": pm.group(3),  # "me" (our portal) or "them"
                     })
             state["portals"] = portals
+
+        # Parse hazards: HZ=12,15,fire;13,16,lght  (kind = damage element). These
+        # are active hostile missiles/AoE tiles near us — the "see the fire" layer.
+        if m := re.search(r'HZ=(\d+,\d+,[a-z]+(?:;\d+,\d+,[a-z]+)*)', line):
+            hazards = []
+            me_x, me_y, _, _ = state["me"]
+            for part in m.group(1).split(';'):
+                if pm := re.match(r'(\d+),(\d+),([a-z]+)', part):
+                    hx, hy = int(pm.group(1)), int(pm.group(2))
+                    hazards.append({
+                        "x": hx,
+                        "y": hy,
+                        "kind": pm.group(3),  # fire|lght|acid|arc|phys
+                        "dist": abs(hx - me_x) + abs(hy - me_y),  # Manhattan
+                    })
+            state["hazards"] = hazards
 
         # Parse monsters: M=id@x,y,hp%,flags;...
         # Use negative lookbehind to avoid matching L= or E=
@@ -724,7 +741,7 @@ if __name__ == "__main__":
     # Test DSL parser
     logging.basicConfig(level=logging.INFO)
 
-    test_state = "T=12345 F=2 ME=34,18,72,33 M=12@38,16,55,1;19@36,17,20,1 L=71@35,19,10;83@37,18,250"
+    test_state = "T=12345 F=2 ME=34,18,72,33 HZ=33,18,fire;36,16,lght M=12@38,16,55,1;19@36,17,20,1 L=71@35,19,10;83@37,18,250"
 
     print(f"Input: {test_state}\n")
 
@@ -739,6 +756,9 @@ if __name__ == "__main__":
     print(f"  Loot: {len(parsed['loot'])}")
     for item in parsed['loot']:
         print(f"    #{item['id']} at ({item['x']},{item['y']}) value={item['value']} dist={item['dist']}")
+    print(f"  Hazards: {len(parsed['hazards'])}")
+    for hz in parsed['hazards']:
+        print(f"    {hz['kind']} at ({hz['x']},{hz['y']}) dist={hz['dist']}")
 
     # Test LLM summary (mock memory)
     class MockMemory:

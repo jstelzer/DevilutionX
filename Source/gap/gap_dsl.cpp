@@ -123,6 +123,48 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             dsl << " TP=" << portals.str();
     }
 
+    // Hazard layer: HZ=x,y,kind;... — active hostile missiles/AoE near us, so the
+    // agent can "see the fire" and step off dangerous tiles. Sourced from the live
+    // Missiles list, exactly like TP= above. Only missiles cast AT players
+    // (TARGET_PLAYERS / TARGET_BOTH) count — that cleanly excludes our own and the
+    // human's offensive spells (TARGET_MONSTERS), so we never flag her own Firebolt.
+    // kind is the missile's damage element (fire/lght/acid/arc/phys) so Track D can
+    // later scale per-element tolerance (fire-tolerance slider). v1 covers missile
+    // hazards only; ground terrain (lava tiles, etc.) is a deferred v2. Emitted
+    // unconditionally — NOT gated on dungeon-vs-town (the KS= bug-chain lesson).
+    {
+        std::ostringstream hazards;
+        bool first = true;
+        // A bit beyond light radius so incoming projectiles give reaction time.
+        const int hazardRadius = (player->_pLightRad > 0 ? player->_pLightRad : 10) + 3;
+        for (auto &missile : Missiles) {
+            // Skip our own / the human's offensive missiles and benign ones.
+            if (missile._micaster != TARGET_PLAYERS && missile._micaster != TARGET_BOTH)
+                continue;
+            if (missile._mitype == MissileID::TownPortal)
+                continue;
+            Point hp = missile.position.tile;
+            int dx = std::abs(hp.x - playerPos.x);
+            int dy = std::abs(hp.y - playerPos.y);
+            if (static_cast<int>(std::sqrt(dx * dx + dy * dy)) > hazardRadius)
+                continue;
+            const char* kind;
+            switch (GetMissileData(missile._mitype).damageType()) {
+            case DamageType::Fire:      kind = "fire"; break;
+            case DamageType::Lightning: kind = "lght"; break;
+            case DamageType::Acid:      kind = "acid"; break;
+            case DamageType::Magic:     kind = "arc";  break;
+            default:                    kind = "phys"; break;
+            }
+            if (!first)
+                hazards << ";";
+            hazards << hp.x << "," << hp.y << "," << kind;
+            first = false;
+        }
+        if (!first)
+            dsl << " HZ=" << hazards.str();
+    }
+
     // Monsters: M=id@x,y,hp%,flags;...
     std::ostringstream monsters;
     bool first_monster = true;
