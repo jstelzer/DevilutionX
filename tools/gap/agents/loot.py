@@ -38,6 +38,15 @@ class LootAgent(BaseAgent):
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Only activate if items nearby and not in combat"""
+        # Never scavenge in town. Town is the party's trade/sort space — items on
+        # the floor there are deliberately placed (someone sorting their pack, or
+        # offering a trade: "do you want this?" → "no" → a human sells it). Grabbing
+        # them autonomously interferes with that workflow. Item hand-offs to her are
+        # chat-mediated, not floor pickups. Suppressing the agent in town also kills
+        # the make-room drop/re-pick oscillation (she sells to Griswold to free space).
+        if state.get("in_town"):
+            return False
+
         # Don't loot during active combat (3+ monsters nearby)
         if len(state.get("mobs", [])) > 3:
             return False
