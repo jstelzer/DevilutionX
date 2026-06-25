@@ -319,7 +319,19 @@ Depends on A4 (so "fire tolerance" means something) and a stable council
 
 ---
 
-## Track E — Decision tracing & offline testing (high leverage, low cost)
+## Track E — Decision tracing & offline testing (🟢 CORE INFRASTRUCTURE)
+> Promoted from "auxiliary feature" to **core infrastructure** (2026-06-25). It's
+> the flight recorder the whole ecosystem reads from: B5 becomes measurable,
+> weight tuning goes offline, regressions become CI failures, TLA+ invariants get
+> grounded in observed behavior instead of speculation, and any future rewrite has
+> a behavioral oracle. The kind of thing that pays dividends for years — so build
+> it like infra (versioned schema, sane volume), not a debug `print`.
+
+**Principle it makes explicit — the engine owns outcomes, the council owns
+decisions.** Two different systems. Track E tests/observes the decision system; it
+deliberately says nothing about whether the decision *worked* in the world. Keep
+that boundary clean (it's why the caveat below is honest, not a weakness).
+
 **The unlock:** `decide()` is almost a pure function `state → command` — the only
 impurity is internal council state (CommitmentTracker incumbent/streak,
 tactical_mode), which we can log too. **Record the decision stream as JSONL and we
@@ -346,8 +358,9 @@ command, commitment state, tactical_mode, and the raw state. A `--trace PATH` fl
 
 **Suggested record schema (one JSON object per decision):**
 ```
-{ tick, floor, in_town,
-  dsl: "<raw DSL line>",            # re-parseable → also a parser regression corpus
+{ schema_version: 1,              # it's a contract now — a v1 corpus must still
+  tick, floor, in_town,           #   replay against a future decide(); version it
+  dsl: "<raw DSL line>",          # re-parseable → also a parser regression corpus
   recommendations: [ {agent, weight, priority, score, reasoning} ],
   commitment: {incumbent, streak}, tactical_mode,
   llm: [ {agent, prompt, response} ],   # only the LLM agents that fired this tick
@@ -355,15 +368,36 @@ command, commitment state, tactical_mode, and the raw state. A `--trace PATH` fl
 ```
 
 **What it buys:**
+- **Flight recorder (single-incident postmortem — the day-to-day win):** when she
+  does something dumb at tick 14892, read the one record and see *why* — full
+  recommendation set, scores, commitment state. "Hazard layer was empty so Loot
+  won" vs "hazard layer wasn't empty and the lease wasn't busted → bug" are two
+  completely different debugging sessions, and the trace tells you which in one
+  glance instead of "huh…".
+- **Counterfactual replay:** re-run a recorded session with one knob moved (`Loot
+  +10%`) and diff — *which* decisions changed, and *where*. The diff is the signal.
+  (Honest limit: it tells you which decisions **change**, never which are
+  **better** — "better" needs a label or an outcome proxy, and outcomes live in
+  the engine, not the trace. Track E makes tuning offline and observable, not
+  automatic; a human or a labeled subset still closes the loop.)
 - **Regression/golden tests:** freeze decide() on a corpus; a weight tweak that
   silently breaks combat fails CI instead of being found mid-run.
-- **Tuning as offline search:** replay the corpus under different weights/priorities,
-  score against labeled good/bad decisions — grid-search the council.
 - **Behavior/profile tests:** assert archetypes from recorded *or synthetic* states
   (Warrior rushes, Rogue kites, Sorc casts, anyone steps out of fire).
 - **Pathology mining → assertions:** oscillation (winner flips N× in M ticks),
   churn (same winner re-deciding an unchanged state — the B5 smell), starvation
   (an agent that should win never does).
+- **Behavioral oracle for any rewrite:** if GAP is ever ported (the morning's Rust
+  urge), the trace corpus is the pin — the new impl must reproduce the old
+  decisions before it earns trust.
+
+**Design notes (build it like infra):**
+- **Versioned schema:** a `schema_version` field + keep `decide()` replayable
+  against old records, or every refactor invalidates the corpus. Cheap on day one,
+  expensive to retrofit.
+- **Log on change, not every tick:** ~6k records/hour, mostly identical re-decisions
+  while walking. Emit on decision/state change → smaller *and* denser corpus, and
+  the dedup ratio itself is a churn metric (it literally measures the B5 problem).
 
 **Synergies (this is infrastructure, not a feature):**
 - It **is** B5's observability substrate — the live-lease readout is just the
@@ -371,6 +405,11 @@ command, commitment state, tactical_mode, and the raw state. A `--trace PATH` fl
 - It's how we **measure B5 Phase 0** ("did rule-based vendors kill the churn?") —
   diff trace stats before/after instead of guessing. So Track E lands *before*
   B5 Phase 0.
+- **Evidence-driven invariants (Track E → Track B):** mine the corpus for
+  pathologies *first*, then promote the recurring ones to TLA+ invariants — specs
+  written from observed behavior, not intuition. This is how Track B specs should
+  get written here: the trace tells you what's actually breaking before you spend
+  a spec on it.
 
 **Caveat (scope honestly):** the trace tests the *decision*, not the *outcome* —
 it won't catch "MV target was a wall" or "the cast whiffed". That still needs live
