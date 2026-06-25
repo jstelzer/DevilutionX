@@ -463,3 +463,50 @@ A2 action system ✅ (self-describing spell menu; spell-id bug fixed).
 Rule of thumb: Track A is "go build it." Track B is "spec it small, then build it."
 Don't pay for TLA+ on the framework while the framework is still moving — pay for
 it on the protocol, one feature at a time, right when that feature lands.
+
+---
+
+## Vision & lessons — why Diablo (and what's actually being built)
+
+**Diablo isn't the product. It's the reference implementation — the wind tunnel.**
+It was chosen deliberately for a small, understandable engine, deterministic
+mechanics, a lightweight networking model, decades of known behavior, and
+extremely fast iteration. Not because it's the end goal, but because it's an
+ideal environment for *discovering the architecture*.
+
+Almost nothing in this roadmap is inherently Diablo-specific. The pipeline is a
+generic game-agent architecture:
+
+```
+Perception → normalize world state → capabilities → council
+           → intent lease → execution → tracing → offline replay
+```
+
+Swap the adapter and `DevilutionXAdapter` becomes `GodotAdapter` / `UnityAdapter`
+/ `UnrealAdapter` / `FactorioAdapter`. The council doesn't care. The first adapter
+is where the architecture earns its scars; the second is where you find out
+whether those scars turned into wisdom.
+
+**The roadmap is a map of discovery, not a plan executed.** Intent leases (B5)
+weren't decreed — they were discovered because walking to Griswold kept
+triggering unnecessary deliberation. Decision tracing (Track E) wasn't decreed —
+it surfaced when we realized we were about to replay Level 1 a thousand times to
+tune weights. The ideas were extracted from experience; that's exactly the kind
+of guidance that belongs in a framework.
+
+**GAP lessons (not Diablo lessons) — the transferable principles:**
+- Let the engine remain authoritative.
+- Don't duplicate game metadata in prompts; expose engine metadata through the DSL.
+- Make perception self-describing.
+- Keep deterministic logic deterministic.
+- Treat LLMs as advisors, not simulation engines.
+- Add observability before adding intelligence.
+- Record decisions so you can replay them offline.
+- Introduce formal modeling when coordination emerges, not before.
+
+**"The skeleton is the cache bust."** A design principle, not just a joke about
+the level-1 mobs: the AI shouldn't re-plan every frame — it should re-plan when
+the world *meaningfully changes*. Someone writing a Godot adapter two years from
+now should be able to read that one line and get it. (This is the same insight
+B5 intent leases formalize: a lease holds until reality changes, not until a
+timer fires.)
