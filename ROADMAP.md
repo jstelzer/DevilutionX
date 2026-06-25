@@ -320,7 +320,24 @@ Depends on A4 (so "fire tolerance" means something) and a stable council
 ---
 
 ## Track E — Decision tracing & offline testing (🟢 CORE INFRASTRUCTURE)
-> Promoted from "auxiliary feature" to **core infrastructure** (2026-06-25). It's
+> **Phase 1 landed 2026-06-25: the recorder exists.** `--trace PATH` writes one
+> JSONL record per `decide()` at the selection point (`decision_tracer.py`),
+> with the day-one schema below — versioned, log-on-change dedup (the `repeats`
+> count = the churn metric), and per-LLM-agent `(prompt, response)` capture wired
+> through `BaseAgent.llm_sink`. Self-test in `decision_tracer.py` (run by
+> `./dev.sh test`); validated end-to-end against the real `decide()` offline.
+> **Capture is one env var away:** `TRACE=1 ./launch_agent.sh` → auto-named
+> `traces/<hero>-<ts>.jsonl` (or `TRACE=<path>`); `traces/` is git-ignored
+> (capture data, not source — the future golden corpus is committed separately).
+> **Remaining:** capture a real in-game session and build the offline replay/
+> assertion harness on top of the corpus (arbitration tests first — deterministic,
+> zero-mock). Known v1 gap: the emergency-heal hard-override (`return` before
+> arbitration) isn't traced; only decisions that pass through the normal
+> recommendation/`max()` path are. Priority isn't recorded per-rec (it's folded
+> into `score` upstream and isn't separable at the selection point; `score` is
+> what `max()` compares, so arbitration replay needs nothing more).
+>
+> It's
 > the flight recorder the whole ecosystem reads from: B5 becomes measurable,
 > weight tuning goes offline, regressions become CI failures, TLA+ invariants get
 > grounded in observed behavior instead of speculation, and any future rewrite has
@@ -416,6 +433,18 @@ it won't catch "MV target was a wall" or "the cast whiffed". That still needs li
 play or an engine sim. But decision-correctness is most of the tuning pain.
 
 ---
+
+## Progress (2026-06-25)
+Done this run: **Track E Phase 1 — the flight recorder** ✅ `--trace PATH` →
+JSONL per `decide()` (`decision_tracer.py`: versioned schema, log-on-change
+dedup w/ `repeats` churn count, per-LLM `(prompt,response)` via `BaseAgent.
+llm_sink`). Self-test + offline e2e against real `decide()`. Wired into
+`launch_agent.sh` via `TRACE=1` (auto-named under git-ignored `traces/`) so
+session capture is one env var away — data/analysis/sim tooling is coming next.
+Also fixed a pre-existing **SpellAgent crash** (`should_activate` referenced
+undefined `has_off`/`has_staff` — would crash `decide()` on any dungeon tick past
+the cast cooldown; now calls the real `_has_offensive_spell`/`_has_staff_charges`).
+Remaining for Track E: real in-game capture + the offline replay/assertion harness.
 
 ## Progress (2026-06-24)
 Done this run: **A4 hazard awareness** ✅ emit→parse→agent (`HZ=` danger layer,

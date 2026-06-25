@@ -13,7 +13,7 @@ import time
 import argparse
 import signal
 import sys
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from agents.base import AgentResponse
 from agents.combat import CombatAgent
 from agents.spell import SpellAgent
@@ -37,6 +37,7 @@ from agents.exploration import ExplorationAgent
 from agents.hazard import HazardAgent
 from dsl_parser import parse_dsl_state
 from hazards import is_tile_dangerous
+from decision_tracer import DecisionTracer
 from memory_store import MemoryStore, prepare_companion_state_for_db
 from personality_store import PersonalityStore
 from chat_handler import ChatHandler
@@ -129,6 +130,7 @@ class AgentOrchestrator:
         chat_model: str = "llama3.1:8b",
         password: Optional[str] = None,
         think_interval: float = 0.6,
+        trace_path: Optional[str] = None,
     ):
         self.socket_path = socket_path
         self.ollama_url = ollama_url
@@ -219,6 +221,18 @@ class AgentOrchestrator:
         ]
 
         # Note: Personality and profile will be injected after character_id is known (on first state)
+
+        # Decision tracing (ROADMAP Track E). When --trace is set, every decide()
+        # appends a JSONL record at the selection point. Point each agent's
+        # llm_sink at a shared per-tick buffer (cleared at the top of decide) so
+        # the trace captures the (prompt, response) of every LLM agent that fired.
+        self.tracer: Optional[DecisionTracer] = (
+            DecisionTracer(trace_path) if trace_path else None
+        )
+        self._llm_buf: List[Dict[str, str]] = []
+        if self.tracer:
+            for agent in self.agents:
+                agent.llm_sink = self._llm_buf
 
         # Chat handler (runs in thread, non-blocking)
         self.chat_handler = ChatHandler(
@@ -541,7 +555,7 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
         return max(0.0, min(1.0, danger))
 
-    def decide(self, state: dict) -> str:
+    def decide(self, state: dict, dsl_line: str = "") -> str:
         """
         Main decision loop. Collects agent recommendations and picks winner.
 
@@ -565,6 +579,11 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         """
         # Update models based on context (town vs dungeon)
         self._update_context_models(state)
+
+        # Start a fresh per-tick LLM capture buffer (Track E). Agents append to
+        # this via their llm_sink as they call query_llm during evaluate().
+        if self.tracer:
+            self._llm_buf.clear()
 
         me_x, me_y, hp_pct, mp_pct = state["me"]
 
@@ -838,6 +857,12 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         # and damp fallback agents during a transient gap, so she finishes a goal
         # instead of pacing between (e.g.) walking to Pepin and following you.
         current_time = time.time()
+        # Snapshot the commitment state that shaped THIS decision (note_winner
+        # below mutates it for the next round, so capture before apply).
+        commitment_snapshot = {
+            "incumbent": self.commitment.incumbent,
+            "streak": self.commitment.streak,
+        }
         recommendations = self.commitment.apply(recommendations)
 
         # Pick highest score
@@ -877,6 +902,23 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         # Track command for failure detection
         self.last_command = response.command
         self.last_hp = hp_pct
+
+        # Decision trace (Track E): one JSONL record per decision, at the point
+        # arbitration actually happened. `recommendations` here is the final list
+        # max() chose from (post tactical-mode, post-commitment).
+        if self.tracer:
+            self.tracer.record(
+                tick=state.get("tick", 0),
+                floor=state.get("floor", 0),
+                in_town=bool(state.get("in_town")),
+                dsl=dsl_line,
+                recommendations=recommendations,
+                commitment=commitment_snapshot,
+                tactical_mode=self.tactical_mode,
+                llm=list(self._llm_buf),
+                winner=agent_name,
+                command=response.command,
+            )
 
         return response.command
 
@@ -1172,7 +1214,7 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
                 # Get decision from council
                 start_time = time.time()
-                command = self.decide(state)
+                command = self.decide(state, dsl_line)
                 decision_time = time.time() - start_time
 
                 logger.info(f"📤 Command: {command} (took {decision_time:.2f}s)")
@@ -1189,6 +1231,8 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             if self.sock:
                 self.sock.close()
             self.memory.close()
+            if self.tracer:
+                self.tracer.close()  # flush the in-flight record
             logger.info("🔒 Orchestrator shutdown complete")
 
 
@@ -1201,6 +1245,8 @@ def main():
     parser.add_argument("--chat-model", default="llama3.1:8b", help="Town/chat model (sophisticated)")
     parser.add_argument("--password", "-p", help="Game password")
     parser.add_argument("--think-interval", type=float, default=0.6, help="Seconds between decisions")
+    parser.add_argument("--trace", default=None, metavar="PATH",
+                        help="Record every council decision as JSONL to PATH (flight recorder; ROADMAP Track E)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
@@ -1219,6 +1265,7 @@ def main():
         chat_model=args.chat_model,
         password=args.password,
         think_interval=args.think_interval,
+        trace_path=args.trace,
     )
 
     logger.info("=" * 60)

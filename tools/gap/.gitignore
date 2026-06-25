@@ -50,6 +50,10 @@ coverage.xml
 gap_logs/
 *.log
 replay_*.json.gz
+# Decision traces (flight recorder, Track E) — capture data, not source.
+# Scoped to the traces/ dir so a future committed golden corpus (*.jsonl
+# fixtures for the replay harness) elsewhere isn't swept up.
+traces/
 
 # IDE / Editor files
 .vscode/

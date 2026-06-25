@@ -13,6 +13,8 @@
 #   CHAT_MODEL=gemma3:27b ./launch_agent.sh    # richer chat
 #   MODEL=gemma3:12b ./launch_agent.sh         # heavier tactical reasoning
 #   PASSWORD=secret ./launch_agent.sh          # match the hosted game's password
+#   TRACE=1 ./launch_agent.sh                  # flight-record decisions → traces/<hero>-<ts>.jsonl
+#   TRACE=/tmp/run.jsonl ./launch_agent.sh     # ...or to an explicit path
 #   ./launch_agent.sh -- --debug               # forward extra args to orchestrator
 #
 set -euo pipefail
@@ -36,6 +38,26 @@ EXTRA_ARGS=()
 if [[ "${1:-}" == "--" ]]; then
     shift
     EXTRA_ARGS=("$@")
+fi
+
+# Decision tracing (ROADMAP Track E). TRACE unset → off. TRACE=1/true/yes/auto →
+# auto-named file under traces/ (keyed by hero + timestamp, so multiple clients
+# and successive runs never clobber each other). Any other value is taken as an
+# explicit output path. The data-capture/replay tooling reads these JSONL files.
+TRACE_ARGS=()
+if [[ -n "${TRACE:-}" ]]; then
+    case "$TRACE" in
+        1|true|yes|auto)
+            mkdir -p traces
+            TRACE_PATH="traces/${HERO%.sv}-$(date +%Y%m%d-%H%M%S).jsonl"
+            ;;
+        *)
+            TRACE_PATH="$TRACE"
+            mkdir -p "$(dirname "$TRACE_PATH")"
+            ;;
+    esac
+    TRACE_ARGS=(--trace "$TRACE_PATH")
+    echo "📼 Decision trace → $TRACE_PATH"
 fi
 
 if ! command -v uv &> /dev/null; then
@@ -85,4 +107,5 @@ exec uv run orchestrator.py \
     --chat-model "$CHAT_MODEL" \
     --password "$PASSWORD" \
     --socket "$SOCKET" \
+    "${TRACE_ARGS[@]}" \
     "${EXTRA_ARGS[@]}"

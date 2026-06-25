@@ -53,7 +53,7 @@ class SpellAgent(BaseAgent):
         # engine already told us what she knows) or a charged staff. No magic-stat
         # guess — knowing an offensive spell IS the qualification, so a Warrior who
         # pumped Magic and learned Firebolt casts it too.
-        return has_off or has_staff
+        return self._has_offensive_spell(state) or self._has_staff_charges(state)
 
     def _has_offensive_spell(self, state: Dict[str, Any]) -> bool:
         return any(s.get("offensive") for s in state.get("spells", []))

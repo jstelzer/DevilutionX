@@ -13,6 +13,7 @@ case "${1:-help}" in
         echo "🧪 Running tests..."
         uv run python -m pytest test_personality.py -q
         uv run python dsl_parser.py
+        uv run python decision_tracer.py
         ;;
     "format")
         echo "🎨 Formatting code..."
@@ -28,7 +29,7 @@ case "${1:-help}" in
         ;;
     "clean")
         echo "🧹 Cleaning up..."
-        rm -rf __pycache__ agents/__pycache__ *.pyc .pytest_cache gap_logs/*.log agent.log ai-player.log 2>/dev/null || true
+        rm -rf __pycache__ agents/__pycache__ *.pyc .pytest_cache gap_logs/*.log agent.log ai-player.log traces/ 2>/dev/null || true
         echo "✅ Cleanup complete"
         ;;
     "help"|*)
@@ -38,7 +39,7 @@ case "${1:-help}" in
         echo ""
         echo "Commands:"
         echo "  run      - Launch the AI companion agent (see launch_agent.sh)"
-        echo "  test     - Run personality tests + DSL parser self-test"
+        echo "  test     - Run personality tests + DSL parser & decision-tracer self-tests"
         echo "  format   - Format code with black"
         echo "  lint     - Check code with ruff"
         echo "  fix      - Auto-fix lint issues with ruff"

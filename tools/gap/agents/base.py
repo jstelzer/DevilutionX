@@ -35,6 +35,11 @@ class BaseAgent:
         self.dormant = False
         self.profile = None  # CharacterProfile (injected by orchestrator)
         self.personality = None  # PersonalityStore (injected by orchestrator)
+        # Optional decision-trace sink (ROADMAP Track E). When the orchestrator is
+        # tracing it points this at a per-tick list; query_llm then appends every
+        # (prompt, response) it produces so the trace can later stub the LLM and
+        # reproduce LLM-driven decisions. None (default) = zero overhead.
+        self.llm_sink = None
         # Whether to prepend remembered personality context to LLM prompts.
         # Tactical agents (combat/spell) turn this off to stay terse and fast.
         self.use_memory_context = True
@@ -129,14 +134,26 @@ class BaseAgent:
             response_text = resp.json()["response"].strip()
             logger.debug(f"{self.name}: LLM response: {response_text[:100]}")
 
+            self._trace_llm(full_prompt, response_text)
             return response_text
 
         except requests.exceptions.Timeout:
             logger.warning(f"{self.name}: LLM query timed out")
+            self._trace_llm(locals().get("full_prompt", prompt), "")
             return ""
         except Exception as e:
             logger.error(f"{self.name}: LLM query failed: {e}")
+            self._trace_llm(locals().get("full_prompt", prompt), "")
             return ""
+
+    def _trace_llm(self, prompt: str, response: str) -> None:
+        """Record this LLM call into the active decision-trace sink, if any.
+        Failures (timeouts) are recorded with an empty response so the trace
+        reflects what the council actually saw this tick."""
+        if self.llm_sink is not None:
+            self.llm_sink.append(
+                {"agent": self.name, "prompt": prompt, "response": response}
+            )
 
     def parse_weighted_response(self, response: str) -> Optional[AgentResponse]:
         """
