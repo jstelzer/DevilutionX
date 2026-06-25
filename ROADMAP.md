@@ -142,11 +142,25 @@ incoming AoE was an *invisible* threat and she'd attack from inside it.
 
 These are the party-protocol invariants. Each gets a scoped spec, then the build.
 
-### B1. Item / loot ownership across agents  ← first candidate spec
-With 2 AIs + you, who claims a drop? Invariants: **no duplicated ownership**, no
-oscillation (A and B don't both walk to the same item forever), a claim resolves
-or releases. We already hardened single-item pickup (the `_iRequest` debounce);
-this is the *contention* layer on top.
+### B1. Item / loot ownership across agents — lighter than it looks (B5 leads now)
+With 2 AIs + you, who claims a drop? **Key realization: the engine already
+resolves hard contention** — if two players rush an item, whoever clicks first
+wins and the other gets *nothing*. So "no duplicated ownership" isn't ours to
+guarantee; the engine enforces it. That collapses B1 from an ownership protocol
+down to two soft concerns: **oscillation** (A and B don't both walk to the same
+item forever) and **efficiency** (don't send two agents after one drop when the
+loser will arrive to an empty tile). We already hardened single-item pickup (the
+`_iRequest` debounce). With the hard invariant handled by the engine and the soft
+parts cheap, B1 **slides behind B5** — and once leases exist, "claim a drop" is
+just a short-lived lease, so B1 largely *falls out* of B5 rather than needing its
+own protocol.
+
+- **Town trade flow (social, depends on the loot/sell path):** before Griswold
+  sells a keepable-but-unwanted item, broadcast *"anyone want this before I sell
+  it? `<item>`"* → if someone says yes, `DROP` it for them; if not (or after a
+  short timeout), sell. Reuses the chat path + the existing recently-dropped
+  anti-pickup blacklist. Turns her pack into a party resource instead of vendor
+  fodder — characterful, and a natural fit once Phase 0 makes selling deterministic.
 
 ### B2. Portal & level ownership — no stranding
 Invariants: portal ownership is unambiguous; using a portal never strands a party
@@ -178,6 +192,77 @@ need extraction → can I create a portal? → have the resource? → place it �
 Designed as a reusable **PortalCapability** (provider-pluggable), not Rogue/Sorc-
 specific. The spell provider and economic/return legs depend on A2 (action
 system) and B2 (portal ownership).
+
+### B5. Intent leases — stop re-electing a decision that's already made ← strong candidate spec
+**The friction:** "walking across town to sell shit shouldn't revalidate so
+much." Right — *walking to Griswold* isn't a decision, it's the **execution** of
+one, and the council re-runs the whole election every `think_interval` (0.6s)
+anyway. Walking isn't deliberation; the skeleton is the cache-bust.
+
+**The cost is real and it's LLM inference, not Python.** Of 22 agents, 16 are
+rule-based (microseconds); only 6 hit the LLM (`combat`, `chat`, `shopping`,
+`griswold`, `adria`). In town with sellable junk, `griswold.should_activate()`
+is True every tick → `query_llm` every 0.6s, plus `shopping`/`adria` — ~2-3
+redundant inferences/sec re-deciding "should I sell?" when she's already walking
+there. A Rust rewrite makes redundant inference *faster*; a lease *removes* it.
+That's the bigger win.
+
+**We already have a half-lease, and it runs too late.** `CommitmentTracker`
+(orchestrator.py) gives the incumbent goal a +2.5 score bonus with streak decay —
+but it's applied *after* every agent has already run `evaluate()` (and burned its
+LLM call). So it fixes goal **oscillation**, not churn **cost**. The lease is that
+same idea promoted from "bias the score post-hoc" to "skip re-evaluation while
+valid." It's an **invalidation model, not a timer**: the lease holds until reality
+changes (enemy enters awareness, target dies, HP threshold crossed, loot of
+interest, stance change, level transition, path stuck; in town: player command,
+inventory/gold change, vendor done, portal appears).
+
+**Design constraints (learned, not in the original sketch):**
+- **The hard part is the invalidation set, not issuing the lease.** Miss a bust
+  event and the failure flips from *annoying churn* to *dangerous
+  unresponsiveness* (keeps walking while a skeleton eats her). Keep a **timeout
+  backstop** even though it's "not a timer" — the liveness clause itself says a
+  lease eventually *expires*. Belt and suspenders.
+- **Reflexes are never leased.** The priority-10 survival agents (Hazard, critical
+  Healing, player Chat, Extraction) are exactly the *invalidation sources*. The
+  tiers already encode the line: **≥8 always evaluates and can preempt; ≤7 is
+  leaseable** (sell/buy/explore/follow/upgrade). Two-tier with almost no new
+  concept. NB: in **town** there are no monsters, so leased town goals have a
+  tiny, safe bust set (player command / inventory / vendor-done / portal) — the
+  unresponsiveness risk is a *dungeon* concern, which makes Phase 0 low-risk.
+- **A lease is a held stance.** Same preemption machinery as **B3 stance
+  arbitration** ("RETREAT dominates ENGAGE", "always ≥1 legal action"). Design
+  them together so we don't build two preemption systems.
+- **Observability is a first-class requirement, not a nicety.** Surface the live
+  lease — name, age, why it was acquired, its invalidation set, and state:
+  ```
+  Lease: SELL_JUNK   age: 7.4s   reason: inventory full
+  invalidation: enemy | player command | vendor complete
+  state: executing
+  ```
+  The first time she walks past three monsters because a bust event wasn't wired,
+  this tells you *why* at a glance — and watching her current commitment live
+  makes for a far better demo than a log tail. Log it on lease change + on bust.
+
+**Sequencing (cheap first — measure before abstracting):**
+- **Phase 0 (now, cheap):** the vendor LLM calls are *decorative* — `griswold`'s
+  `_sellable_items()` already computes the plan in pure Python; the LLM after it
+  decides nothing. Make Griswold/Shopping/Adria rule-based (or cache the command,
+  re-query only on inventory/gold/threat change). Probably removes most of the
+  observed friction with **no new primitive**. Low-risk in town (no reflexes fire).
+- **Phase 1:** promote `CommitmentTracker` → real lease: incumbent holds a lease
+  with an explicit invalidation predicate; council skips re-scoring leaseable
+  agents while valid; survival tier always evaluates and can bust it; timeout
+  backstop.
+- **Phase 2:** move long-running tactics (vendor sequences, path-to, portal/
+  transition) *under* the lease so they own retries / stuck-detection — the
+  "tactics = execution engine" payoff (the roadmap's "longer-running tactics with
+  richer history").
+- **Phase 3 (Track B spec):** TLA+ the invariants once stance-preemption (B3)
+  interacts with leases. *Safety:* an agent holds **at most one** active lease.
+  *Liveness:* a lease eventually **completes / expires / is interrupted**. This is
+  a *single-agent* spec — simpler than B1 loot-ownership and high-value, so it may
+  be the first Track B spec worth writing.
 
 ---
 
@@ -234,6 +319,65 @@ Depends on A4 (so "fire tolerance" means something) and a stable council
 
 ---
 
+## Track E — Decision tracing & offline testing (high leverage, low cost)
+**The unlock:** `decide()` is almost a pure function `state → command` — the only
+impurity is internal council state (CommitmentTracker incumbent/streak,
+tactical_mode), which we can log too. **Record the decision stream as JSONL and we
+can replay the council offline forever** — write tests for weights/priority and
+simulate `decide()` without playing level 1 a billion times. Behavior tests and
+class profiles become automatable.
+
+**The implementation is tiny.** At the selection point (`orchestrator.py`, where
+`best = max(recommendations, …)`) everything is already in scope: the full
+`recommendations` list `(agent, weight, score, reasoning)`, the winner, the
+command, commitment state, tactical_mode, and the raw state. A `--trace PATH` flag
++ one JSONL append per decision. Reuse the `prepare_companion_state_for_db`/
+`llm_view` serialization precedent.
+
+**The test surface splits in two — the same line as B5's tiers:**
+1. **Arbitration (deterministic, testable today, zero mocking):** given a recorded
+   `recommendations` set → assert the winner. Tests scoring × priority ×
+   commitment math directly, no LLM, no engine. The 80% win, and pure.
+2. **Agent decisions:** the **16 rule-based agents** (Hazard/Healing/Loot/Movement/…)
+   replay deterministically from recorded `state` — direct unit tests, no mocking.
+   The **6 LLM agents** (combat/chat/shopping/griswold/adria + base) need their
+   `(prompt, response)` recorded so replay can stub `query_llm`. **Bake that into
+   the schema from day one** or the corpus can't reproduce LLM-driven decisions.
+
+**Suggested record schema (one JSON object per decision):**
+```
+{ tick, floor, in_town,
+  dsl: "<raw DSL line>",            # re-parseable → also a parser regression corpus
+  recommendations: [ {agent, weight, priority, score, reasoning} ],
+  commitment: {incumbent, streak}, tactical_mode,
+  llm: [ {agent, prompt, response} ],   # only the LLM agents that fired this tick
+  winner, command }
+```
+
+**What it buys:**
+- **Regression/golden tests:** freeze decide() on a corpus; a weight tweak that
+  silently breaks combat fails CI instead of being found mid-run.
+- **Tuning as offline search:** replay the corpus under different weights/priorities,
+  score against labeled good/bad decisions — grid-search the council.
+- **Behavior/profile tests:** assert archetypes from recorded *or synthetic* states
+  (Warrior rushes, Rogue kites, Sorc casts, anyone steps out of fire).
+- **Pathology mining → assertions:** oscillation (winner flips N× in M ticks),
+  churn (same winner re-deciding an unchanged state — the B5 smell), starvation
+  (an agent that should win never does).
+
+**Synergies (this is infrastructure, not a feature):**
+- It **is** B5's observability substrate — the live-lease readout is just the
+  latest trace record rendered.
+- It's how we **measure B5 Phase 0** ("did rule-based vendors kill the churn?") —
+  diff trace stats before/after instead of guessing. So Track E lands *before*
+  B5 Phase 0.
+
+**Caveat (scope honestly):** the trace tests the *decision*, not the *outcome* —
+it won't catch "MV target was a wall" or "the cast whiffed". That still needs live
+play or an engine sim. But decision-correctness is most of the tuning pain.
+
+---
+
 ## Progress (2026-06-24)
 Done this run: **A4 hazard awareness** ✅ emit→parse→agent (`HZ=` danger layer,
 `HazardAgent` dodge reflex at priority 10, danger-fold) — live-test (Step 4) and
@@ -261,12 +405,21 @@ A2 action system ✅ (self-describing spell menu; spell-id bug fixed).
    floors. Small once A4 lands; high character-per-line-of-code.
 6. **D2 relationship adaptation** — feed observed player behavior (shares vs
    hoards) into the sliders via the memory system. Emergent personality.
-7. **B1 spec + build** — loot ownership, once multiple agents are contending for
-   the same drops hard enough to matter.
-8. **B2 / B3** — formalize portal/level ownership and stance arbitration (the
-   place a small TLA+ spec earns its keep).
-9. **Track C cleanup** — `gGapCompanionSlot` / `Source/seat/` dead code; debug
-   markers; global `ENABLE_GAP`.
+7. **Track E decision tracing** — `--trace` JSONL of every `decide()` (recs +
+   scores + commitment + winner + per-LLM prompt/response). Cheap, and it's the
+   measurement substrate for B5 Phase 0 + the observability substrate for the
+   lease — so it lands *first*. Unlocks offline weight/priority + behavior tests.
+8. **B5 intent leases** — Phase 0 first (make the decorative vendor LLM calls
+   rule-based/cached and *measure* via Track E — may dissolve the perceived
+   sluggishness with no new primitive), then promote `CommitmentTracker` → a real
+   lease with the ≥8-preempts / ≤7-leaseable tiers, a timeout backstop, and live
+   lease observability. Foundational: loot/portal/vendor/follow simplify on top.
+9. **B1 (light) / B3** — loot is mostly handled by the engine (first-click wins),
+   so it's reduced to oscillation/efficiency and largely *falls out* of B5; B3
+   stance arbitration shares the lease's preemption machinery — spec them with B5.
+10. **B2** — formalize portal/level ownership & no-stranding (small TLA+ spec).
+11. **Track C cleanup** — `gGapCompanionSlot` / `Source/seat/` dead code; debug
+    markers; global `ENABLE_GAP`.
 
 Rule of thumb: Track A is "go build it." Track B is "spec it small, then build it."
 Don't pay for TLA+ on the framework while the framework is still moving — pay for
