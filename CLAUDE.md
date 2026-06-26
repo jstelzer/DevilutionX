@@ -170,6 +170,30 @@ this era makes us honest.
 
 ## Recent Changes Log
 
+### June 25–26, 2026: Track E decision tracing (flight recorder) ✅
+
+First piece of the ROADMAP's "trace before tune" spine — record every council
+decision so B5 becomes measurable and weight tuning/behavior tests go offline.
+- **`decision_tracer.py`** (new): `--trace PATH` writes one JSONL record per
+  `decide()` at the selection point. Versioned schema; recommendations+scores,
+  commitment snapshot, winner, command, raw DSL line, and per-LLM-agent
+  `(prompt, response)`. **Log-on-change dedup** folds identical re-decisions into
+  a `repeats` count — that ratio is the churn metric B5 Phase 0 targets.
+- **`BaseAgent.llm_sink`**: zero-overhead per-tick capture of LLM calls; on when
+  tracing, `None` otherwise.
+- **`launch_agent.sh`**: `TRACE=1 ./launch_agent.sh` → auto-named
+  `traces/<hero>-<ts>.jsonl` (or `TRACE=<path>`). `traces/` git-ignored, cleaned
+  by `./dev.sh clean`. Capture is one env var away.
+- **Incidental fix**: `SpellAgent.should_activate` referenced undefined
+  `has_off`/`has_staff` (refactor slip) — crashed `decide()` on any dungeon tick
+  past the cast cooldown; now calls the real helpers.
+- Also consolidated the root `GAP*.md` docs (deleted stale `GAP.md`/`GAP_README.md`;
+  folded the vision notes into ROADMAP). Surviving root GAP docs: this file,
+  `GAP-PROJECT-SUMMARY.md`, `MILESTONE-2026-06-22.md`, `ROADMAP.md`.
+
+Next: real in-game capture + the offline replay/assertion harness (arbitration
+test first). See **ROADMAP.md → Track E**.
+
 ### June 22, 2026 (PM): True-MP companion ✅ — see MILESTONE-2026-06-22.md
 
 The big push: sidecar POC → first-class second player, merged into `GAP`.
@@ -728,6 +752,7 @@ tools/gap/               # Python agent system
 ├── launch_agent.sh      # Launch the orchestrator (connects to headless socket)
 ├── orchestrator.py      # Multi-agent coordinator + CommitmentTracker
 ├── dsl_parser.py        # DSL state parser
+├── decision_tracer.py   # Flight recorder: --trace/TRACE=1 → JSONL per decide() (Track E)
 ├── memory_store.py      # SQLite persistent memory (spatial/goals)
 ├── personality_store.py # Per-character traits/memories/strategies + reflection
 ├── character_profile.py # Class-aware behavior
