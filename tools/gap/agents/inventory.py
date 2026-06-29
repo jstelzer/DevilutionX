@@ -8,6 +8,16 @@ from .base import BaseAgent, AgentResponse
 
 logger = logging.getLogger(__name__)
 
+# How much we want each belt item type to STAY on the belt (higher = keep). Used
+# to decide what a FULL belt will give up to make room for a needed potion that's
+# stranded in the pack. Generic utility scrolls (sr/si/sc/sl/sf) default to 1, so
+# they're the first to be bumped; health/mana/heal-scroll/portal are protected.
+BELT_KEEP = {"hp": 6, "rj": 6, "mp": 5, "sh": 4, "sp": 2}
+
+
+def _belt_keep(item_type: str) -> int:
+    return BELT_KEEP.get(item_type, 1)
+
 
 class InventoryAgent(BaseAgent):
     """Specialist for inventory management - refilling belt from inventory"""
@@ -39,23 +49,62 @@ class InventoryAgent(BaseAgent):
             return None
         return AgentResponse(command=f"BELT {slot} {belt_slot}", weight=weight, reasoning=reasoning)
 
+    def _find_swap(self, state: Dict[str, Any]):
+        """Belt is full: pick a stranded pack potion to swap in for the belt's
+        weakest (most disposable) item. Returns (want_item, belt_slot, reasoning)
+        or None. Pure — no side effects, so should_activate can call it too."""
+        belt = state.get("belt", [])
+        inventory = state.get("inventory", [])
+        stats = state.get("stats") or {}
+
+        def _ok(item):  # skip items the engine has refused to belt
+            return item["slot"] not in self._unbeltable
+        hp_items = [i for i in inventory if i["type"] in ("hp", "rj") and _ok(i)]
+        mp_items = [i for i in inventory if i["type"] == "mp" and _ok(i)]
+        belt_hp = sum(1 for s in belt if s in ("hp", "rj"))
+        belt_mp = sum(1 for s in belt if s == "mp")
+
+        # What does the belt most need that's sitting in the pack?
+        if belt_hp < 3 and hp_items:
+            want, label = hp_items[0], "health"
+        elif stats.get("class") == 2 and belt_mp < 2 and mp_items:
+            want, label = mp_items[0], "mana"
+        else:
+            return None
+
+        # Bump the belt's lowest-value slot, but only if it's worth LESS than what
+        # we're adding (never trade a potion/heal-scroll away for another potion).
+        ranked = sorted(((_belt_keep(t), i, t) for i, t in enumerate(belt)),
+                        key=lambda x: x[0])
+        low_val, low_slot, low_type = ranked[0]
+        if low_val >= _belt_keep(want["type"]):
+            return None
+
+        reasoning = (f"Inventory: belt full — bumping {low_type} (belt slot {low_slot}) "
+                     f"for a {label} potion from the pack")
+        return want, low_slot, reasoning
+
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """
         Activate if:
-        1. Belt has empty slots
-        2. Inventory has potions/scrolls that could fill belt
+        1. Belt has empty slots and the pack has consumables to fill them, OR
+        2. Belt is FULL but a needed potion is stranded in the pack behind a
+           bumpable utility scroll (belt-swap).
         """
         belt = state.get("belt", [])
         inventory = state.get("inventory", [])
 
-        # Check if belt has empty slots
-        has_empty_belt = any(slot == "em" for slot in belt)
-
         # Check if inventory has consumables (potions/scrolls)
         consumable_types = ["hp", "mp", "rj", "sh", "sp", "sr", "si", "sl", "sf", "sc"]
         has_consumables = any(item["type"] in consumable_types for item in inventory)
+        if not has_consumables:
+            return False
 
-        return has_empty_belt and has_consumables
+        if any(slot == "em" for slot in belt):
+            return True
+
+        # Belt full → only worth running if a beneficial potion-for-scroll swap exists.
+        return self._find_swap(state) is not None
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
@@ -82,7 +131,15 @@ class InventoryAgent(BaseAgent):
         empty_belt_slots = [i for i, slot in enumerate(belt) if slot == "em"]
 
         if not empty_belt_slots:
-            return None
+            # Belt full — try to bump a low-value utility item for a potion that's
+            # stranded in the pack. The C++ BELT command now swaps the occupant
+            # back into the pack rather than rejecting an occupied target slot.
+            swap = self._find_swap(state)
+            if swap is None:
+                return None
+            want, belt_slot, reasoning = swap
+            logger.info(reasoning)
+            return self._belt_response(want, belt_slot, 0.45, reasoning)
 
         # Categorize inventory items
         def _ok(item):  # skip items the engine has refused to belt

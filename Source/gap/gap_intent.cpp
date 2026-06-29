@@ -1044,26 +1044,37 @@ bool GapIntentProcessor::ExecuteBeltRefill(int invSlot, int beltSlot) {
         return false;
     }
 
-    // Check if belt slot is empty
-    if (!player->SpdList[beltSlot].isEmpty()) {
-        std::cerr << "GAP Belt: Belt slot " << beltSlot << " is not empty" << std::endl;
-        return false;
+    const bool sync = (GetControlledPlayerId() == MyPlayerId);
+
+    // If the target belt slot is occupied, lift its current item back into the
+    // pack so a higher-priority consumable (a health potion) can take its place —
+    // the belt-swap the agent asks for when the belt is clogged with utility
+    // scrolls and the spare potions are stranded in the pack. Mirrors EQUIP's
+    // swap: AutoPlaceItemInInventory restocks the pack and (for MyPlayer)
+    // broadcasts CMD_CHANGEINVITEMS so the other client stays in sync. Removing
+    // the inventory potion frees a 1x1 cell, so the 1x1 belt item always has room.
+    Item displaced;
+    const bool swapping = !player->SpdList[beltSlot].isEmpty();
+    if (swapping) {
+        displaced = player->SpdList[beltSlot];
     }
 
-    // Move item from inventory to belt
+    // Move the inventory item onto the belt.
     player->SpdList[beltSlot] = invItem;
-    player->RemoveInvItem(invSlot, false);  // Don't calc scrolls yet
+    player->RemoveInvItem(invSlot, false);  // self-syncs the inv removal; no scroll calc yet
+    if (swapping) {
+        AutoPlaceItemInInventory(*player, displaced, sync);  // stash the bumped item back
+    }
     player->CalcScrolls();  // Recalculate scrolls after belt update
     RedrawComponent(PanelDrawComponent::Belt);
 
-    // Network sync
-    int controlled_id = GetControlledPlayerId();
-    if (controlled_id == MyPlayerId) {
+    if (sync) {
         NetSendCmdChBeltItem(false, beltSlot);
     }
 
-    std::cout << "GAP Belt: Moved item from inv slot " << invSlot
-              << " to belt slot " << beltSlot << std::endl;
+    std::cout << "GAP Belt: " << (swapping ? "Swapped" : "Moved") << " inv slot " << invSlot
+              << " onto belt slot " << beltSlot
+              << (swapping ? " (bumped item back to pack)" : "") << std::endl;
 
     return true;
 }

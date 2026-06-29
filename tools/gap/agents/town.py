@@ -35,9 +35,15 @@ class TownAgent(BaseAgent):
         npcs = state.get("npcs", [])
         stores = state.get("stores", {})
 
-        # Count healing potions in belt
-        hp_potions = sum(1 for slot in belt if slot in ["hp", "rj"])
-        mp_potions = sum(1 for slot in belt if slot == "mp")
+        # Count potions across belt AND pack — a Pepin/Adria restock trip only
+        # makes sense if she's low *everywhere*. Counting belt-only sent her
+        # shopping while spare potions sat in the pack (that's the belt-refill
+        # agent's job, not a vendor trip). Mirrors ShoppingAgent's belt+inv count.
+        inventory = state.get("inventory", [])
+        hp_potions = (sum(1 for slot in belt if slot in ["hp", "rj"])
+                      + sum(1 for it in inventory if it.get("type") in ("hp", "rj")))
+        mp_potions = (sum(1 for slot in belt if slot == "mp")
+                      + sum(1 for it in inventory if it.get("type") == "mp"))
 
         # Priority 1: Navigate to Pepin (healer) if health potions low
         # Trigger at 4 or fewer potions (companion says "running low" at 3)
