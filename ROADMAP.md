@@ -43,14 +43,38 @@ orchestrator state log; cleaner C++ "beltable" flag (like the loot `fits` flag);
 the Rogue makes ~1200 Loot decisions *in town* (item churn — investigate);
 cast-range cast-kite could place at range instead of walking onto the mob.
 
-**Observed via the HUD/trace (2026-06-29), pre-existing — log, don't fix yet:**
-- **Griswold sell loop stalls.** In town she commits to Griswold and re-issues
-  `IN 0` ("Opening shop to sell 2 items") for *thousands* of ticks without the
-  sale ever completing (seen as `committed Griswold ×9`, high `repeats` churn).
-  Untouched by the HUD work; `agents/griswold.py`/`shopping.py` are the suspects.
-  Evidence is captured — replay the Griswold records (position vs `sm@62,63`,
-  gold, inv) from a `traces/*.jsonl` to diagnose offline. First real "trace as
-  debugger" candidate.
+**Trace-as-debugger, resolved 2026-06-29 (the spine paying off):**
+- ✅ **Store transactions were dead in true-MP** (this was the "Griswold sell
+  loop" + a frozen-gold Pepin buy loop). Diagnosed entirely from `traces/*.jsonl`
+  — frozen gold across 626 buys, all 384 `IN 0`s clustered at dist 3 — then fixed
+  and live-proven (gold drops on a buy and sticks). Four root causes, **commit
+  `cc37d8788`**: (1) stale slot-era `&companion==MyPlayer` guard rejected the
+  player GAP now controls; (2) raw `_pGold -=` is reverted by `CalcPlrInv` every
+  tick → must spend via the engine's pile-aware `TakePlrsMoney`; (3) repair hit
+  `InvList[slot]` not `InvBody[bodySlot]`; (4) DSL store visibility (`dist<=2`)
+  didn't match the agent's action range (`dist<=3`). **Invariant learned: never
+  write `_pGold`/player-pile state directly in GAP code.**
+- ✅ **"Caster has no mana but a full mana-pot belt" is working as designed** —
+  the staff-first heuristic (`spell.py` P1: cast off staff charges when `mana<40`
+  to *save* pots) wins 0.85 vs ManaAgent 0.7, so a 42-charge staff keeps mana
+  pinned low and pots hoarded. Staff-empty handoff verified sound (SpellAgent
+  yields → ManaAgent drinks). Not a bug; the real lever is the staff-recharge
+  economy (Adria / `Staff_Recharge`).
+
+**GAP-code sweep follow-ups — resolved 2026-06-29 (build-clean, live-test pending):**
+- ✅ **Drop-gold duplication** (`ExecuteDropGold`): raw `_pGold -= amount` after
+  `CMD_PUTITEM` → `TakePlrsMoney(amount)`. No more keep-the-gold-and-drop-a-copy.
+- ✅ **Live repair gold** (`ExecuteRepairItem`, the real `REPAIR` path): raw
+  `_pGold -= cost` → `TakePlrsMoney` + `CalcPlrInv`. Repair now charges.
+- ✅ **Retired the repair twin.** `REPAIR`→`ExecuteRepairItem` is now the *only*
+  repair path; removed the `REP`→`repair`→`ExecuteRepair`→`CompanionRepairItem`
+  chain (parse + dispatch + both fns + decls) and the dead `REP` line in
+  `shopping.py`'s grammar. (`REP` was only ever an unused shopping-grammar artifact.)
+- ✅ **Stat/belt — verified already-correct, no change.** `ExecuteBeltRefill`
+  ends with `NetSendCmdChBeltItem`; `ExecuteAddStat` uses `ModifyPlr*`, which
+  self-syncs via `CMD_SETSTR` since the companion IS `MyPlayer`. (`_pStatPts` is
+  local-only bookkeeping — no sim effect.) The sweep's two desync "candidates"
+  were false alarms.
 - **Friendly fire.** Rogue fires `AT` at a mob with the human ally in the arc
   (`PLYR=` is already in the DSL — she just doesn't consult it). Candidate fix:
   a deterministic ally-line-of-fire guard in `CombatAgent` (engine reports it →
@@ -292,11 +316,11 @@ Per-character traits in `[0,1]` that bias the council's agent weights at
 per-agent multipliers — the explicit version of the learning-loop nudge and
 `_combat_confidence_mult` we already have):
 
-| Slider | Scales |
-|---|---|
-| **Greed** | Loot/Upgrade weight, make-room aggressiveness, breaking off a fight for a shiny |
-| **Curiosity** | Exploration (barrels/chests/doors/shrines), wander-vs-follow |
-| **Obedience** | How hard a chat stance (HOLD/ENGAGE/RETREAT/FOLLOW) overrides her own judgment |
+| Slider         | Scales                                                                                 |
+|----------------|----------------------------------------------------------------------------------------|
+| **Greed**      | Loot/Upgrade weight, make-room aggressiveness, breaking off a fight for a shiny        |
+| **Curiosity**  | Exploration (barrels/chests/doors/shrines), wander-vs-follow                           |
+| **Obedience**  | How hard a chat stance (HOLD/ENGAGE/RETREAT/FOLLOW) overrides her own judgment         |
 | **Discipline** | Self-preservation: heal/extract thresholds, holding formation, **fire tolerance** (A4) |
 
 **Bounded imperfection is the whole point:** sliders bias *preferences*, but hard

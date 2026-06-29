@@ -60,7 +60,6 @@ private:
     bool ExecuteChat(const std::string& message);
     bool ExecuteBuy(const std::string& npcCode, int itemIndex);
     bool ExecuteSell(int invSlot);
-    bool ExecuteRepair(int invSlot);
     bool ExecuteIdentify(int invSlot);
     bool ExecuteAddStat(const std::string& statName);
     bool ExecuteBeltRefill(int invSlot, int beltSlot);

@@ -10,10 +10,9 @@ logger = logging.getLogger(__name__)
 
 # GBNF grammar for shopping commands (BUY npc id weight or NONE weight)
 SHOPPING_GRAMMAR = r"""
-root   ::= (buy | sell | repair | none) "\n"?
+root   ::= (buy | sell | none) "\n"?
 buy    ::= "BUY " npc " " int " " weight
 sell   ::= "SELL " int " " weight
-repair ::= "REP " int " " weight
 none   ::= "NONE " weight
 npc    ::= "sm" | "hl" | "wt" | "pg"
 weight ::= "0." digit+ | "1.0" | "1" | "0"

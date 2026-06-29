@@ -18,6 +18,7 @@
 #include "../nthread.h"
 #include "../msg.h"
 #include "../items.h"
+#include "../stores.h"  // TakePlrsMoney (gold-pile-aware spend)
 #include "../objects.h"
 #include "../spells.h"
 #include "../inv.h"
@@ -219,12 +220,6 @@ void GapIntentProcessor::QueueDSLIntent(const std::string& dsl_line) {
         intent.action = "sell";
         iss >> intent.param_slot;
 
-    } else if (cmd == "REP") {
-        // REP inv_slot
-        // Example: REP 3  (repair inventory slot 3)
-        intent.action = "repair";
-        iss >> intent.param_slot;
-
     } else if (cmd == "ID") {
         // ID inv_slot
         // Example: ID 2  (identify inventory slot 2)
@@ -340,8 +335,6 @@ bool GapIntentProcessor::ExecuteIntent(const Intent& intent) {
         return ExecuteBuy(intent.param_kind, intent.param_id);
     } else if (intent.action == "sell") {
         return ExecuteSell(intent.param_slot);
-    } else if (intent.action == "repair") {
-        return ExecuteRepair(intent.param_slot);
     } else if (intent.action == "identify") {
         return ExecuteIdentify(intent.param_slot);
     } else if (intent.action == "addstat") {
@@ -970,16 +963,6 @@ bool GapIntentProcessor::ExecuteSell(int invSlot) {
     return CompanionSellItem(*player, invSlot);
 }
 
-bool GapIntentProcessor::ExecuteRepair(int invSlot) {
-    Player* player = GetControlledPlayer();
-    if (player == nullptr) {
-        std::cerr << "GAP Store: GetControlledPlayer() returned nullptr" << std::endl;
-        return false;
-    }
-
-    return CompanionRepairItem(*player, invSlot);
-}
-
 bool GapIntentProcessor::ExecuteIdentify(int invSlot) {
     Player* player = GetControlledPlayer();
     if (player == nullptr) {
@@ -1145,7 +1128,11 @@ bool GapIntentProcessor::ExecuteRepairItem(int bodySlot) {
               << ") for " << cost << " gold" << std::endl;
 
     item._iDurability = item._iMaxDur;
-    player->_pGold -= cost;
+    // Pile-aware spend: a raw `_pGold -= cost` is reverted by CalcPlrInv (which
+    // recomputes _pGold from the inventory gold-piles every tick), so the repair
+    // would be free. TakePlrsMoney removes the piles too. (companion == MyPlayer.)
+    TakePlrsMoney(cost);
+    CalcPlrInv(*player, true);
 
     return true;
 }
@@ -1306,8 +1293,11 @@ bool GapIntentProcessor::ExecuteDropGold(int amount) {
     // Drop the gold
     NetSendCmdPItem(true, CMD_PUTITEM, *dropPosition, goldItem);
 
-    // Deduct gold from player
-    player->_pGold -= amount;
+    // Remove the gold from the player via the pile-aware path. A raw
+    // `_pGold -= amount` is reverted by CalcPlrInv (it recomputes _pGold from the
+    // inventory gold-piles every tick), so the player would keep the gold AND have
+    // dropped a copy into the world — a dupe. TakePlrsMoney removes the piles too.
+    TakePlrsMoney(amount);
 
     return true;
 }

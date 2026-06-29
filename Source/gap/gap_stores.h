@@ -67,17 +67,6 @@ bool CompanionBuyItem(Player& companion, _talker_id npcType, int itemIndex);
 bool CompanionSellItem(Player& companion, int invSlot);
 
 /**
- * Companion repairs equipped item at Smith (headless)
- *
- * Uses same repair cost calculation as UI.
- *
- * @param companion Player reference
- * @param bodySlot Equipped INVLOC slot to repair (0=head .. 6=chest)
- * @return true if repair successful
- */
-bool CompanionRepairItem(Player& companion, int bodySlot);
-
-/**
  * Companion identifies item at Cain's (headless)
  *
  * @param companion Player reference
