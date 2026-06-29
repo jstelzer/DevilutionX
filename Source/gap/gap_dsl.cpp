@@ -701,8 +701,11 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
             int dy = std::abs(towner.position.y - playerPos.y);
             int dist = std::max(dx, dy);  // Chebyshev distance
 
-            // Only show store inventory if within 2 tiles
-            if (dist > 2) continue;
+            // Only show store inventory if within 3 tiles. Must match the
+            // agents' interaction range (e.g. griswold.py acts at dist <= 3):
+            // if the store were visible only at <= 2 the agent would park at
+            // dist 3 issuing a futile open command and never reach the sell.
+            if (dist > 3) continue;
 
             std::vector<StoreItem> storeItems;
             const char* store_code = nullptr;

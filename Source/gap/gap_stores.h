@@ -72,10 +72,10 @@ bool CompanionSellItem(Player& companion, int invSlot);
  * Uses same repair cost calculation as UI.
  *
  * @param companion Player reference
- * @param invSlot Equipment slot to repair
+ * @param bodySlot Equipped INVLOC slot to repair (0=head .. 6=chest)
  * @return true if repair successful
  */
-bool CompanionRepairItem(Player& companion, int invSlot);
+bool CompanionRepairItem(Player& companion, int bodySlot);
 
 /**
  * Companion identifies item at Cain's (headless)

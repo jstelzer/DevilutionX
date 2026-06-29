@@ -167,11 +167,9 @@ std::vector<StoreItem> GetStoreInventory(_talker_id npcType)
 
 bool CompanionBuyItem(Player& companion, _talker_id npcType, int itemIndex)
 {
-    // Validate this is not the main player
-    if (&companion == MyPlayer) {
-        std::cerr << "GAP Store: Cannot use headless API for main player" << std::endl;
-        return false;
-    }
+    // One client, one player: GAP drives this headless client's own MyPlayer
+    // (see GetControlledPlayer). The old slot-era "&companion == MyPlayer"
+    // guard rejected exactly the player we now control, so it's gone.
 
     // Validate companion is in town
     if (leveltype != DTYPE_TOWN) {
@@ -254,24 +252,26 @@ bool CompanionBuyItem(Player& companion, _talker_id npcType, int itemIndex)
     // Add item to inventory
     AutoPlaceItemInInventory(companion, *storeItem, true);
 
-    // Deduct gold
-    companion._pGold -= price;
+    // Deduct gold via the engine's gold-pile-aware path. Gold in Diablo lives as
+    // inventory pile-items; CalcPlrInv recomputes _pGold from those piles every
+    // tick (inv.cpp), so a raw `_pGold -= price` is silently reverted. TakePlrsMoney
+    // also removes the piles. (companion == MyPlayer here, which it operates on.)
+    TakePlrsMoney(price);
 
     // If this was Wirt's item, clear it (he only sells one at a time)
     if (npcType == TOWN_PEGBOY) {
         BoyItem.clear();
     }
 
+    CalcPlrInv(companion, true);
     return true;
 }
 
 bool CompanionSellItem(Player& companion, int invSlot)
 {
-    // Validate this is not the main player
-    if (&companion == MyPlayer) {
-        std::cerr << "GAP Store: Cannot use headless API for main player" << std::endl;
-        return false;
-    }
+    // One client, one player: GAP drives this headless client's own MyPlayer
+    // (see GetControlledPlayer). The old slot-era "&companion == MyPlayer"
+    // guard rejected exactly the player we now control, so it's gone.
 
     // Validate in town
     if (leveltype != DTYPE_TOWN) {
@@ -309,13 +309,11 @@ bool CompanionSellItem(Player& companion, int invSlot)
     return true;
 }
 
-bool CompanionRepairItem(Player& companion, int invSlot)
+bool CompanionRepairItem(Player& companion, int bodySlot)
 {
-    // Validate this is not the main player
-    if (&companion == MyPlayer) {
-        std::cerr << "GAP Store: Cannot use headless API for main player" << std::endl;
-        return false;
-    }
+    // One client, one player: GAP drives this headless client's own MyPlayer
+    // (see GetControlledPlayer). The old slot-era "&companion == MyPlayer"
+    // guard rejected exactly the player we now control, so it's gone.
 
     // Validate in town near smith
     if (leveltype != DTYPE_TOWN) {
@@ -323,16 +321,19 @@ bool CompanionRepairItem(Player& companion, int invSlot)
         return false;
     }
 
-    // Validate inventory slot
-    if (invSlot < 0 || invSlot >= companion._pNumInv) {
-        std::cerr << "GAP Store: Invalid inventory slot " << invSlot << std::endl;
+    // REPAIR addresses an EQUIPPED slot: the agent sends an INVLOC body index
+    // (0=head .. 6=chest, see griswold.py slot_to_body_index). The old code
+    // indexed InvList[bodySlot] — an *inventory* item — so it repaired the wrong
+    // thing (or an empty slot) and never touched the damaged gear it was sent for.
+    if (bodySlot < 0 || bodySlot >= NUM_INVLOC) {
+        std::cerr << "GAP Store: Invalid body slot " << bodySlot << std::endl;
         return false;
     }
 
-    Item& item = companion.InvList[invSlot];
+    Item& item = companion.InvBody[bodySlot];
 
     if (item.isEmpty()) {
-        std::cerr << "GAP Store: Inventory slot " << invSlot << " is empty" << std::endl;
+        std::cerr << "GAP Store: Body slot " << bodySlot << " is empty" << std::endl;
         return false;
     }
 
@@ -367,9 +368,10 @@ bool CompanionRepairItem(Player& companion, int invSlot)
               << " repairing " << item._iIName
               << " for " << repairCost << " gold" << std::endl;
 
-    // Perform repair
+    // Perform repair + gold-pile-aware spend (see CompanionBuyItem). A raw
+    // `_pGold -= cost` here is reverted by CalcPlrInv the same way.
     item._iDurability = item._iMaxDur;
-    companion._pGold -= repairCost;
+    TakePlrsMoney(repairCost);
 
     // Recalculate inventory
     CalcPlrInv(companion, true);
@@ -379,11 +381,9 @@ bool CompanionRepairItem(Player& companion, int invSlot)
 
 bool CompanionIdentifyItem(Player& companion, int invSlot)
 {
-    // Validate this is not the main player
-    if (&companion == MyPlayer) {
-        std::cerr << "GAP Store: Cannot use headless API for main player" << std::endl;
-        return false;
-    }
+    // One client, one player: GAP drives this headless client's own MyPlayer
+    // (see GetControlledPlayer). The old slot-era "&companion == MyPlayer"
+    // guard rejected exactly the player we now control, so it's gone.
 
     // Validate in town
     if (leveltype != DTYPE_TOWN) {
