@@ -169,14 +169,10 @@ class SpellAgent(BaseAgent):
         target_pos = best_target["pos"]
         is_group = grouped >= 3
 
-        # PRIORITY 1: spend staff charges when mana is low (saves mana for free
-        # ranged damage). We don't know the staff spell's name (it's not in KS),
-        # so it's treated as single-target here.
-        if staff_spell_id and staff_charges > 0 and mana_pct < 40:
-            return staff_spell_id, target_pos, 0.85, \
-                f"{class_context}Staff spell (charges: {staff_charges}, saving mana)"
-
-        # PRIORITY 2: cast a known, affordable, offensive spell from the engine menu.
+        # PRIORITY 1: cast the strongest affordable offensive spell — mana DPS.
+        # We deliberately do NOT hoard mana behind the staff: a caster should SPEND
+        # mana (and pots, via ManaAgent) on damage. The staff is the fallback below,
+        # for when no mana spell is affordable (mid-drink, or out of pots).
         castable = [s for s in spells if s.get("offensive") and s.get("affordable")]
         pick = None
         if is_group:
@@ -198,10 +194,11 @@ class SpellAgent(BaseAgent):
             return pick["id"], target_pos, weight, \
                 f"{class_context}Spell: {pick['name']} ({tgt}, mana {mana_pct}%)"
 
-        # PRIORITY 3: nothing affordable to cast, but the staff still has charges.
+        # PRIORITY 2: no affordable mana spell (drinking, or out of pots) — fall
+        # back to the staff's free charges so he keeps blasting at range.
         if staff_spell_id and staff_charges > 0:
             return staff_spell_id, target_pos, 0.85, \
-                f"{class_context}Staff spell (no affordable known spell, charges: {staff_charges})"
+                f"{class_context}Staff spell (mana too low to cast, charges: {staff_charges})"
 
         return None, None, 0.0, "Conserving (no known affordable spell, no staff charges)"
 

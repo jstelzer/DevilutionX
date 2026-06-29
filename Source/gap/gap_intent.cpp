@@ -608,20 +608,29 @@ bool GapIntentProcessor::ExecuteCastSpell(int spell_id, int x, int y) {
     // or be a class ability. CAST must use the matching SpellType or the engine
     // rejects it as "doesn't know spell" — a staff's spell lives in _pISpells,
     // NOT _pMemSpells (this is why the Sorc's staff ChargedBolt kept failing).
+    // Pick the spell SOURCE the way a real player would, but DON'T fail a low-mana
+    // caster who can cast the same spell for free off a charged staff. A spell can
+    // live in memory (costs mana, scales with spell level), on the equipped
+    // staff/item (charges, no mana), on a scroll, or be a class ability. GetManaAmount
+    // already returns fixed-point (it `ma <<= 6` internally), so compare _pMana directly.
     const uint64_t mask = GetSpellBitmask(spellID);
+    const bool memHas = (player->_pMemSpells & mask) != 0;
+    const bool staffHas = (player->_pISpells & mask) != 0;  // equipped staff/item charges
+    const bool canAffordMana = memHas && player->_pMana >= GetManaAmount(*player, spellID);
+
     SpellType castType;
-    if (player->_pMemSpells & mask) {
-        castType = SpellType::Spell;
-        // Memorized spells cost mana. GetManaAmount already returns fixed-point
-        // (it does `ma <<= 6` internally) and _pMana is fixed-point too, so
-        // compare directly — the old `<< 6` here double-shifted and made every
-        // memorized cast read "not enough mana."
-        if (player->_pMana < GetManaAmount(*player, spellID)) {
-            std::cerr << "GAP: ExecuteCastSpell failed - not enough mana for spell " << spell_id << std::endl;
-            return false;
-        }
-    } else if (player->_pISpells & mask) {
-        castType = SpellType::Charges;  // equipped staff/item — uses charges, no mana
+    if (canAffordMana) {
+        castType = SpellType::Spell;    // memorized and affordable — cast from mana
+    } else if (staffHas) {
+        // Not memorized, OR mana too low: fall back to the staff's charges. This is
+        // the whole point of carrying a charged staff — keep blasting when the blue
+        // bar is empty. Before this fallback the engine preferred the memorized
+        // version and a low-mana Sorc's CAST failed "not enough mana" with 42 staff
+        // charges in hand, so he just stopped casting.
+        castType = SpellType::Charges;
+    } else if (memHas) {
+        std::cerr << "GAP: ExecuteCastSpell failed - not enough mana for spell " << spell_id << std::endl;
+        return false;
     } else if (player->_pScrlSpells & mask) {
         castType = SpellType::Scroll;   // a carried scroll
     } else if (player->_pAblSpells & mask) {
