@@ -131,29 +131,45 @@ class BaseAgent:
             )
             resp.raise_for_status()
 
-            response_text = resp.json()["response"].strip()
+            j = resp.json()
+            response_text = j["response"].strip()
             logger.debug(f"{self.name}: LLM response: {response_text[:100]}")
 
-            self._trace_llm(full_prompt, response_text)
+            # Plumbing for the trace/HUD: model, token counts, and wall latency.
+            # Ollama returns these on every non-stream response; durations are ns.
+            self._trace_llm(full_prompt, response_text, meta={
+                "model": self.model,
+                "prompt_tokens": j.get("prompt_eval_count"),
+                "out_tokens": j.get("eval_count"),
+                "latency_ms": round(
+                    (j.get("prompt_eval_duration", 0) + j.get("eval_duration", 0)) / 1e6
+                ),
+            })
             return response_text
 
         except requests.exceptions.Timeout:
             logger.warning(f"{self.name}: LLM query timed out")
-            self._trace_llm(locals().get("full_prompt", prompt), "")
+            self._trace_llm(locals().get("full_prompt", prompt), "",
+                            meta={"model": self.model, "error": "timeout"})
             return ""
         except Exception as e:
             logger.error(f"{self.name}: LLM query failed: {e}")
-            self._trace_llm(locals().get("full_prompt", prompt), "")
+            self._trace_llm(locals().get("full_prompt", prompt), "",
+                            meta={"model": self.model, "error": str(e)[:80]})
             return ""
 
-    def _trace_llm(self, prompt: str, response: str) -> None:
+    def _trace_llm(self, prompt: str, response: str,
+                   meta: Optional[dict] = None) -> None:
         """Record this LLM call into the active decision-trace sink, if any.
-        Failures (timeouts) are recorded with an empty response so the trace
-        reflects what the council actually saw this tick."""
+        Failures (timeouts) are recorded with an empty response — and a `meta`
+        error — so the trace reflects exactly what the council saw this tick.
+        `meta` (model/token counts/latency) is merged in for the HUD's LLM panel
+        and offline cost/perf analysis; older readers ignore the extra keys."""
         if self.llm_sink is not None:
-            self.llm_sink.append(
-                {"agent": self.name, "prompt": prompt, "response": response}
-            )
+            entry = {"agent": self.name, "prompt": prompt, "response": response}
+            if meta:
+                entry.update(meta)
+            self.llm_sink.append(entry)
 
     def parse_weighted_response(self, response: str) -> Optional[AgentResponse]:
         """

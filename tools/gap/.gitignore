@@ -55,6 +55,11 @@ replay_*.json.gz
 # fixtures for the replay harness) elsewhere isn't swept up.
 traces/
 
+# Live HUD feed (current-truth JSON the Emacs cockpit polls; regenerated per run).
+.hud/
+# Byte-compiled elisp (gap-hud.el).
+*.elc
+
 # IDE / Editor files
 .vscode/
 .idea/

@@ -29,7 +29,7 @@ case "${1:-help}" in
         ;;
     "clean")
         echo "🧹 Cleaning up..."
-        rm -rf __pycache__ agents/__pycache__ *.pyc .pytest_cache gap_logs/*.log agent.log ai-player.log traces/ 2>/dev/null || true
+        rm -rf __pycache__ agents/__pycache__ *.pyc .pytest_cache gap_logs/*.log agent.log ai-player.log traces/ .hud/ *.elc 2>/dev/null || true
         echo "✅ Cleanup complete"
         ;;
     "help"|*)

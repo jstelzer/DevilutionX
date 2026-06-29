@@ -37,6 +37,18 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
         << " F=" << static_cast<int>(currlevel)
         << " ME=" << playerPos.x << "," << playerPos.y << "," << hp_pct << "," << mp_pct;
 
+    // Hero name (N=). Static per session, but emitted on every line so each state
+    // line — and every recorded trace line — is self-describing: it says which
+    // toon produced it. That becomes the source_id for agent logs and the HUD,
+    // disambiguating multiple AI clients (Airhead vs Beavis) without side state.
+    // Spaces -> '_' (same convention as spell names below); empty -> '?'.
+    {
+        std::string name = player->_pName;
+        for (char &c : name) if (c == ' ') c = '_';
+        if (name.empty()) name = "?";
+        dsl << " N=" << name;
+    }
+
     // Stats: S=str,dex,mag,vit,lvl,pts,class,exp
     // Class codes: 0=warrior, 1=rogue, 2=sorc, 3=monk, 4=bard, 5=barb
     dsl << " S=" << player->_pStrength

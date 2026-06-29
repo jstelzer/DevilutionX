@@ -13,7 +13,7 @@ import time
 import argparse
 import signal
 import sys
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any
 from agents.base import AgentResponse
 from agents.combat import CombatAgent
 from agents.spell import SpellAgent
@@ -37,16 +37,32 @@ from agents.exploration import ExplorationAgent
 from agents.hazard import HazardAgent
 from dsl_parser import parse_dsl_state
 from hazards import is_tile_dangerous
-from decision_tracer import DecisionTracer
+from decision_tracer import DecisionTracer, LiveSink, build_decision_record
 from memory_store import MemoryStore, prepare_companion_state_for_db
 from personality_store import PersonalityStore
 from chat_handler import ChatHandler
 from character_profile import CharacterProfile
 
+# Every GAP log line carries the toon it came from (Airhead vs Beavis) so the
+# logs of multiple AI clients are never ambiguous — same identity the DSL `N=`
+# field, the trace's `source_id`, and the HUD envelope use. One orchestrator runs
+# per process/client, so a process-global current-toon is exactly right; it's set
+# from the engine's hero name on the first state (see _set_source_id).
+_CURRENT_TOON = {"name": "?"}
+
+
+class _ToonFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.toon = _CURRENT_TOON["name"]
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(toon)s - %(levelname)s - %(message)s'
 )
+for _h in logging.getLogger().handlers:  # stamp every record reaching the root handler
+    _h.addFilter(_ToonFilter())
 logger = logging.getLogger(__name__)
 
 # Per-client GAP socket. The headless client derives its path from the hero save
@@ -131,6 +147,7 @@ class AgentOrchestrator:
         password: Optional[str] = None,
         think_interval: float = 0.6,
         trace_path: Optional[str] = None,
+        live_hud_path: Optional[str] = None,
     ):
         self.socket_path = socket_path
         self.ollama_url = ollama_url
@@ -222,15 +239,24 @@ class AgentOrchestrator:
 
         # Note: Personality and profile will be injected after character_id is known (on first state)
 
-        # Decision tracing (ROADMAP Track E). When --trace is set, every decide()
-        # appends a JSONL record at the selection point. Point each agent's
-        # llm_sink at a shared per-tick buffer (cleared at the top of decide) so
-        # the trace captures the (prompt, response) of every LLM agent that fired.
-        self.tracer: Optional[DecisionTracer] = (
-            DecisionTracer(trace_path) if trace_path else None
-        )
-        self._llm_buf: List[Dict[str, str]] = []
-        if self.tracer:
+        # Telemetry (ROADMAP Track E + HUD). One record is built per decide() at
+        # the selection point and fanned out to every sink:
+        #   - DecisionTracer (--trace): durable, deduped JSONL → replay/CI/B5.
+        #   - LiveSink (--hud): current-truth JSON envelope → the Emacs cockpit.
+        # source_id starts from the socket stem and is upgraded to the engine's
+        # hero name on the first state (see _set_source_id) so records/logs/HUD all
+        # say "airhead" rather than "multi_1". Point each agent's llm_sink at a
+        # shared per-tick buffer (cleared at the top of decide) so the record
+        # captures the (prompt, response, model, tokens, latency) of every LLM
+        # agent that fired this tick.
+        self.source_id = sock_stem.replace("devilutionx-gap-", "") or sock_stem
+        self.telemetry_sinks: List[Any] = []
+        if trace_path:
+            self.telemetry_sinks.append(DecisionTracer(trace_path, self.source_id))
+        if live_hud_path:
+            self.telemetry_sinks.append(LiveSink(live_hud_path, self.source_id))
+        self._llm_buf: List[Dict[str, Any]] = []
+        if self.telemetry_sinks:
             for agent in self.agents:
                 agent.llm_sink = self._llm_buf
 
@@ -264,6 +290,23 @@ class AgentOrchestrator:
         except Exception as e:
             logger.error(f"❌ Failed to connect to {self.socket_path}: {e}")
             raise
+
+    def _set_source_id(self, name: Optional[str]) -> None:
+        """Adopt the engine's hero name (DSL `N=`) as this client's identity.
+
+        Idempotent and cheap: runs every state but only acts when the name first
+        becomes known (or changes). Updates the process-global toon used by the log
+        filter and propagates to every telemetry sink so logs, the trace
+        `source_id`, and the live HUD envelope all read "airhead" instead of the
+        socket-stem placeholder."""
+        if not name or name == "?" or name == self.source_id:
+            return
+        was = self.source_id
+        self.source_id = name
+        _CURRENT_TOON["name"] = name
+        for sink in self.telemetry_sinks:
+            sink.source_id = name
+        logger.info(f"🪪 Identity set from engine: {was} → {name}")
 
     def _shutdown_handler(self, signum, frame):
         """Graceful shutdown on Ctrl+C or SIGTERM"""
@@ -582,7 +625,7 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
         # Start a fresh per-tick LLM capture buffer (Track E). Agents append to
         # this via their llm_sink as they call query_llm during evaluate().
-        if self.tracer:
+        if self.telemetry_sinks:
             self._llm_buf.clear()
 
         me_x, me_y, hp_pct, mp_pct = state["me"]
@@ -903,11 +946,11 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
         self.last_command = response.command
         self.last_hp = hp_pct
 
-        # Decision trace (Track E): one JSONL record per decision, at the point
-        # arbitration actually happened. `recommendations` here is the final list
-        # max() chose from (post tactical-mode, post-commitment).
-        if self.tracer:
-            self.tracer.record(
+        # Telemetry (Track E + HUD): build ONE record at the point arbitration
+        # actually happened, then fan it out to every sink. `recommendations` here
+        # is the final list max() chose from (post tactical-mode, post-commitment).
+        if self.telemetry_sinks:
+            record = build_decision_record(
                 tick=state.get("tick", 0),
                 floor=state.get("floor", 0),
                 in_town=bool(state.get("in_town")),
@@ -918,7 +961,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
                 llm=list(self._llm_buf),
                 winner=agent_name,
                 command=response.command,
+                source_id=self.source_id,
             )
+            for sink in self.telemetry_sinks:
+                sink.offer(record)
 
         return response.command
 
@@ -1130,6 +1176,10 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
 
                 state_count += 1
 
+                # Adopt the engine's hero name as our identity the moment it
+                # arrives (logs, trace source_id, HUD envelope all follow).
+                self._set_source_id(state.get("name"))
+
                 # Initialize character profile on first valid state
                 if self.profile is None and state.get("stats"):
                     logger.info("🔍 Initializing character profile from first state...")
@@ -1231,8 +1281,8 @@ In 1-2 sentences: What should you remember for next time? What did you learn?"""
             if self.sock:
                 self.sock.close()
             self.memory.close()
-            if self.tracer:
-                self.tracer.close()  # flush the in-flight record
+            for sink in self.telemetry_sinks:
+                sink.close()  # tracer flushes the in-flight record; LiveSink marks offline
             logger.info("🔒 Orchestrator shutdown complete")
 
 
@@ -1247,6 +1297,8 @@ def main():
     parser.add_argument("--think-interval", type=float, default=0.6, help="Seconds between decisions")
     parser.add_argument("--trace", default=None, metavar="PATH",
                         help="Record every council decision as JSONL to PATH (flight recorder; ROADMAP Track E)")
+    parser.add_argument("--hud", default=None, metavar="PATH",
+                        help="Write the current decision to PATH as a live JSON envelope for the Emacs HUD")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
@@ -1266,6 +1318,7 @@ def main():
         password=args.password,
         think_interval=args.think_interval,
         trace_path=args.trace,
+        live_hud_path=args.hud,
     )
 
     logger.info("=" * 60)

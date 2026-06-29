@@ -49,6 +49,7 @@ def parse_dsl_state(line: str) -> Dict:
         "inv_count": 0,  # Total items in inventory (NOT grid cells — see inv_free)
         "inv_free": 40,  # Free inventory GRID cells of 40 (the real "fullness")
         "stats": {},  # Stats: {"str": 45, "dex": 30, "mag": 15, "vit": 40, "lvl": 8, "pts": 5, "class": 0, "exp": 1250}; {} until an S= field arrives (consumers use truthiness, and .get("mag",0) on a stats-less early state must not crash)
+        "name": "?",  # Hero name (N=); source_id for logs/HUD, "?" until an N= arrives
         "in_town": False,  # Town flag
         "npcs": [],  # NPCs: [{"type": "hl", "name": "Pepin", "x": 25, "y": 19, "id": 1}, ...]
         "stores": {},  # Store inventories: {"sm": [...], "hl": [...], ...}
@@ -74,6 +75,11 @@ def parse_dsl_state(line: str) -> Dict:
         # Parse player: ME=x,y,hp%,mp%
         if m := re.search(r'ME=(\d+),(\d+),(\d+),(\d+)', line):
             state["me"] = tuple(map(int, m.groups()))
+
+        # Parse hero name: N=Airhead (value is non-space; engine maps spaces->'_').
+        # Lookbehind avoids matching the N in TN= (town flag).
+        if m := re.search(r'(?<![A-Za-z])N=(\S+)', line):
+            state["name"] = m.group(1).replace("_", " ")
 
         # Parse main player position: PLYR=x,y
         if m := re.search(r'PLYR=(\d+),(\d+)', line):

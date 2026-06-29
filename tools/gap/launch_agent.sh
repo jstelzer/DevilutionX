@@ -15,6 +15,7 @@
 #   PASSWORD=secret ./launch_agent.sh          # match the hosted game's password
 #   TRACE=1 ./launch_agent.sh                  # flight-record decisions → traces/<hero>-<ts>.jsonl
 #   TRACE=/tmp/run.jsonl ./launch_agent.sh     # ...or to an explicit path
+#   HUD=1 ./launch_agent.sh                    # live Emacs cockpit feed → .hud/<hero>.json (M-x gap-hud)
 #   ./launch_agent.sh -- --debug               # forward extra args to orchestrator
 #
 set -euo pipefail
@@ -58,6 +59,26 @@ if [[ -n "${TRACE:-}" ]]; then
     esac
     TRACE_ARGS=(--trace "$TRACE_PATH")
     echo "📼 Decision trace → $TRACE_PATH"
+fi
+
+# Live HUD feed (Emacs cockpit). HUD unset → off. HUD=1/true/yes/auto → a stable
+# per-hero file under .hud/ that Emacs gap-hud.el polls (one client = one file,
+# so Airhead and Beavis never collide). Any other value is an explicit path.
+# Unlike traces/, this is current-truth (last write wins), not an append log.
+HUD_ARGS=()
+if [[ -n "${HUD:-}" ]]; then
+    case "$HUD" in
+        1|true|yes|auto)
+            mkdir -p .hud
+            HUD_PATH=".hud/${HERO%.sv}.json"
+            ;;
+        *)
+            HUD_PATH="$HUD"
+            mkdir -p "$(dirname "$HUD_PATH")"
+            ;;
+    esac
+    HUD_ARGS=(--hud "$HUD_PATH")
+    echo "🖥️  Live HUD → $HUD_PATH   (M-x gap-hud in Emacs)"
 fi
 
 if ! command -v uv &> /dev/null; then
@@ -108,4 +129,5 @@ exec uv run orchestrator.py \
     --password "$PASSWORD" \
     --socket "$SOCKET" \
     "${TRACE_ARGS[@]}" \
+    "${HUD_ARGS[@]}" \
     "${EXTRA_ARGS[@]}"

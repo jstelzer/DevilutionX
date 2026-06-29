@@ -43,6 +43,19 @@ orchestrator state log; cleaner C++ "beltable" flag (like the loot `fits` flag);
 the Rogue makes ~1200 Loot decisions *in town* (item churn — investigate);
 cast-range cast-kite could place at range instead of walking onto the mob.
 
+**Observed via the HUD/trace (2026-06-29), pre-existing — log, don't fix yet:**
+- **Griswold sell loop stalls.** In town she commits to Griswold and re-issues
+  `IN 0` ("Opening shop to sell 2 items") for *thousands* of ticks without the
+  sale ever completing (seen as `committed Griswold ×9`, high `repeats` churn).
+  Untouched by the HUD work; `agents/griswold.py`/`shopping.py` are the suspects.
+  Evidence is captured — replay the Griswold records (position vs `sm@62,63`,
+  gold, inv) from a `traces/*.jsonl` to diagnose offline. First real "trace as
+  debugger" candidate.
+- **Friendly fire.** Rogue fires `AT` at a mob with the human ally in the arc
+  (`PLYR=` is already in the DSL — she just doesn't consult it). Candidate fix:
+  a deterministic ally-line-of-fire guard in `CombatAgent` (engine reports it →
+  deterministic code handles it → don't ask the LLM).
+
 ---
 
 ## The model: two tracks (this is the whole point)
