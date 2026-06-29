@@ -6,7 +6,50 @@ until we had a working framework* — it's the backlog, not bugs.
 
 ---
 
-## 🟢 SESSION HANDOFF — 2026-06-23 PM (read this first)
+## 🟢 SESSION HANDOFF — 2026-06-29 (read this first)
+
+Big session, all **trace/HUD-driven** — every fix started by reading the decision
+record, not guessing. Companions went from *can't transact at all* → buying,
+selling, repairing (gold actually moves), charging up to DPS, keeping belts
+stocked, not shooting the human in the back, and not freezing on impossible goals.
+8 unpushed commits on `GAP` (`302f03692`..`eabba7665`); **not pushed yet**.
+
+**Durable invariants learned (DON'T relearn these the hard way):**
+- **Never write `_pGold` (or other player-pile state) directly in GAP code.**
+  `CalcPlrInv` recomputes `_pGold` from the inventory gold-piles every tick, so a
+  raw `_pGold -= x` is silently reverted. Spend via the engine's `TakePlrsMoney`,
+  gain via `AddGoldToInventory`. This one bug recurred in store-buy, repair, AND
+  drop-gold (the dupe).
+- **The companion IS `MyPlayer` on its headless client — so the engine's own
+  primitives self-sync; don't hand-roll `NetSendCmd`.** `ModifyPlr*` broadcasts
+  `CMD_SETSTR`; belt moves use `NetSendCmdChBeltItem`; pack placement uses
+  `AutoPlaceItemInInventory(..., sync=true)` → `CMD_CHANGEINVITEMS`; equip uses
+  `AutoEquip`. Mirror the human store/equip path instead of re-implementing it.
+  (The "store ops bypass NetCmd → desync" worry was mostly a false alarm once we
+  used the right primitives.)
+- **DSL emission range must match the agent's action range.** Stores were emitted
+  at `dist<=2` but agents acted at `dist<=3` → parked-and-spun. Keep them equal.
+- **Every agent that issues a command which can fail-without-changing-state needs
+  an anti-loop blacklist** ("same recommendation N ticks → give up"). Added to
+  InventoryAgent (belt) and UpgradeAgent (equip); LootAgent already had it. Without
+  it a failed EQUIP/BELT/IN freezes the whole council.
+- **No phantom goals.** An agent must not `should_activate` on something
+  `_evaluate_impl` can't fulfill (AdriaAgent → unimplemented staff recharge →
+  thrash). If the code logs "not implemented", that's the bug telling on itself.
+- **Class-shape guards.** Don't score a caster off its staff for a higher-damage
+  melee weapon; don't strip the casting weapon. The staff IS the weapon.
+
+**Dev-loop gotchas (cost real time this session):**
+- The Bash **sandbox blocks signals to the game processes** — kill/restart AI
+  clients with the sandbox disabled, **by explicit PID**. `pkill -f` is a footgun:
+  the pattern matches the killer's own shell (`orchestrator.py` / `devilutionx
+  …headless`) and self-terminates it before reaching the target.
+- The **host cycling drops the headless clients** (they exit, taking their agents
+  with them on EOF). If everything's suddenly "down", check the host first.
+- Splitting intermixed changes into clean commits: **`git add -p` with piped
+  `y/n`** answers (hand-built subset patches fail to apply on adjacent hunks).
+
+## 🟡 SESSION HANDOFF — 2026-06-23 PM (superseded; kept for the casting bug-chain)
 
 **Sorcerer casting works now.** She threw Firebolts at the Butcher from range
 (verified: `Successfully queued spell 1 type 1`). Getting there took fixing a
