@@ -75,10 +75,25 @@ cast-range cast-kite could place at range instead of walking onto the mob.
   self-syncs via `CMD_SETSTR` since the companion IS `MyPlayer`. (`_pStatPts` is
   local-only bookkeeping — no sim effect.) The sweep's two desync "candidates"
   were false alarms.
-- **Friendly fire.** Rogue fires `AT` at a mob with the human ally in the arc
-  (`PLYR=` is already in the DSL — she just doesn't consult it). Candidate fix:
-  a deterministic ally-line-of-fire guard in `CombatAgent` (engine reports it →
-  deterministic code handles it → don't ask the LLM).
+- ✅ **Friendly fire** (commit `11c6f7cb4`). Was hitting the human on ~79% of
+  Airhead's shots / ~44% of Beavis's casts. `gap_dsl.cpp` now emits every other
+  player (dropped a stray `break`); `dsl_parser` → `state["allies"]`;
+  `line_of_fire.py` is a deterministic LOF guard used by `combat.py`/`spell.py`
+  (retarget to a clear mob → sidestep → hold; melee unaffected).
+
+**Still open — caster economy + arbitration (surfaced 2026-06-29):**
+- **Staff recharge (the caster-economy lever).** A Sorc's staff is the free-cast
+  fallback behind the "charge up to DPS" loop, but it bleeds charges with no way
+  to refill: GAP has no `RECHARGE` command. Implement one — a `CompanionRechargeItem`
+  mirroring `WitchRechargeItem` (charge via `TakePlrsMoney`, sync the equipped
+  staff like recharge does), an Adria `_evaluate_impl` branch, and **re-add the
+  `staff_low_charges` trigger to `adria.py.should_activate`** (removed because it
+  sent Beavis to Adria for an errand he couldn't finish → he thrashed by the witch;
+  see the no-op recharge warning in `adria.py`).
+- **Town-errand vs follow arbitration.** A real town errand (e.g. Adria sell)
+  still loses to "follow the human" once the player wanders far (~59 tiles), so
+  the companion neither shops nor cleanly follows. Consider committing harder to a
+  started errand, or bounding it on player distance.
 
 ---
 

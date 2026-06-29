@@ -43,19 +43,17 @@ class AdriaAgent(BaseAgent):
         if self._sellable_items(state):
             return True
 
-        # Buying mana / recharging is caster-only.
+        # Buying mana is caster-only. (Staff RECHARGE belongs here too, but GAP has
+        # no recharge command yet — _evaluate_impl just logs "not implemented". So
+        # triggering on a low staff sent him to Adria for an errand he could never
+        # finish, and he'd thrash by the witch forever instead of following. Re-add
+        # `staff_low_charges` once a RECHARGE command lands.)
         is_caster = stats.get("class", 0) == 2 or stats.get("mag", 0) > 25
         if not is_caster:
             return False
 
         mp_potions = sum(1 for slot in state.get("belt", []) if slot == "mp")
-        need_mana = mp_potions < 2
-
-        hand_left = state.get("equipped", {}).get("hand_left")
-        staff_low_charges = bool(
-            hand_left and hand_left.get("type") == "st" and 0 < hand_left.get("charges", 0) <= 5
-        )
-        return need_mana or staff_low_charges
+        return mp_potions < 2
 
     def _sellable_items(self, state: Dict[str, Any]) -> list:
         """Identified staves/books worth offloading (profile doesn't want to keep)."""
