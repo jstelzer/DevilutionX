@@ -63,16 +63,16 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
     // Town flag: TN=1 or TN=0
     dsl << " TN=" << (leveltype == DTYPE_TOWN ? 1 : 0);
 
-    // The human player to follow: the first OTHER active player (not us). In the
-    // old sidecar model MyPlayer was the human; now MyPlayer IS the AI, so we scan
-    // for another player. PLYR/PF are omitted if we're the only one in the game.
+    // Every OTHER active player gets a PLYR=/PF= pair (the human AND any other AI
+    // companions). The FIRST is the follow target (player 0 = the human host); the
+    // full set feeds the friendly-fire line-of-fire guard so the AIs don't shoot
+    // each other either. PLYR/PF are omitted if we're the only one in the game.
     for (size_t i = 0; i < Players.size(); i++) {
         if (static_cast<int>(i) == MyPlayerId || !Players[i].plractive)
             continue;
         Point otherPos = Players[i].position.tile;
         dsl << " PLYR=" << otherPos.x << "," << otherPos.y;
         dsl << " PF=" << static_cast<int>(Players[i].plrlevel);
-        break;
     }
 
     // Level-transition triggers: ST=<dir>@x,y;<dir>@x,y;... (omitted if none).

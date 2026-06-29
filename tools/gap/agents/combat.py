@@ -7,6 +7,7 @@ import math
 from typing import Dict, Any, Optional
 from .base import BaseAgent, AgentResponse
 from llm_view import llm_view
+from .line_of_fire import allies_of, shot_blocked, clear_mobs, sidestep
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,30 @@ Example: AT {mobs[0].get('id', 27)} 0.85"""
 
                 # Find the monster in our mob list
                 target_mob = next((m for m in mobs if m.get("id") == monster_id), None)
+
+                # FRIENDLY-FIRE GUARD: a bow shot travels ME→target in a straight
+                # line, and the AI follows from behind — so when the player pushes
+                # into a mob, the "nearest" target sits right behind them and the
+                # arrow goes through their back (was happening on ~79% of shots).
+                # If the LLM's pick is screened by an ally, switch to a clear mob;
+                # if none is clear, sidestep to open an angle; never take the shot.
+                allies = allies_of(state)
+                if target_mob and allies:
+                    tgt = (target_mob.get("x", 0), target_mob.get("y", 0))
+                    if shot_blocked((me_x, me_y), tgt, allies):
+                        clears = clear_mobs((me_x, me_y), mobs, allies)
+                        if clears:
+                            target_mob = min(clears, key=lambda m: m.get("dist", 999))
+                            logger.info(f"🛡️ FF-GUARD: retargeting to clear-LOF mob {target_mob.get('id')} (ally screened original)")
+                        else:
+                            step = sidestep((me_x, me_y), tgt, allies)
+                            if step:
+                                parsed.command = f"MV {step[0]} {step[1]}"
+                                parsed.reasoning = "Combat: sidestep for a clear shot (ally in line of fire)"
+                                logger.warning(f"🛡️ FF-GUARD: ally in line, no clear target — sidestep to {step}")
+                                return parsed
+                            logger.warning("🛡️ FF-GUARD: ally in line, no clear angle — holding fire")
+                            return None
 
                 if target_mob:
                     # Get monster position

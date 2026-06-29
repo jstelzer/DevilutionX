@@ -36,7 +36,8 @@ def parse_dsl_state(line: str) -> Dict:
         "tick": 0,
         "floor": 0,
         "me": (0, 0, 100, 100),
-        "player": None,  # Main player position (x, y) if companion
+        "player": None,  # Main player position (x, y) if companion (follow target)
+        "allies": [],  # ALL other players' positions [(x, y), ...] (friendly-fire LOF)
         "player_floor": None,  # Main player's dungeon level (for follow decisions)
         "stairs": [],  # Level-transition triggers: [{"type": "down"|"up", "x": .., "y": ..}, ...]
         "portals": [],  # Town portals: [{"x": .., "y": .., "caster": "me"|"them"}, ...]
@@ -81,9 +82,12 @@ def parse_dsl_state(line: str) -> Dict:
         if m := re.search(r'(?<![A-Za-z])N=(\S+)', line):
             state["name"] = m.group(1).replace("_", " ")
 
-        # Parse main player position: PLYR=x,y
-        if m := re.search(r'PLYR=(\d+),(\d+)', line):
-            state["player"] = tuple(map(int, m.groups()))
+        # Parse other players: one PLYR=x,y per other active player (the human AND
+        # any other AI companions). First is the follow target; the full list feeds
+        # the friendly-fire line-of-fire check so we don't shoot through allies.
+        if allies := re.findall(r'PLYR=(\d+),(\d+)', line):
+            state["allies"] = [(int(x), int(y)) for x, y in allies]
+            state["player"] = state["allies"][0]
 
         # Parse main player floor: PF=2 (for deciding to follow across levels)
         if m := re.search(r'PF=(\d+)', line):

@@ -14,6 +14,7 @@ import math
 from typing import Dict, Any, Optional, List, Tuple
 
 from .base import BaseAgent, AgentResponse
+from .line_of_fire import allies_of, clear_mobs, sidestep
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,24 @@ class SpellAgent(BaseAgent):
         me = state.get("me", [0, 0, 100, 100])
         my_pos = (me[0], me[1]) if len(me) >= 2 else (0, 0)
         mana_pct = me[3] if len(me) > 3 else 100
+
+        # FRIENDLY-FIRE GUARD: an aimed spell flies my_pos→target in a line, and
+        # the caster follows from behind — so a Firebolt at the nearest mob often
+        # passes straight through the player. Only ever target monsters with a clear
+        # line; if every mob is screened by an ally, sidestep to open an angle.
+        allies = allies_of(state)
+        if allies:
+            clear = clear_mobs(my_pos, monsters, allies)
+            if not clear:
+                nearest = min(monsters, key=lambda m: math.hypot(
+                    m.get("x", 0) - my_pos[0], m.get("y", 0) - my_pos[1]))
+                step = sidestep(my_pos, (nearest.get("x", 0), nearest.get("y", 0)), allies)
+                if step:
+                    return AgentResponse(
+                        command=f"MV {step[0]} {step[1]}", weight=0.7,
+                        reasoning="Spell: sidestep for a clear shot (ally in line of fire)")
+                return None  # no clear angle — hold and let movement/others act
+            monsters = clear
 
         class_context = ""
         if self.profile:
