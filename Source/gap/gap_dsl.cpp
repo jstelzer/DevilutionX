@@ -299,7 +299,7 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
     }
 
     // Objects: OBJ=id@x,y,type;...
-    // Types: ch=chest, tc=trapped_chest, dr=door, ba=barrel, sh=shrine
+    // Types: ch=chest, tc=trapped_chest, dr=door, ba=barrel, sh=shrine, co=coffin
     // Only include objects within light radius for exploration
     std::ostringstream objects;
     bool first_object = true;
@@ -327,6 +327,10 @@ std::string EncodeDSLState(uint32_t tick, Player* player) {
                 type_code = obj.isExplosive() ? "xb" : "ba";  // xb=explosive barrel
             } else if (obj.IsShrine()) {
                 type_code = "sh";
+            } else if (obj.IsSarcophagus()) {
+                // co = coffin/sarcophagus. Operating it drops loot — but can also
+                // wake a skeleton (engine: _oVar1 >= 8). The agent gates on HP.
+                type_code = "co";
             }
 
             // Only include interactable objects

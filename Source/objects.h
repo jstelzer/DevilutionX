@@ -252,6 +252,15 @@ struct Object {
 	}
 
 	/**
+	 * @brief Check if this object is a sarcophagus / coffin
+	 * @return True if the object is one of the sarcophagus types (see _object_id)
+	 */
+	[[nodiscard]] constexpr bool IsSarcophagus() const
+	{
+		return IsAnyOf(_otype, _object_id::OBJ_SARC, _object_id::OBJ_L5SARC);
+	}
+
+	/**
 	 * @brief Check if this object is a trap source
 	 * @return True if the object is one of the trap types (see _object_id)
 	 */

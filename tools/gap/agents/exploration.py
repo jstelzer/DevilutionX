@@ -94,6 +94,15 @@ class ExplorationAgent(BaseAgent):
                 else:
                     score = 0.7
                     reasoning = f"Exploration: Open door (dist={dist})"
+            elif obj_type == "co":  # Coffin/sarcophagus
+                # Drops loot, but can wake a skeleton (engine: _oVar1 >= 8). Treat
+                # like a trapped chest — fine when healthy, risky when low.
+                if hp_pct > 50:
+                    score = 0.6
+                    reasoning = f"Exploration: Open coffin (HP={hp_pct}%, dist={dist})"
+                else:
+                    score = 0.25  # could wake a skeleton with no HP buffer
+                    reasoning = f"Exploration: Risky coffin (HP={hp_pct}%, dist={dist})"
             elif obj_type == "ba":  # Barrel
                 score = 0.5
                 reasoning = f"Exploration: Break barrel (dist={dist})"
