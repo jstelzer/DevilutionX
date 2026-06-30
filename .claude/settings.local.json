@@ -39,7 +39,16 @@
       "Read(//usr/bin/**)",
       "Bash(command -v cmake3)",
       "Bash(git commit *)",
-      "Read(//home/mental/Projects/GAP/**)"
+      "Read(//home/mental/Projects/GAP/**)",
+      "WebFetch(domain:github.com)",
+      "Read(//home/mental/Projects/neverlight-forge-env/emacs/jps-emacs/**)",
+      "Read(//home/mental/.emacs.d/**)",
+      "Bash(emacs -Q --batch -f batch-byte-compile gap-hud.el)",
+      "Bash(rm -f /tmp/gap-headless.log)",
+      "Bash(./launch_headless.sh)",
+      "Bash(echo \"headless launched pid $!\")",
+      "Bash(kill -9 80362 80363 80519 80520 80537 80538)",
+      "Bash(echo \"exit=$?\")"
     ],
     "deny": [],
     "ask": [],
