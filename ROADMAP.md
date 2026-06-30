@@ -6,7 +6,56 @@ until we had a working framework* — it's the backlog, not bugs.
 
 ---
 
-## 🟢 SESSION HANDOFF — 2026-06-29 (read this first)
+## 🟢 SESSION HANDOFF — 2026-06-30 (read this first)
+
+Trace-driven again — and this time the trace *redirected the roadmap*. Built the
+Track E offline analyzer, mined the 2026-06-29 corpus with it, and the data
+falsified a planned task before we spent effort on it. 3 commits on `GAP`
+(`314f8599b`, `cff78fd6a`, `207a63783`); **not pushed** (13 ahead of origin).
+
+**Shipped:**
+- **Track E Phase 2 — the analyzer.** `trace_stats.py` + `./dev.sh stats` mines
+  `traces/*.jsonl` for pathologies: compression (churn), thrash%, A→B→A
+  oscillation + the top 2-cycle pair, winner share, starvation, LLM-cost-by-agent.
+  Full workflow in **`tools/gap/TRACING.md`** (capture→analyze→replay→HUD),
+  including the offline **replay move** — feed a recorded DSL line back through a
+  rule-based agent to pin a cause (that's how the bug below was nailed).
+- **Movement follow hysteresis** (`314f8599b`). The HUD's "decision paralysis" was
+  `Town↔Movement x406` (the top corpus 2-cycle): Movement's follow weight flipped
+  0.2↔0.7 on a one-tile player drift → council winner flipped → she ping-ponged
+  between two tiles next to a vendor (6 potions, no errand: pure jitter). Fixed
+  with a held follow stance (START=5 begin / STOP=2 settle, hysteresis band).
+  **Live-proven: oscillation gone, town compression 1.2x→2.1x.** A mini-preview of
+  B5 leases — the follow stance is a held lease.
+
+**The data that changed the plan (trust the corpus over a-priori roadmap):**
+- **B5 Phase 0's premise was FALSE.** Vendors (Griswold/Shopping/Adria) made *7*
+  LLM calls all session (Griswold 7, Shopping/Adria 0) — already effectively
+  rule-based. **Drop the planned vendor-LLM rewrite.**
+- **The real inference cost is Combat (~1290 calls).** In caster files Combat is
+  *starved* (recommended every tick, never wins — Spell out-votes it) yet still
+  fires the LLM each tick. **A Combat re-query cache is the actual B5 Phase 0.**
+- **Exploration agent never wins anywhere** — but it's well-built (chests/doors/
+  barrels/shrines via `IN obj_id`); it's starved because it's priority 4, self-
+  skips when >2 mobs, and only fires when adjacent+quiet. It's the scaffold to
+  exercise (A1 below), not a baseline to trust.
+
+**Built this session (A1 world interaction): coffins.** The engine already
+operates `OBJ_SARC`/`OBJ_L5SARC` (no `MyPlayer` guard; generic `CMD_OPOBJXY`
+path) — they just weren't emitted. Tightly-scoped: `IsSarcophagus()` predicate →
+`OBJ=` emits `co` → ExplorationAgent scores it (loot 0.6 healthy, 0.25 low-HP
+since opening one can wake a skeleton). Builds clean; offline-verified. **Live-
+test pending: needs a catacombs run** to confirm Exploration fires on a coffin in
+true-MP (it's priority 4, acts only when adjacent + ≤2 mobs — that's *why* it
+never won in the corpus, not a bug).
+
+**Next:** live-test the full object loop (Exploration actually firing in true-MP
+on coffins/barrels/chests); the Combat re-query cache (real B5 Phase 0); the B5
+lease with the 132039 trace as a golden regression case.
+
+---
+
+## 🟢 SESSION HANDOFF — 2026-06-29
 
 Big session, all **trace/HUD-driven** — every fix started by reading the decision
 record, not guessing. Companions went from *can't transact at all* → buying,
