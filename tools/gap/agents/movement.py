@@ -12,12 +12,36 @@ logger = logging.getLogger(__name__)
 class MovementAgent(BaseAgent):
     """Specialist for positioning and player-following"""
 
+    # Follow hysteresis: a single distance threshold makes the follow weight flip
+    # every time the player drifts one tile across it, and that flip changes the
+    # council winner — she ping-pongs between two tiles forever (measured as the
+    # corpus-wide Town<->Movement x406 oscillation, 2026-06-30). A held stance with
+    # a START radius (begin following) wider than the STOP radius (settle) breaks
+    # the limit cycle: once she's inside, the player must drift meaningfully — not
+    # one jittery tile — before she chases again. (This is the "skeleton is the
+    # cache bust" principle in miniature: re-plan on meaningful change, a mini
+    # preview of B5 intent leases — the follow stance is a held lease.)
+    FOLLOW_START = 5  # begin following once the player is this far (Manhattan)
+    FOLLOW_STOP = 2   # ...and keep going until back within this
+
     def __init__(self, **kwargs):
         super().__init__(name="Movement", **kwargs)
+        self._following = False
 
     def should_activate(self, state: Dict[str, Any]) -> bool:
         """Movement always active (fallback agent)"""
         return True
+
+    def _update_following(self, dist: int) -> bool:
+        """Hysteretic follow stance: True only outside START, back to False inside
+        STOP, and *held* in the band between (history decides) — so a one-tile
+        jitter at the boundary can't flip it."""
+        if self._following:
+            if dist <= self.FOLLOW_STOP:
+                self._following = False
+        elif dist > self.FOLLOW_START:
+            self._following = True
+        return self._following
 
     def _evaluate_impl(self, state: Dict[str, Any]) -> Optional[AgentResponse]:
         """
@@ -46,9 +70,10 @@ class MovementAgent(BaseAgent):
 
         # Rule-based movement (no LLM - faster and no model switching)
 
-        # In town: always follow player closely
+        # In town: follow with hysteresis so she settles next to the player
+        # instead of jittering across a single follow threshold.
         if in_town:
-            if dist_to_player > 3:
+            if self._update_following(dist_to_player):
                 return AgentResponse(
                     command=f"MV {plyr_x} {plyr_y}",
                     weight=0.7,
@@ -58,12 +83,12 @@ class MovementAgent(BaseAgent):
                 return AgentResponse(
                     command=f"MV {me_x} {me_y}",
                     weight=0.2,
-                    reasoning="Movement: Near player in town"
+                    reasoning=f"Movement: Holding near player in town (dist={dist_to_player})"
                 )
 
         # In dungeon: keep close so she stays in the fight instead of trailing.
-        # Follow once we're more than ~4 tiles back.
-        if dist_to_player > 4:
+        # Same hysteresis band (START=5 / STOP=2) so closing the gap doesn't flip.
+        if self._update_following(dist_to_player):
             return AgentResponse(
                 command=f"MV {plyr_x} {plyr_y}",
                 weight=0.85,
