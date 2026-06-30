@@ -15,6 +15,11 @@ case "${1:-help}" in
         uv run python dsl_parser.py
         uv run python decision_tracer.py
         ;;
+    "stats")
+        # Mine captured decision traces for pathologies (churn/oscillation/...).
+        shift
+        exec uv run python trace_stats.py "$@"
+        ;;
     "format")
         echo "🎨 Formatting code..."
         uv run black .
@@ -40,6 +45,7 @@ case "${1:-help}" in
         echo "Commands:"
         echo "  run      - Launch the AI companion agent (see launch_agent.sh)"
         echo "  test     - Run personality tests + DSL parser & decision-tracer self-tests"
+        echo "  stats    - Analyze captured decision traces (churn/oscillation/starvation)"
         echo "  format   - Format code with black"
         echo "  lint     - Check code with ruff"
         echo "  fix      - Auto-fix lint issues with ruff"

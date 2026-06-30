@@ -559,6 +559,11 @@ Logs: "GAP: ExecuteMyCommand - param1=42, param2=100"
 - **Auto-pathing interfering**: Use direct function calls instead of `destAction`
 - **LLM hallucination**: Add grammar constraint (GBNF) to force valid syntax
 
+**Council misbehaving (paralysis, wrong agent winning, churn)?** Don't guess —
+trace it. `TRACE=1 ./launch_agent.sh` records every decision; `./dev.sh stats`
+mines the corpus for the pathology; then replay the recorded DSL back through the
+agent offline to pin the cause. Full workflow in **`tools/gap/TRACING.md`**.
+
 ---
 
 ## DSL Protocol Reference
@@ -752,7 +757,8 @@ tools/gap/               # Python agent system
 ├── launch_agent.sh      # Launch the orchestrator (connects to headless socket)
 ├── orchestrator.py      # Multi-agent coordinator + CommitmentTracker
 ├── dsl_parser.py        # DSL state parser
-├── decision_tracer.py   # Flight recorder: --trace/TRACE=1 → JSONL per decide() (Track E)
+├── decision_tracer.py   # Flight recorder: --trace/TRACE=1 → JSONL per decide() + LiveSink HUD feed (Track E)
+├── trace_stats.py       # Offline analyzer over traces/*.jsonl (./dev.sh stats); see TRACING.md
 ├── memory_store.py      # SQLite persistent memory (spatial/goals)
 ├── personality_store.py # Per-character traits/memories/strategies + reflection
 ├── character_profile.py # Class-aware behavior
