@@ -10,8 +10,10 @@ until we had a working framework* — it's the backlog, not bugs.
 
 Trace-driven again — and this time the trace *redirected the roadmap*. Built the
 Track E offline analyzer, mined the 2026-06-29 corpus with it, and the data
-falsified a planned task before we spent effort on it. 3 commits on `GAP`
-(`314f8599b`, `cff78fd6a`, `207a63783`); **not pushed** (13 ahead of origin).
+falsified a planned task before we spent effort on it. Then added coffins (A1) and
+made the build warning-free. **6 commits this session** on `GAP` (`314f8599b`
+hysteresis, `cff78fd6a` analyzer+guide, `207a63783` notes, `dc2621055` coffins,
+`06fd3f2bb` this handoff, `34c1876e5` build warnings); **not pushed** (16 ahead).
 
 **Shipped:**
 - **Track E Phase 2 — the analyzer.** `trace_stats.py` + `./dev.sh stats` mines
@@ -27,6 +29,15 @@ falsified a planned task before we spent effort on it. 3 commits on `GAP`
   with a held follow stance (START=5 begin / STOP=2 settle, hysteresis band).
   **Live-proven: oscillation gone, town compression 1.2x→2.1x.** A mini-preview of
   B5 leases — the follow stance is a held lease.
+- **Build is warning-free now** (`34c1876e5`). The release build's warning flood
+  was GCC `-Wstringop-*` *false positives* from bundled fmt + Lua, raised at the
+  **LTO link** step (so per-TU `-Wno` is ignored — that cost real debugging time).
+  Fix: `add_link_options(-Wno-stringop-overflow;-Wno-stringop-overread)` for GCC
+  non-Debug (the link is the only place it takes) + fmt headers marked SYSTEM.
+  Touches only dep false positives — OUR warnings now show. That visibility
+  immediately surfaced + fixed one real one (unused `pos` in `MonsterActor::
+  IsInRange`). **Invariant: under LTO, suppress middle-end dep warnings on the
+  link line, not per-TU.**
 
 **The data that changed the plan (trust the corpus over a-priori roadmap):**
 - **B5 Phase 0's premise was FALSE.** Vendors (Griswold/Shopping/Adria) made *7*
