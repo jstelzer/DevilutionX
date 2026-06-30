@@ -9,6 +9,12 @@ endif()
 # We do not use it and it is not supported on some systems.
 set(FMT_OS OFF)
 
+# Mark libfmt's headers as SYSTEM so front-end warnings from fmt (deprecations,
+# etc.) don't surface as ours. FORCE into the cache: fmt's own option() runs in a
+# scope where a plain set() of the same name may not win (CMP0077), so the cache
+# entry is the reliable lever.
+set(FMT_SYSTEM_HEADERS ON CACHE BOOL "Expose fmt headers as SYSTEM to silence their warnings" FORCE)
+
 if(DEVILUTIONX_STATIC_LIBFMT)
   set(BUILD_SHARED_LIBS OFF)
 else()
@@ -23,6 +29,16 @@ FetchContent_MakeAvailable_ExcludeFromAll(libfmt)
 
 # We do not use locale-specific features of libfmt and disabling them reduces the size.
 target_compile_definitions(fmt PUBLIC FMT_USE_LOCALE=0)
+
+# Silence GCC's -Wstringop-overflow false positive inside fmt's compile-time string
+# escaping (<fmt/base.h> for_each_codepoint / write_escaped_string). It's a known
+# GCC 13+ middle-end bug: the warning is emitted after inlining, so marking fmt's
+# headers SYSTEM (above) does NOT suppress it — only -Wno does. Scoped to the fmt
+# target (INTERFACE → fmt consumers) and to GCC so our own code keeps the warning
+# everywhere fmt isn't inlined in. This was ~8 warnings on every incremental build.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(fmt INTERFACE -Wno-stringop-overflow)
+endif()
 
 if(DEVILUTIONX_WINDOWS_NO_WCHAR)
   target_compile_definitions(fmt PUBLIC FMT_USE_WRITE_CONSOLE)

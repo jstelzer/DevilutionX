@@ -271,6 +271,14 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   # -fipa-pta and -fdevirtualize-at-ltrans improve performance.
   add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-fipa-pta;-fdevirtualize-at-ltrans>")
+
+  # Under LTO, GCC re-runs optimization at link time and raises the -Wstringop-*
+  # middle-end warnings THERE — ignoring the per-TU -Wno flags — for known false
+  # positives in bundled third-party code: -Wstringop-overflow in <fmt/base.h>
+  # string escaping, and -Wstringop-overread in Lua 5.4's lstring.c. Both are GCC
+  # bugs in our deps, not our code; silence them on the LTO link line (the only
+  # place that works). Warnings in OUR code are unaffected.
+  add_link_options("$<$<NOT:$<CONFIG:Debug>>:-Wno-stringop-overflow;-Wno-stringop-overread>")
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

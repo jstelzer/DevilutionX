@@ -165,10 +165,9 @@ std::string MonsterActor::GetDisplayName() const {
 
 bool MonsterActor::IsInRange(Point target, int max_distance) const {
     if (!IsValid()) return false;
-    
-    Point pos = GetPosition();
+
     int distance = DistanceTo(target);
-    
+
     return distance <= max_distance;
 }
 
