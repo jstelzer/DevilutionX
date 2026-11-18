@@ -13,7 +13,15 @@ set(FMT_OS OFF)
 # etc.) don't surface as ours. FORCE into the cache: fmt's own option() runs in a
 # scope where a plain set() of the same name may not win (CMP0077), so the cache
 # entry is the reliable lever.
-set(FMT_SYSTEM_HEADERS ON CACHE BOOL "Expose fmt headers as SYSTEM to silence their warnings" FORCE)
+#
+# Not on Apple: Homebrew deps (SDL2, libpng, ...) put `-isystem /opt/homebrew/include`
+# on the command line ahead of ours, and -isystem dirs are searched in order — so a
+# brew-installed fmt (12+) would shadow this pinned copy. As a plain -I it wins.
+if(NOT APPLE)
+  set(FMT_SYSTEM_HEADERS ON CACHE BOOL "Expose fmt headers as SYSTEM to silence their warnings" FORCE)
+else()
+  set(FMT_SYSTEM_HEADERS OFF CACHE BOOL "Expose fmt headers as SYSTEM to silence their warnings" FORCE)
+endif()
 
 if(DEVILUTIONX_STATIC_LIBFMT)
   set(BUILD_SHARED_LIBS OFF)

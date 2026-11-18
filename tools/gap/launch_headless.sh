@@ -28,7 +28,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BINARY="${DEVILUTIONX_BIN:-$REPO_ROOT/build/devilutionx}"
+# macOS builds an .app bundle into build-macos/ (see CLAUDE.md); Linux a bare binary in build/.
+if [[ "$(uname)" == "Darwin" ]]; then
+    DEFAULT_BIN="$REPO_ROOT/build-macos/devilutionx.app/Contents/MacOS/devilutionx"
+else
+    DEFAULT_BIN="$REPO_ROOT/build/devilutionx"
+fi
+BINARY="${DEVILUTIONX_BIN:-$DEFAULT_BIN}"
 
 JOIN="${JOIN:-127.0.0.1:6112}"
 PASSWORD="${PASSWORD:-foo}"

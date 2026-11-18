@@ -843,13 +843,15 @@ Chat LLM: "Oof! Retreating, need healing!" (natural response)
 
 ### Quick Start
 ```bash
-# 1. Start game with companion
-cd /home/mental/projects/DevilutionX/build
-./devilutionx --companion-save multi_1.sv --companion-slot 1
+# 1. Your client: host a TCP game (password foo), pick your multi_0 hero
+cd tools/gap
+./launch_game.sh
 
-# 2. Start AI agent (in separate terminal)
-cd /home/mental/projects/DevilutionX/tools/gap
-python3 orchestrator.py --companion-slot 1 --model qwen2.5:3b --password "foo"
+# 2. The AI's headless client joins as player 2 (separate terminal)
+./launch_headless.sh
+
+# 3. The orchestrator drives the headless client (separate terminal)
+./launch_agent.sh
 
 # 3. Play Diablo with your AI companion!
 # - She'll follow you automatically
@@ -949,8 +951,8 @@ Edit `tools/gap/orchestrator.py`:
 ## Technical Specifications
 
 ### System Requirements
-- **OS:** Linux (Unix sockets)
-- **GPU:** NVIDIA with 4GB+ VRAM (for LLM inference)
+- **OS:** Linux or macOS (Unix sockets)
+- **GPU:** NVIDIA with 4GB+ VRAM, or Apple Silicon (for LLM inference)
 - **RAM:** 8GB+ (game + LLM)
 - **Storage:** 5GB (game + models)
 

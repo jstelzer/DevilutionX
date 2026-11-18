@@ -11,16 +11,16 @@ terminals (use the helper scripts):
 ```bash
 # Terminal 1 — YOUR client. Host a TCP multiplayer game, password "foo".
 #   You are the only human player; the AI is NOT a slot in your client.
-cd /home/mental/Projects/DevilutionX/tools/gap
+cd tools/gap   # from the repo root
 ./launch_game.sh
 
 # Terminal 2 — the AI's headless client. Joins 127.0.0.1:6112 as player 2,
 #   loads its own hero from multi_1.sv, and owns the GAP DSL socket.
-cd /home/mental/Projects/DevilutionX/tools/gap
+cd tools/gap   # from the repo root
 ./launch_headless.sh
 
 # Terminal 3 — the orchestrator. Connects to the headless client's socket.
-cd /home/mental/Projects/DevilutionX/tools/gap
+cd tools/gap   # from the repo root
 ./launch_agent.sh
 ```
 
@@ -33,7 +33,8 @@ gemma3:12b --password foo` under the hood. Override models/password via env, e.g
 > ever drive the AI's own player — never yours. The old `--companion-slot`
 > sidecar model is retired. See **MILESTONE-2026-06-22.md** for the full arc.
 
-**Recommended Models** (dev box has a 32GB RTX 5090, so it's split-config by default):
+**Recommended Models** (split-config by default; both dev boxes have the headroom —
+Linux: 32GB RTX 5090, Mac: M4 Max 48GB unified):
 - `qwen2.5:3b` - fast tactical/dungeon loop (the `--model`)
 - `gemma3:12b` - chat/personality (the `--chat-model`); `gemma3:27b` for richer chat
 
@@ -44,6 +45,19 @@ cmake -S . -B build -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
   -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF
 cmake --build build --target devilutionx
 ```
+
+**macOS (Apple Silicon, Homebrew)**: same flags plus bundled libsodium, into
+`build-macos/` (the launch scripts default there on Darwin; output is an `.app`):
+```bash
+cmake -S . -B build-macos -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+  -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF \
+  -DDEVILUTIONX_SYSTEM_LIBSODIUM=OFF
+cmake --build build-macos --target devilutionx
+```
+Game data/saves live in `~/Library/Application Support/diasurgical/devilution/`.
+Bundled fmt is NOT marked SYSTEM on Apple (`3rdParty/libfmt/CMakeLists.txt`) —
+otherwise brew's fmt 12 in `/opt/homebrew/include` shadows it.
 
 > Canonical agent entry point is **`orchestrator.py`** (multi-agent council).
 > `dsl_agent.py` is the older single-loop agent, kept for reference only.
@@ -169,6 +183,21 @@ this era makes us honest.
    gutted to `MyPlayer`; GAP socket bound only on the headless client.
 
 ## Recent Changes Log
+
+### November 17, 2026: macOS build ✅
+
+Linux box down; brought the branch up on an M4 Max (Apple clang 21, Homebrew).
+No GAP code changes were needed — the IPC already had `__APPLE__` paths.
+- **Build**: Linux flags + `-DDEVILUTIONX_SYSTEM_LIBSODIUM=OFF` (bundled, pinned),
+  into `build-macos/` (`.app` bundle).
+- **fmt shadowing fix**: the LTO-warning commit's `FMT_SYSTEM_HEADERS ON` made the
+  bundled fmt an `-isystem` dir, ordered after brew's `/opt/homebrew/include`, so
+  brew's fmt 12 won (`no member named 'format' in namespace 'fmt'`). Now ON only
+  off-Apple (`3rdParty/libfmt/CMakeLists.txt`).
+- **Launch scripts** default to the `.app` binary on Darwin (`DEVILUTIONX_BIN`
+  still overrides).
+- Verified: headless client boots on dummy SDL drivers and enters the join loop;
+  `./dev.sh test` passes.
 
 ### June 25–26, 2026: Track E decision tracing (flight recorder) ✅
 
@@ -667,8 +696,9 @@ See `Source/objects.cpp` for details.
 
 ```bash
 # 1. Build game with GAP enabled (top-level ./build; pinned-deps flags are
-#    required on bleeding-edge toolchains — see "Build prerequisites" below)
-cd /home/mental/Projects/DevilutionX
+#    required on bleeding-edge toolchains — see "Build prerequisites" below).
+#    On macOS use the build-macos recipe in Quick Reference instead.
+cd <repo root>
 cmake -S . -B build -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
   -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF
@@ -676,31 +706,34 @@ cmake --build build --target devilutionx
 
 # 2. Setup Python environment (uv)
 cd tools/gap
-uv sync                 # creates .venv from pyproject.toml (only dep: requests)
+uv sync --extra dev     # creates .venv from pyproject.toml (runtime dep: requests;
+                        #   the dev extra adds pytest/ruff for ./dev.sh test|lint)
 
-# 3. Install Ollama and models
+# 3. Install Ollama and models (macOS: the Ollama.app / brew install)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5:3b
 ollama pull gemma3:12b   # (gemma3:27b optional, for richer chat)
 
 # 4. Game data: drop retail DIABDAT.MPQ where the game can find it (build/ or
-#    ~/.local/share/diasurgical/devilution/). GoG installer -> innoextract.
+#    the data dir below). GoG installer -> innoextract.
 ```
 
 #### Build prerequisites (why the extra flags)
 
 The dev box ships a toolchain newer than the pinned deps, so a bare
 `cmake -DENABLE_GAP=ON` fails. The flags force the project's bundled fmt (11)
-and Lua (5.4) and skip the test-only google-benchmark. The active game data dir
-is `~/.local/share/diasurgical/devilution/` (saves + `diablo.ini` live there;
-`multi_0.sv` = you, `multi_1.sv` = the AI companion).
+and Lua (5.4) and skip the test-only google-benchmark (macOS additionally needs
+bundled libsodium). The active game data dir is
+`~/.local/share/diasurgical/devilution/` on Linux and
+`~/Library/Application Support/diasurgical/devilution/` on macOS (saves +
+`diablo.ini` live there; `multi_0.sv` = you, `multi_1.sv` = the AI companion).
 
 ### Daily Development
 
 ```bash
-# Quick rebuild after C++ changes
-cd /home/mental/Projects/DevilutionX
-cmake --build build --target devilutionx
+# Quick rebuild after C++ changes (from the repo root)
+cmake --build build --target devilutionx         # Linux
+cmake --build build-macos --target devilutionx   # macOS
 
 # Run game + agent (two terminals)
 cd tools/gap
@@ -726,7 +759,8 @@ cd tools/gap
 ## Python Notes
 
 - **Line endings**: Always use `\n` (Unix), never `\r\n` (Windows)
-- **Platform**: Developed on Linux, uses Unix domain sockets
+- **Platform**: Linux and macOS (Unix domain sockets in `/tmp`; Apple `sun_len`/
+  `SO_NOSIGPIPE` handled in `gap_ipc.cpp`). Windows is not supported.
 - **Python version**: 3.8+ (pyproject `requires-python`); dev box runs 3.14
 - **Deps/run**: managed by **uv** (`uv sync`, `uv run`); only runtime dep is `requests`
 
@@ -778,5 +812,5 @@ tools/gap/               # Python agent system
 
 ---
 
-*Last Updated: June 22, 2026 (true-MP companion shipped; see MILESTONE-2026-06-22.md)*
+*Last Updated: November 17, 2026 (macOS build; true-MP companion: see MILESTONE-2026-06-22.md)*
 *For architecture overview, see [GAP-PROJECT-SUMMARY.md](./GAP-PROJECT-SUMMARY.md)*
