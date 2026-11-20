@@ -183,6 +183,11 @@ if(NOT NOSOUND)
 endif()
 
 if(PACKET_ENCRYPTION)
+  # GAP: on Apple, vendor libsodium (pinned FetchContent, linked statically) rather
+  # than picking up whatever Homebrew has; keeps the .app self-contained.
+  if(APPLE AND NOT DEFINED DEVILUTIONX_SYSTEM_LIBSODIUM)
+    set(DEVILUTIONX_SYSTEM_LIBSODIUM OFF)
+  endif()
   dependency_options("libsodium" DEVILUTIONX_SYSTEM_LIBSODIUM ON DEVILUTIONX_STATIC_LIBSODIUM)
   if(DEVILUTIONX_SYSTEM_LIBSODIUM)
     set(sodium_USE_STATIC_LIBS ${DEVILUTIONX_STATIC_LIBSODIUM})

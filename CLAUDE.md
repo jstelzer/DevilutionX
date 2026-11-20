@@ -46,13 +46,13 @@ cmake -S . -B build -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
 cmake --build build --target devilutionx
 ```
 
-**macOS (Apple Silicon, Homebrew)**: same flags plus bundled libsodium, into
-`build-macos/` (the launch scripts default there on Darwin; output is an `.app`):
+**macOS (Apple Silicon, Homebrew)**: same flags, into `build-macos/` (the launch
+scripts default there on Darwin; output is an `.app`). libsodium is vendored
+automatically on Apple (pinned FetchContent, static; `CMake/Dependencies.cmake`):
 ```bash
 cmake -S . -B build-macos -G Ninja -DENABLE_GAP=ON -DGAP_USE_DSL=1 \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-  -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF \
-  -DDEVILUTIONX_SYSTEM_LIBSODIUM=OFF
+  -DDEVILUTIONX_SYSTEM_LIBFMT=OFF -DDEVILUTIONX_SYSTEM_LUA=OFF
 cmake --build build-macos --target devilutionx
 ```
 Game data/saves live in `~/Library/Application Support/diasurgical/devilution/`.
@@ -188,8 +188,9 @@ this era makes us honest.
 
 Linux box down; brought the branch up on an M4 Max (Apple clang 21, Homebrew).
 No GAP code changes were needed — the IPC already had `__APPLE__` paths.
-- **Build**: Linux flags + `-DDEVILUTIONX_SYSTEM_LIBSODIUM=OFF` (bundled, pinned),
-  into `build-macos/` (`.app` bundle).
+- **Build**: Linux flags, into `build-macos/` (`.app` bundle). libsodium is
+  vendored by default on Apple (pinned FetchContent, linked statically, so the
+  `.app` has no `@rpath/libsodium.dylib` dependency).
 - **fmt shadowing fix**: the LTO-warning commit's `FMT_SYSTEM_HEADERS ON` made the
   bundled fmt an `-isystem` dir, ordered after brew's `/opt/homebrew/include`, so
   brew's fmt 12 won (`no member named 'format' in namespace 'fmt'`). Now ON only
@@ -722,8 +723,8 @@ ollama pull gemma3:12b   # (gemma3:27b optional, for richer chat)
 
 The dev box ships a toolchain newer than the pinned deps, so a bare
 `cmake -DENABLE_GAP=ON` fails. The flags force the project's bundled fmt (11)
-and Lua (5.4) and skip the test-only google-benchmark (macOS additionally needs
-bundled libsodium). The active game data dir is
+and Lua (5.4) and skip the test-only google-benchmark (macOS also vendors
+libsodium, automatically). The active game data dir is
 `~/.local/share/diasurgical/devilution/` on Linux and
 `~/Library/Application Support/diasurgical/devilution/` on macOS (saves +
 `diablo.ini` live there; `multi_0.sv` = you, `multi_1.sv` = the AI companion).
